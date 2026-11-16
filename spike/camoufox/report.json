@@ -1,0 +1,151 @@
+{
+  "generatedAt": "2026-11-16T12:43:54.521Z",
+  "versions": {
+    "node": "v22.22.2",
+    "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
+    "camoufox": "0.5.9",
+    "playwrightCore": "1.62.0"
+  },
+  "camoufoxProcessesAfter": "12",
+  "failures": 1,
+  "results": [
+    {
+      "name": "launch: headless browser opens a page",
+      "ok": true,
+      "ms": 4586,
+      "detail": "title=\"Example Domain\" ua=\"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20...\" webdriver=false"
+    },
+    {
+      "name": "navigation: goto/waitForSelector/waitForFunction/waitForURL",
+      "ok": true,
+      "ms": 1664,
+      "detail": "waits ok"
+    },
+    {
+      "name": "upload: setInputFiles + POST body reaches server",
+      "ok": true,
+      "ms": 393,
+      "detail": "server received 23 bytes"
+    },
+    {
+      "name": "download: waitForEvent(\"download\") + save",
+      "ok": true,
+      "ms": 420,
+      "detail": "saved spike-download.txt (25 bytes)"
+    },
+    {
+      "name": "persistent: launchPersistentContext via user_data_dir",
+      "ok": true,
+      "ms": 2859,
+      "detail": "profile dir created at /home/max/orca/workspaces/10x-chat/refactor-3-8-camoufox/spike/camoufox/.data/profile"
+    },
+    {
+      "name": "persistent: profile reuse keeps cookies and localStorage",
+      "ok": true,
+      "ms": 2034,
+      "detail": "cookie + localStorage survived restart"
+    },
+    {
+      "name": "storageState: export from persistent -> import into new context",
+      "ok": true,
+      "ms": 10551,
+      "detail": "cookies + 1 origin(s) restored"
+    },
+    {
+      "name": "proxy: HTTP CONNECT with basic auth",
+      "ok": true,
+      "ms": 3284,
+      "detail": "tunnelled api.ipify.org, exit ip 46.138.35.132"
+    },
+    {
+      "name": "proxy: SOCKS5 with username/password via the TS launcher API",
+      "ok": true,
+      "ms": 41,
+      "detail": "rejected by Playwright: browserType.launch: Browser does not support socks5 proxy authentication"
+    },
+    {
+      "name": "proxy: SOCKS5 with auth via CAMOU_PROXY_AUTH (python-launcher mechanism)",
+      "ok": false,
+      "ms": 2517,
+      "detail": "socks log: [{\"target\":\"api.ipify.org:443\",\"status\":\"tunneled\",\"auth\":null}]"
+    },
+    {
+      "name": "remote: launchServer + firefox.connect",
+      "ok": true,
+      "ms": 5481,
+      "detail": "connected and loaded \"Example Domain\""
+    },
+    {
+      "name": "cleanup: no camoufox processes left after close",
+      "ok": true,
+      "ms": 7200,
+      "detail": "close took 2299ms, processes 10/17/10"
+    },
+    {
+      "name": "headed: launches a real window on DISPLAY",
+      "ok": true,
+      "ms": 7126,
+      "detail": "headed window ok (DISPLAY=:0), ua=\"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0...\""
+    },
+    {
+      "name": "provider smoke (direct): chatgpt",
+      "ok": true,
+      "ms": 6227,
+      "detail": "status=200 title=\"ChatGPT: Chat, Work, Create & Code with AI\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (direct): gemini",
+      "ok": true,
+      "ms": 6558,
+      "detail": "status=200 title=\"‎Google Gemini\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (direct): claude",
+      "ok": true,
+      "ms": 4064,
+      "detail": "status=200 title=\"Sign in or create an account | Claude.ai\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (direct): grok",
+      "ok": true,
+      "ms": 7039,
+      "detail": "status=200 title=\"Grok\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (direct): perplexity",
+      "ok": true,
+      "ms": 5788,
+      "detail": "status=200 title=\"Perplexity\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (proxy http://127.0.0.1:3128): chatgpt",
+      "ok": true,
+      "ms": 13117,
+      "detail": "status=200 title=\"ChatGPT: Chat, Work, Create & Code with AI\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (proxy http://127.0.0.1:3128): gemini",
+      "ok": true,
+      "ms": 7676,
+      "detail": "status=200 title=\"‎Google Gemini\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (proxy http://127.0.0.1:3128): claude",
+      "ok": true,
+      "ms": 4832,
+      "detail": "status=403 title=\"Just a moment...\" interstitial=true"
+    },
+    {
+      "name": "provider smoke (proxy http://127.0.0.1:3128): grok",
+      "ok": true,
+      "ms": 8890,
+      "detail": "status=200 title=\"Grok\" interstitial=false"
+    },
+    {
+      "name": "provider smoke (proxy http://127.0.0.1:3128): perplexity",
+      "ok": true,
+      "ms": 7683,
+      "detail": "status=200 title=\"Perplexity\" interstitial=false"
+    }
+  ]
+}

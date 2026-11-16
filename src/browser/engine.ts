@@ -14,6 +14,23 @@ let _chromium: BrowserType | undefined;
 let _engineName: 'cloakbrowser' | 'unknown' = 'unknown';
 let _loaded = false;
 
+/**
+ * Proxy from the environment (HTTPS_PROXY / HTTP_PROXY, NO_PROXY).
+ *
+ * Chromium ignores the standard proxy env vars, so they have to be turned
+ * into a launch option explicitly. CloakBrowser supports HTTP and SOCKS5
+ * proxies, including credentials in the URL.
+ */
+function proxyFromEnv(): { server: string; bypass?: string } | undefined {
+  const server = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
+  if (!server) return undefined;
+  const bypass = process.env.NO_PROXY?.split(',')
+    .map((host) => host.trim())
+    .filter(Boolean)
+    .join(',');
+  return { server, ...(bypass ? { bypass } : {}) };
+}
+
 async function loadEngine(): Promise<BrowserType> {
   if (_chromium) return _chromium;
 
@@ -24,7 +41,8 @@ async function loadEngine(): Promise<BrowserType> {
     const humanize = process.env.TEN_X_CHAT_CLOAK_HUMANIZE !== '0';
     const cleanOptions = (options?: Record<string, unknown>) => {
       const { channel: _channel, ...rest } = options ?? {};
-      return rest;
+      const proxy = proxyFromEnv();
+      return proxy ? { ...rest, proxy } : rest;
     };
     _chromium = {
       launch: async (options?: Record<string, unknown>) => {

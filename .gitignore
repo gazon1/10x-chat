@@ -10,3 +10,6 @@ scripts/nvidia-analysis.ts
 pnpm-lock.yaml
 e2e-test.mjs
 e2e-test.mjs
+
+# Camoufox spike artifacts
+spike/camoufox/.data/
