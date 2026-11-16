@@ -1,12 +1,8 @@
-import { mkdir } from 'node:fs/promises';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { getChromium } from '../browser/engine.js';
-import { acquireProfileLock, launchBrowser } from '../browser/index.js';
+import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
-import { saveStorageState } from '../browser/state.js';
 import { loadConfig } from '../config.js';
-import { getIsolatedProfileDir, getSharedProfileDir } from '../paths.js';
 import { getProvider, isValidProvider, listProviders } from '../providers/index.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 
@@ -52,7 +48,8 @@ export function createLoginCommand(): Command {
 
         if (options?.all) {
           if (options?.tabs) {
-            await loginAllWithTabs(listProviders(), profileMode, profile);
+            // Tabs share one browser context/profile; named profile stays isolated, otherwise use shared.
+            await loginAllWithTabs(listProviders(), profile ? 'isolated' : 'shared', profile);
           } else {
             for (const name of listProviders()) {
               await loginToProvider(name, profileMode, profile);
@@ -101,6 +98,7 @@ async function loginToProvider(
     profileMode,
     profile,
     persistent: true, // Login needs persistent context to auto-save cookies
+    operation: 'login',
   });
 
   try {
@@ -155,50 +153,38 @@ async function loginToProvider(
 
 /**
  * Open all providers as tabs in a single browser window.
- * User can switch between tabs to login to each provider.
- * Waits until all are logged in (or timeout), then saves and closes.
+ * Uses a persistent browser session (same lifecycle as login) and opens
+ * additional tabs in that context.
  */
 async function loginAllWithTabs(
   providers: ProviderName[],
-  _profileMode: ProfileMode = 'shared',
+  profileMode: ProfileMode = 'shared',
   profile?: string,
 ): Promise<void> {
+  if (providers.length === 0) return;
   console.log(chalk.blue(`Opening ${providers.length} providers as tabs in one browser window...`));
   console.log(chalk.dim('Login to each tab. Window will close automatically when all are done.\n'));
 
-  const CHROMIUM_ARGS = [
-    '--disable-blink-features=AutomationControlled',
-    '--no-first-run',
-    '--no-default-browser-check',
-  ];
-
-  const profileDir = profile ? getIsolatedProfileDir(profile) : getSharedProfileDir();
-  await mkdir(profileDir, { recursive: true });
-  const lock = await acquireProfileLock(profileDir);
-
-  const context = await (await getChromium()).launchPersistentContext(profileDir, {
+  const [firstProvider, ...restProviders] = providers;
+  const first = getProvider(firstProvider);
+  const browser = await launchBrowser({
+    provider: firstProvider,
     headless: false,
-    viewport: { width: 1280, height: 900 },
-    args: CHROMIUM_ARGS,
+    url: first.config.loginUrl,
+    profileMode,
+    profile,
+    persistent: true,
+    operation: 'login',
   });
 
+  const pages: Array<{ name: ProviderName; page: Awaited<ReturnType<typeof browser.context.newPage>> }> = [
+    { name: firstProvider, page: browser.page },
+  ];
+
   try {
-    // Open first provider in the default page, rest in new tabs
-    const pages: Array<{ name: ProviderName; page: Awaited<ReturnType<typeof context.newPage>> }> =
-      [];
-
-    const firstPage = context.pages()[0] ?? (await context.newPage());
-    const [firstProvider, ...restProviders] = providers;
-
-    if (firstProvider) {
-      const provider = getProvider(firstProvider);
-      await firstPage.goto(provider.config.loginUrl, { waitUntil: 'domcontentloaded' });
-      pages.push({ name: firstProvider, page: firstPage });
-    }
-
     for (const name of restProviders) {
       const provider = getProvider(name);
-      const tab = await context.newPage();
+      const tab = await browser.context.newPage();
       await tab.goto(provider.config.loginUrl, { waitUntil: 'domcontentloaded' });
       pages.push({ name, page: tab });
     }
@@ -239,15 +225,8 @@ async function loginAllWithTabs(
     } else {
       console.log(chalk.green('\n✓ All providers logged in! Saving session...'));
     }
-
-    await saveStorageState(context);
   } finally {
-    try {
-      await context.close();
-    } catch {
-      // ignore
-    }
-    await lock.release();
+    await browser.close();
   }
 }
 
@@ -270,6 +249,7 @@ async function checkLoginStatus(
         url: provider.config.url,
         profileMode,
         profile,
+        operation: 'login-status',
       });
 
       try {

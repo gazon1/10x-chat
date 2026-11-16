@@ -4,6 +4,14 @@ import type { BrowserContext, Page } from 'playwright';
 import { getIsolatedProfileDir, getSharedProfileDir } from '../paths.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 import { launchSharedBrowserSession } from './daemon.js';
+import {
+  browserError,
+  type BrowserOp,
+  createDebugCollector,
+  type DebugCollector,
+  isBrowserDebugEnabled,
+  saveDebugArtifacts,
+} from './diagnostics.js';
 import { getChromium, getEngineName } from './engine.js';
 import { acquireProfileLock, type ProfileLock } from './lock.js';
 import { CHROMIUM_ARGS } from './process.js';
@@ -55,15 +63,64 @@ export interface LaunchOptions {
    * for use by regular (non-persistent) shared sessions.
    */
   persistent?: boolean;
+  /** Internal operation label for diagnostics (e.g. chat, login). */
+  operation?: string;
+}
+
+function opOf(opts: LaunchOptions, operation: string): BrowserOp {
+  return { provider: opts.provider, operation, url: opts.url, startedAt: Date.now() };
+}
+
+async function withStage<T>(op: BrowserOp, stage: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    throw browserError(`Browser ${stage} failed`, { ...op, stage }, error);
+  }
+}
+
+async function attachDebug(
+  op: BrowserOp,
+  context: BrowserContext | undefined,
+  page: Page | undefined,
+): Promise<DebugCollector | undefined> {
+  if (!isBrowserDebugEnabled() || !context) return undefined;
+  const collector = createDebugCollector();
+  if (page) collector.attach(page);
+  context.on('page', (p) => collector.attach(p));
+  await context
+    .tracing?.start({ screenshots: true, snapshots: true, sources: false })
+    .catch(() => {});
+  return collector;
+}
+
+async function finalizeDebug(
+  op: BrowserOp,
+  context: BrowserContext | undefined,
+  page: Page | undefined,
+  collector: DebugCollector | undefined,
+  failed: boolean,
+): Promise<void> {
+  if (!isBrowserDebugEnabled() || !context) return;
+  if (failed) {
+    const dir = await saveDebugArtifacts(op, page, context, collector).catch(() => undefined);
+    if (dir) {
+      await context.tracing?.stop({ path: path.join(dir, 'trace.zip') }).catch(() => {});
+    } else {
+      await context.tracing?.stop().catch(() => {});
+    }
+    return;
+  }
+  await context.tracing?.stop().catch(() => {});
 }
 
 /**
  * Launch a browser session for a provider.
  *
- * **Shared mode (default):** Each process gets its own Chromium instance
- * loaded with shared cookies from `~/.10x-chat/profiles/default/storage-state.json`.
- * Multiple `npx 10x-chat` processes can run truly in parallel — no locks.
- * On close, updated cookies are saved back.
+ * **Shared mode (default):** Connects to (or starts) a shared browser daemon and
+ * creates an isolated browser context loaded with shared cookies from
+ * `~/.10x-chat/profiles/default/storage-state.json`. Multiple invocations can
+ * run in parallel against the same Chromium process.
  *
  * **Shared + persistent** (login only): Uses `launchPersistentContext` on the
  * shared profile dir so the user can interact and cookies auto-persist.
@@ -89,17 +146,31 @@ export async function launchBrowser(opts: LaunchOptions): Promise<BrowserSession
 /**
  * Shared mode (non-persistent): connects to or launches a shared browser daemon.
  * Multiple CLI invocations share the same Chromium process. Browser is only
- * stopped when the last tab (across all invocations) is closed.
+ * stopped when the daemon becomes idle.
  */
 async function launchSharedBrowser(opts: LaunchOptions): Promise<BrowserSession> {
   const { headless = true, url } = opts;
-  const session = await launchSharedBrowserSession({ headless, url });
-  return {
-    context: session.context,
-    page: session.page,
-    lock: null,
-    close: session.close,
-  };
+  const op = opOf(opts, opts.operation ?? 'session');
+  try {
+    const session = await withStage(op, 'launch-shared', () =>
+      launchSharedBrowserSession({ headless, url }),
+    );
+    const close = async () => {
+      try {
+        await withStage(op, 'close-shared', session.close);
+      } finally {
+        // no local debug artifacts; daemon owns page/context internals
+      }
+    };
+    return {
+      context: session.context,
+      page: session.page,
+      lock: null,
+      close,
+    };
+  } catch (error) {
+    throw browserError('Failed to launch shared browser session', { ...op, stage: 'launch-shared' }, error);
+  }
 }
 
 /**
@@ -109,46 +180,59 @@ async function launchSharedBrowser(opts: LaunchOptions): Promise<BrowserSession>
  */
 async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<BrowserSession> {
   const { headless = true, url } = opts;
+  const op = opOf(opts, opts.operation ?? 'login');
   const profileDir = getSharedProfileDir();
-  await mkdir(profileDir, { recursive: true });
+  await withStage(op, 'prepare-profile', () => mkdir(profileDir, { recursive: true }));
 
-  const lock = await acquireProfileLock(profileDir);
+  const lock = await withStage(op, 'acquire-lock', () => acquireProfileLock(profileDir));
   await markProfileClean(profileDir);
 
-  let context: BrowserContext;
-  let page: Page;
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
+  let collector: DebugCollector | undefined;
   try {
     const channel = detectChromeChannel();
-    context = await (await getChromium()).launchPersistentContext(profileDir, {
-      headless,
-      viewport: { width: 1280, height: 900 },
-      ...(channel ? { channel } : {}),
-      args: CHROMIUM_ARGS,
-    });
+    context = await withStage(op, 'launch-context', async () =>
+      (await getChromium()).launchPersistentContext(profileDir, {
+        headless,
+        viewport: { width: 1280, height: 900 },
+        ...(channel ? { channel } : {}),
+        args: CHROMIUM_ARGS,
+      }),
+    );
     if (getEngineName() !== 'cloakbrowser') {
       await context.addInitScript(STEALTH_INIT_SCRIPT);
     }
 
     page = context.pages()[0] ?? (await context.newPage());
+    collector = await attachDebug(op, context, page);
 
     if (url) {
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await withStage({ ...op, url }, 'navigate', () =>
+        page!.goto(url, { waitUntil: 'domcontentloaded' }),
+      );
     }
   } catch (error) {
+    await finalizeDebug({ ...op, stage: 'launch-shared-persistent' }, context, page, collector, true);
+    await context?.close().catch(() => {});
     await lock.release();
     throw error;
   }
 
   const close = async () => {
+    let failed = false;
     try {
-      // Export storage state for non-persistent sessions to use
-      await saveStorageState(context);
+      await withStage(op, 'save-storage-state', () => saveStorageState(context!));
     } catch {
       // best effort
     }
     try {
-      await context.close();
+      await withStage(op, 'close-context', () => context!.close());
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
+      await finalizeDebug({ ...op, stage: 'close-shared-persistent' }, context, page, collector, failed);
       await lock.release();
     }
   };
@@ -162,40 +246,54 @@ async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<Brows
  */
 async function launchIsolatedBrowser(opts: LaunchOptions): Promise<BrowserSession> {
   const { provider, headless = true, url, profile } = opts;
+  const op = opOf(opts, opts.operation ?? 'session');
   const profileDir = getIsolatedProfileDir(profile ?? provider);
-  await mkdir(profileDir, { recursive: true });
+  await withStage(op, 'prepare-profile', () => mkdir(profileDir, { recursive: true }));
 
-  const lock = await acquireProfileLock(profileDir);
+  const lock = await withStage(op, 'acquire-lock', () => acquireProfileLock(profileDir));
   await markProfileClean(profileDir);
 
-  let context: BrowserContext;
-  let page: Page;
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
+  let collector: DebugCollector | undefined;
   try {
     const channel = detectChromeChannel();
-    context = await (await getChromium()).launchPersistentContext(profileDir, {
-      headless,
-      viewport: { width: 1280, height: 900 },
-      ...(channel ? { channel } : {}),
-      args: CHROMIUM_ARGS,
-    });
+    context = await withStage(op, 'launch-context', async () =>
+      (await getChromium()).launchPersistentContext(profileDir, {
+        headless,
+        viewport: { width: 1280, height: 900 },
+        ...(channel ? { channel } : {}),
+        args: CHROMIUM_ARGS,
+      }),
+    );
     if (getEngineName() !== 'cloakbrowser') {
       await context.addInitScript(STEALTH_INIT_SCRIPT);
     }
 
     page = context.pages()[0] ?? (await context.newPage());
+    collector = await attachDebug(op, context, page);
 
     if (url) {
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await withStage({ ...op, url }, 'navigate', () =>
+        page!.goto(url, { waitUntil: 'domcontentloaded' }),
+      );
     }
   } catch (error) {
+    await finalizeDebug({ ...op, stage: 'launch-isolated' }, context, page, collector, true);
+    await context?.close().catch(() => {});
     await lock.release();
     throw error;
   }
 
   const close = async () => {
+    let failed = false;
     try {
-      await context.close();
+      await withStage(op, 'close-context', () => context!.close());
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
+      await finalizeDebug({ ...op, stage: 'close-isolated' }, context, page, collector, failed);
       await lock.release();
     }
   };

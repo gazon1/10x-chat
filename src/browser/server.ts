@@ -6,9 +6,15 @@ import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { Browser, BrowserContext, Download, FileChooser, Locator, Page } from 'playwright';
 import { getAppDir } from '../paths.js';
+import { redactText } from './diagnostics.js';
 import { getChromium, getEngineName } from './engine.js';
 import { CHROMIUM_ARGS } from './process.js';
 import { detectChromeChannel, STEALTH_INIT_SCRIPT } from './stealth.js';
+
+function redactError(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  return redactText(msg);
+}
 
 type JsonPrimitive = boolean | number | string | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -26,7 +32,7 @@ type LocatorStep =
   | { type: 'nth'; index: number };
 
 interface RpcRequest {
-  kind: 'browser' | 'context' | 'page' | 'locator' | 'keyboard' | 'tabs' | 'event';
+  kind: 'browser' | 'context' | 'page' | 'locator' | 'keyboard' | 'event';
   method: string;
   target?: {
     contextId?: string;
@@ -83,7 +89,6 @@ let shuttingDown = false;
 
 const contexts = new Map<string, BrowserContext>();
 const pages = new Map<string, { page: Page; contextId: string }>();
-const manualTabs = new Set<string>();
 const fileChoosers = new Map<string, FileChooser>();
 const downloads = new Map<string, Download>();
 
@@ -309,8 +314,15 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
       }
 
       if (body.method === 'close') {
+        const contextId = body.target?.contextId ?? '';
         await context.close();
-        contexts.delete(body.target?.contextId ?? '');
+        contexts.delete(contextId);
+        for (const [pageId, entry] of pages.entries()) {
+          if (entry.contextId === contextId) {
+            pages.delete(pageId);
+            activePageCount = Math.max(0, activePageCount - 1);
+          }
+        }
         return { ok: true, result: null };
       }
 
@@ -494,21 +506,6 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
       }
     }
 
-    case 'tabs': {
-      if (body.method === 'register') {
-        const tabKey = String(args[0] ?? randomUUID());
-        manualTabs.add(tabKey);
-        return { ok: true, result: tabKey };
-      }
-
-      if (body.method === 'unregister') {
-        manualTabs.delete(String(args[0] ?? ''));
-        return { ok: true, result: Math.max(manualTabs.size, activePageCount) };
-      }
-
-      throw new Error(`Unsupported tabs method: ${body.method}`);
-    }
-
     case 'event': {
       if (body.method === 'setFiles') {
         const chooser = fileChoosers.get(body.target?.eventId ?? '');
@@ -616,7 +613,8 @@ async function main(): Promise<void> {
       res.end(
         JSON.stringify({
           ok: true,
-          activeTabs: Math.max(manualTabs.size, activePageCount),
+          activeContexts: contexts.size,
+          activePages: activePageCount,
           headless: HEADLESS,
           pid: process.pid,
         }),
@@ -651,7 +649,7 @@ async function main(): Promise<void> {
       res.end(
         JSON.stringify({
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: redactError(error),
         } satisfies RpcError),
       );
     }
@@ -673,7 +671,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch(async (error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(redactError(error));
   await clearStateFile();
   process.exit(1);
 });

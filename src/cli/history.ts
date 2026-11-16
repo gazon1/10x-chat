@@ -113,6 +113,7 @@ async function listProviderHistory(
       url: provider.config.url,
       profileMode,
       profile: opts.profile,
+      operation: 'history',
     });
 
     const loggedIn = await provider.actions.isLoggedIn(browser.page);

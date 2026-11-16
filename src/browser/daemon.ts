@@ -23,7 +23,7 @@ type SerializedValue =
   | { __type: 'function'; source: string };
 
 interface RpcRequest {
-  kind: 'browser' | 'context' | 'page' | 'locator' | 'keyboard' | 'tabs' | 'event';
+  kind: 'browser' | 'context' | 'page' | 'locator' | 'keyboard' | 'event';
   method: string;
   target?: Record<string, string | number | LocatorStep[] | undefined>;
   args?: SerializedValue[];
@@ -136,36 +136,6 @@ class BrowserDaemonHttpClient {
     }).catch(() => {
       // Best effort; caller falls back to pid kill if needed.
     });
-  }
-
-  async getLiveTabCount(): Promise<number> {
-    let response: Response;
-    try {
-      response = await fetch(`http://127.0.0.1:${this.state.port}/health`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${this.state.token}`,
-        },
-        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-      });
-    } catch (error) {
-      throw new Error(`Browser daemon healthcheck failed: ${getErrorMessage(error)}`);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Browser daemon healthcheck failed with status ${response.status}`);
-    }
-
-    let body: { ok?: boolean; activeTabs?: number };
-    try {
-      body = (await response.json()) as { ok?: boolean; activeTabs?: number };
-    } catch (error) {
-      throw new Error(
-        `Browser daemon healthcheck returned invalid response (status ${response.status}): ${getErrorMessage(error)}`,
-      );
-    }
-
-    return body.activeTabs ?? 0;
   }
 }
 
@@ -462,17 +432,17 @@ function getDaemonStatePathInternal(): string {
   return path.join(getAppDir(), DAEMON_FILE);
 }
 
-export function getDaemonStatePath(): string {
+function getDaemonStatePath(): string {
   return getDaemonStatePathInternal();
 }
 
-export async function clearDaemonState(): Promise<void> {
+async function clearDaemonState(): Promise<void> {
   await rm(getDaemonStatePathInternal(), { force: true }).catch(() => {
     // ignore
   });
 }
 
-export async function readDaemonState(): Promise<DaemonState | null> {
+async function readDaemonState(): Promise<DaemonState | null> {
   try {
     const raw = await readFile(getDaemonStatePathInternal(), 'utf-8');
     const state = JSON.parse(raw) as Partial<DaemonState>;
@@ -638,93 +608,53 @@ export async function stopDaemon(): Promise<void> {
   await clearDaemonState();
 }
 
-export async function getOrLaunchBrowserDaemon(headless = true): Promise<Browser> {
-  const client = await getDaemonClient(headless);
-  return createRemoteBrowserProxy(client);
-}
-
 export async function launchSharedBrowserSession(
   opts: SharedBrowserLaunchOptions,
 ): Promise<BrowserSessionProxy> {
   const { headless = true, url } = opts;
+  const startedAt = Date.now();
   const client = await getDaemonClient(headless);
   const storageStatePath = await loadStorageState();
 
   const browser = createRemoteBrowserProxy(client);
-  const context = (await browser.newContext({
-    viewport: { width: 1280, height: 900 },
-    ...(storageStatePath ? { storageState: storageStatePath } : {}),
-  })) as BrowserContext;
-  const page = (await context.newPage()) as Page;
-
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
   try {
+    context = (await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      ...(storageStatePath ? { storageState: storageStatePath } : {}),
+    })) as BrowserContext;
+    page = (await context.newPage()) as Page;
+
     if (url) {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
     }
   } catch (error) {
-    await context.close().catch(() => {
+    await context?.close().catch(() => {
       // best effort
     });
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Browser launch-shared failed (operation=session headless=${headless} elapsedMs=${Date.now() - startedAt}): ${message}`,
+    );
   }
 
   const close = async () => {
     try {
-      await saveStorageState(context);
+      await saveStorageState(context!);
     } catch {
       // best effort
     }
 
-    await page.close().catch(() => {
+    await page!.close().catch(() => {
       // already closed
     });
-    await context.close().catch(() => {
+    await context!.close().catch(() => {
       // already closed
     });
   };
 
-  return { context, page, close };
-}
-
-export async function registerDaemonTab(): Promise<string> {
-  const client = await getDaemonClient(true);
-  const response = await client.request({
-    kind: 'tabs',
-    method: 'register',
-    args: [serializeValue(randomUUID())],
-  });
-  const result = await decodeResult(client, response);
-  return typeof result === 'string' ? result : '';
-}
-
-export async function unregisterDaemonTab(tabKey: string): Promise<number> {
-  const state = await readDaemonState();
-  if (!state) return 0;
-
-  const client = new BrowserDaemonHttpClient(state);
-  try {
-    const response = await client.request({
-      kind: 'tabs',
-      method: 'unregister',
-      args: [serializeValue(tabKey)],
-    });
-    const result = await decodeResult(client, response);
-    return typeof result === 'number' ? result : 0;
-  } catch {
-    return 0;
-  }
-}
-
-export async function readLiveTabCount(): Promise<number> {
-  const state = await readDaemonState();
-  if (!state) return 0;
-
-  const client = new BrowserDaemonHttpClient(state);
-  try {
-    return await client.getLiveTabCount();
-  } catch {
-    return 0;
-  }
+  return { context: context!, page: page!, close };
 }
 
 export type { WaitForUrlPredicate };
