@@ -37,6 +37,24 @@ describe('roundTripState', () => {
     expect(state.reason).toBeUndefined();
     expect(state.status).toBe('partial');
   });
+
+  it('counts a combination without credentials as skipped, not as a failure', () => {
+    const state = roundTripState({ 'camoufox/gemini': { ok: false, skipped: true } }, 10);
+    expect(state.skipped).toBe(1);
+    expect(state.attempted).toBe(0);
+    expect(state.failed).toBe(0);
+    expect(state.status).toBe('unfinished');
+  });
+
+  it('is not done while some mandatory combination could not be measured', () => {
+    const combos: Record<string, { ok: boolean; skipped?: boolean }> = {
+      'camoufox/chatgpt': ok,
+      'camoufox/gemini': { ok: false, skipped: true },
+    };
+    const state = roundTripState(combos, 10);
+    expect(state.status).toBe('partial');
+    expect(state.passed).toBe(1);
+  });
 });
 
 describe('mergeRoundTrip', () => {
@@ -53,5 +71,25 @@ describe('mergeRoundTrip', () => {
   it('does not report done when the mandatory set is not covered', () => {
     const merged = mergeRoundTrip({ combinations: { 'camoufox/chatgpt': ok } }, {}, 10);
     expect(merged.status).not.toBe('done');
+  });
+
+  it('drops a stale reason from a previous report once a combination was measured', () => {
+    const merged = mergeRoundTrip(
+      { status: 'unfinished', reason: 'no storage state found', combinations: {} },
+      { status: 'partial', combinations: { 'camoufox/chatgpt': ok } },
+      10,
+    );
+    expect(merged.reason).toBeUndefined();
+    expect(merged.status).toBe('partial');
+  });
+
+  it('keeps the reason while nothing could be measured at all', () => {
+    const merged = mergeRoundTrip(
+      { status: 'unfinished', reason: 'no storage state found', combinations: {} },
+      { status: 'unfinished', reason: 'no storage state found', combinations: {} },
+      10,
+    );
+    expect(merged.reason).toBe('no storage state found');
+    expect(merged.status).toBe('unfinished');
   });
 });

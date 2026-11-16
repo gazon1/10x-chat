@@ -7,15 +7,16 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RESULTS_DIR = path.join(HERE, 'results');
-export const require = createRequire(import.meta.url);
+// The repository root: spike/readiness/ lives two levels below it.
+export const REPO_ROOT = path.resolve(HERE, '..', '..');
 
 export async function writeReport(name, payload) {
   await mkdir(RESULTS_DIR, { recursive: true });
@@ -36,26 +37,77 @@ export function assert(cond, message) {
   if (!cond) throw new Error(message);
 }
 
+/**
+ * Where the versions of the packages the harness really uses are installed.
+ *
+ * `createRequire(import.meta.url)` resolves relative to `spike/readiness/`,
+ * so it finds the repository's `node_modules` and nothing else: Camoufox and
+ * its Playwright live in the nested sandbox `spike/camoufox/node_modules`.
+ * The paths are therefore spelled out, and the resolved file is recorded in
+ * the report (`env.versionSources`) so a wrong or missing version is visible
+ * instead of silently `null`.
+ */
+const VERSION_SOURCES = {
+  camoufoxPackage: path.join(REPO_ROOT, 'spike', 'camoufox', 'node_modules', 'camoufox'),
+  playwrightCoreSpike: path.join(REPO_ROOT, 'spike', 'camoufox', 'node_modules', 'playwright-core'),
+  playwrightCoreRepo: path.join(REPO_ROOT, 'node_modules', 'playwright-core'),
+  cloakbrowser: path.join(REPO_ROOT, 'node_modules', 'cloakbrowser'),
+};
+
+function packageVersion(dir) {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    return pkg.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Camoufox browser build that is installed, read from the cache config
+ * (`active_version` = `browsers/official/158.0.1-beta.41-3f2eb1d0`).
+ */
+function camoufoxBrowserBuild() {
+  const installPath = path.join(os.homedir(), '.cache', 'camoufox');
+  try {
+    const config = JSON.parse(readFileSync(path.join(installPath, 'config.json'), 'utf8'));
+    const active = String(config.active_version ?? '');
+    if (!active) return null;
+    // `active_version` is a path: `browsers/official/158.0.1-beta.41-3f2eb1d0`.
+    const leaf = active.split('/').pop() ?? active;
+    const cut = leaf.lastIndexOf('-');
+    const tail = cut === -1 ? '' : leaf.slice(cut + 1);
+    if (/^[0-9a-f]{8,}$/.test(tail)) {
+      return { version: leaf.slice(0, cut), sha256: tail, installPath };
+    }
+    return { version: leaf, sha256: null, installPath };
+  } catch {
+    return null;
+  }
+}
+
 /** Versions + host facts every matrix report repeats. */
 export function envInfo() {
-  const pkg = (spec) => {
-    try {
-      return require(`${spec}/package.json`).version;
-    } catch {
-      return null;
-    }
-  };
-  let camoufoxBrowser = null;
-  try {
-    camoufoxBrowser = require('camoufox/package.json').version;
-  } catch {}
+  const versions = {};
+  const versionSources = {};
+  for (const [key, dir] of Object.entries(VERSION_SOURCES)) {
+    const version = packageVersion(dir);
+    versions[key] = version;
+    versionSources[key] = version ? path.join(dir, 'package.json') : null;
+  }
+  const build = camoufoxBrowserBuild();
+  versions.camoufoxBrowser = build?.version ?? null;
+  versions.camoufoxBrowserSha256 = build?.sha256 ?? null;
+  versionSources.camoufoxBrowser = build ? path.join(build.installPath, 'config.json') : null;
   return {
     node: process.version,
     platform: `${os.type()} ${os.release()} ${os.arch()}`,
     host: os.hostname(),
-    camoufoxPackage: camoufoxBrowser,
-    playwrightCoreSpike: pkg('playwright-core'),
-    cloakbrowser: pkg('cloakbrowser'),
+    ...versions,
+    versionSources,
+    // The display the browsers were opened on: a headed browser on the
+    // desktop would steal the focus, so the harness only uses a virtual one.
+    display: process.env.DISPLAY ?? null,
     proxyEnv: {
       HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
       HTTP_PROXY: process.env.HTTP_PROXY ?? null,
@@ -80,22 +132,31 @@ export function harnessSettings(matrix) {
 /** A check runner that never aborts the matrix: failures are data. */
 export function createChecker() {
   const results = [];
+  const record = (name, ok, detail, extra = {}) => {
+    results.push({ name, ok, detail: detail ?? null, ...extra });
+    const shown =
+      typeof detail === 'object' && detail !== null ? JSON.stringify(detail) : (detail ?? '');
+    const tag = extra.skipped ? 'SKIP' : ok ? 'PASS' : 'FAIL';
+    console.log(`${tag}  ${name}${shown ? ` - ${shown}` : ''}`);
+    return results.at(-1);
+  };
   return {
     results,
+    record,
     async check(name, fn) {
       const started = Date.now();
       try {
         const detail = await fn();
-        results.push({ name, ok: true, ms: Date.now() - started, detail: detail ?? null });
-        const shown =
-          typeof detail === 'object' && detail !== null ? JSON.stringify(detail) : (detail ?? '');
-        console.log(`PASS  ${name} (${Date.now() - started}ms) ${shown ? `- ${shown}` : ''}`);
+        const result = record(name, true, detail);
+        result.ms = Date.now() - started;
+        console.log(`  (${result.ms}ms)`);
+        return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        results.push({ name, ok: false, ms: Date.now() - started, detail: message });
-        console.log(`FAIL  ${name} (${Date.now() - started}ms) - ${message}`);
+        const result = record(name, false, message);
+        result.ms = Date.now() - started;
+        return result;
       }
-      return results.at(-1);
     },
   };
 }
@@ -112,10 +173,35 @@ export function pids(pattern) {
   }
 }
 
-/** Total RSS (kB) of every process matching `pattern`. */
-export function rssKb(pattern) {
+/**
+ * The processes that appeared since a snapshot was taken.
+ *
+ * `pgrep -f <pattern>` matches every process of the machine — a browser the
+ * user opened by hand would end up in the RSS of the test. Comparing with a
+ * snapshot taken before the launch keeps the measurement to the processes the
+ * test itself started.
+ */
+export function newPids(pattern, before = []) {
+  const known = new Set(before);
+  return pids(pattern).filter((pid) => !known.has(pid));
+}
+
+/** Are the given processes still alive? */
+export function alivePids(pidList) {
+  return pidList.filter((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Total RSS (kB) of the given processes. */
+export function rssKbOfPids(pidList) {
   let total = 0;
-  for (const pid of pids(pattern)) {
+  for (const pid of pidList) {
     try {
       const status = execFileSync('cat', [`/proc/${pid}/status`], { encoding: 'utf8' });
       const match = status.match(/VmRSS:\s+(\d+) kB/);
@@ -125,6 +211,11 @@ export function rssKb(pattern) {
     }
   }
   return total;
+}
+
+/** Total RSS (kB) of every process matching `pattern`. */
+export function rssKb(pattern) {
+  return rssKbOfPids(pids(pattern));
 }
 
 export function dirSizeKb(dir) {

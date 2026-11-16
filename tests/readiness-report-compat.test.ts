@@ -75,4 +75,47 @@ describe('compatibilityIssues', () => {
       'reduced',
     );
   });
+
+  // The versions of the packages the harness really uses: a change of any of
+  // them means the report describes another experiment.
+  for (const key of ['camoufoxPackage', 'playwrightCoreSpike', 'cloakbrowser']) {
+    it(`detects a change of ${key}`, () => {
+      const report = {
+        env: { ...env, [key]: '0.0.1' },
+        harness: { proxy: 'http://127.0.0.1:3128', headless: true },
+      };
+      const issues = compatibilityIssues('provider-matrix', report, env);
+      expect(issues.join(' ')).toContain(key);
+    });
+
+    it(`detects that ${key} cannot be resolved any more`, () => {
+      const report = {
+        env: { ...env, [key]: '0.0.1' },
+        harness: { proxy: 'http://127.0.0.1:3128', headless: true },
+      };
+      const issues = compatibilityIssues('provider-matrix', report, { ...env, [key]: null });
+      expect(issues.join(' ')).toContain(key);
+    });
+
+    it(`detects that ${key} was not recorded in the report`, () => {
+      const report = {
+        env: { ...env, [key]: null },
+        harness: { proxy: 'http://127.0.0.1:3128', headless: true },
+      };
+      const issues = compatibilityIssues('provider-matrix', report, env);
+      expect(issues.join(' ')).toContain(key);
+    });
+  }
+
+  it('detects a changed browser build', () => {
+    const report = {
+      env: { ...env, camoufoxBrowser: '158.0.1-beta.41' },
+      harness: { proxy: 'http://127.0.0.1:3128', headless: true },
+    };
+    const issues = compatibilityIssues('provider-matrix', report, {
+      ...env,
+      camoufoxBrowser: '159.0.0-beta.42',
+    });
+    expect(issues.join(' ')).toContain('camoufoxBrowser');
+  });
 });

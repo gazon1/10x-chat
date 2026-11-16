@@ -12,13 +12,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { ENGINE_NAMES, engines } from './engines.mjs';
 import {
+  alivePids,
   assert,
   createChecker,
   dirSizeKb,
   envInfo,
   harnessSettings,
+  newPids,
   pids,
-  rssKb,
+  rssKbOfPids,
   sleep,
   writeReport,
 } from './util.mjs';
@@ -26,6 +28,11 @@ import {
 const TARGET = 'https://example.com';
 
 async function measureLaunch(engine) {
+  // `pgrep -f <pattern>` matches every process of the machine: a browser the
+  // user opened by hand would otherwise be counted as RSS of this test. The
+  // snapshot before the launch makes the measurement specific to the
+  // processes this test started.
+  const before = pids(engine.processPattern);
   const started = Date.now();
   const browser = await engine.launch({ headless: true });
   const launched = Date.now();
@@ -33,12 +40,14 @@ async function measureLaunch(engine) {
     const page = await browser.newPage();
     await page.goto(TARGET, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     const loaded = Date.now();
-    const rss = rssKb(engine.processPattern);
+    const spawned = newPids(engine.processPattern, before);
+    const rss = rssKbOfPids(spawned);
     return {
       launchMs: launched - started,
       firstPaintMs: loaded - started,
       rssKb: rss,
-      processes: pids(engine.processPattern).length,
+      processes: spawned.length,
+      spawnedPids: spawned,
     };
   } finally {
     await browser.close().catch(() => {});
@@ -88,12 +97,17 @@ async function main() {
 
     // 3. Cleanup ---------------------------------------------------------------
     const cleanup = await checker.check(`${engineName}: no leftover processes`, async () => {
-      const before = pids(engine.processPattern).length;
-      await measureLaunch(engine);
+      const before = pids(engine.processPattern);
+      const m = await measureLaunch(engine);
       await sleep(2000);
-      const after = pids(engine.processPattern).length;
-      assert(after <= before, `leftover processes: before=${before} after=${after}`);
-      return `before=${before} after=${after}`;
+      // Only the processes this launch started are checked: a browser the user
+      // has open is none of the harness's business.
+      const leftover = alivePids(m.spawnedPids);
+      assert(
+        leftover.length === 0,
+        `leftover processes of this launch: ${leftover.join(', ')} (before=${before.length})`,
+      );
+      return `spawned=${m.spawnedPids.length} leftover=0 (machine-wide before=${before.length})`;
     });
 
     perEngine[engineName] = { footprint: footprints[engineName], results: { cold, warm, cleanup } };

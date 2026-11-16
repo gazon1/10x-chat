@@ -8,11 +8,30 @@
  *
  * Run counts follow the issue: 10 runs per provider, 30 for the
  * Cloudflare-dependent ones (ChatGPT, Perplexity).
+ *
+ * Two properties of the round-trip matter and are measured explicitly:
+ *
+ * - **A new answer.** A provider session can already contain history, so the
+ *   number of answers is counted before the prompt is sent and only an answer
+ *   that appeared afterwards counts. Every exchange also carries a unique
+ *   marker in the prompt.
+ * - **A reused profile.** The second exchange runs in a *new browser process*
+ *   on the *same persistent profile* (userDataDir) — not on an exported
+ *   storageState — and must answer without a new authorization.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ENGINE_NAMES, engines } from './engines.mjs';
+import {
+  classifyOutcome,
+  containsMarker,
+  LOGIN_URL,
+  newAnswerIndex,
+  newMarker,
+  probePrompt,
+  SIGNUP_WALL,
+} from './probe.mjs';
 import { mergeRoundTrip, roundTripState } from './round-trip.mjs';
 import {
   assert,
@@ -24,9 +43,6 @@ import {
   writeReport,
 } from './util.mjs';
 
-const PROBE_PROMPT = 'Reply with the single word: READY';
-// A page that means "the session is gone": the provider asked to log in again.
-const LOGIN_URL = /\/login|\/signin|\/auth\/login|accounts\.google\.com/i;
 // Same proxy endpoint and geography for both engines (the 3/8 spike used it).
 const PROXY = process.env.SPIKE_PROXY ?? 'http://127.0.0.1:3128';
 const HEADLESS = process.env.SPIKE_HEADLESS === '1';
@@ -67,9 +83,18 @@ const PROVIDERS = [
     url: 'https://claude.ai/new',
     runs: 10,
     cloudflare: false,
-    composer: '[contenteditable="true"].ProseMirror, div[enterkeyhint="enter"]',
-    send: 'button[aria-label*="Send"], button[type="submit"]',
-    response: '[data-testid="chat-message"], .font-claude-response',
+    // The composer is the ProseMirror textbox. The UI also keeps a hidden
+    // TEXTAREA (the same enterkeyhint) that comes first in the DOM under
+    // Firefox — filling that one silently loses the prompt, so the textbox
+    // is addressed explicitly.
+    composer:
+      'div.ProseMirror[contenteditable="true"][role="textbox"], div[contenteditable="true"][role="textbox"], div[enterkeyhint="enter"][role="textbox"]',
+    send: 'button[aria-label="Send message"], button[aria-label*="Send"], button[type="submit"]',
+    // The current Claude UI marks the assistant turn with
+    // data-testid="assistant-message"; the answer text itself lives in
+    // [data-perf-reply-text] inside it. The user turn is
+    // [data-testid="user-message"].
+    response: '[data-testid="assistant-message"], [data-cds="AssistantMessage"]',
     login: 'button:has-text("Log in")',
   },
   {
@@ -94,7 +119,6 @@ const PROVIDERS = [
   },
 ];
 
-const CF_TITLE = /just a moment|attention required|checking your browser|verify you are human/i;
 const CF_SELECTORS =
   '#challenge-running, #challenge-form, .cf-browser-verification, #cf-challenge-running';
 
@@ -113,30 +137,61 @@ const SELECTED_PROVIDERS = PROVIDER_FILTER.length
 // The criterion always covers the full matrix, even in a reduced run.
 const MANDATORY_COMBOS = PROVIDERS.length * ENGINE_NAMES.length;
 
-function classify({ status, title, cfVisible, loginVisible, composerVisible }) {
-  if (status === 0) return 'infra-error';
-  if (cfVisible || CF_TITLE.test(title) || status === 403 || status === 503) return 'cloudflare';
-  if (loginVisible && !composerVisible) return 'auth-wall';
-  if (composerVisible) return 'composer-visible';
-  return 'provider-error';
-}
-
-/** Where would an authorized session live? */
-async function authStatePath() {
+/**
+ * Where would an authorized session live?
+ *
+ * Every provider has its own storage state: `storage-state-<provider>.json`
+ * in the profile directory. The single-session file `storage-state.json` is
+ * the legacy ChatGPT state and is only used as a fallback for ChatGPT — using
+ * a ChatGPT session for another provider would measure nothing.
+ */
+async function storageStateFor(providerName) {
   const base = path.join(os.homedir(), '.10x-chat', 'profiles');
   const candidates = [
-    path.join(base, 'default', 'storage-state.json'),
-    path.join(base, 'shared', 'storage-state.json'),
+    path.join(base, 'default', `storage-state-${providerName}.json`),
+    path.join(base, 'shared', `storage-state-${providerName}.json`),
   ];
+  if (providerName === 'chatgpt') {
+    candidates.push(
+      path.join(base, 'default', 'storage-state.json'),
+      path.join(base, 'shared', 'storage-state.json'),
+    );
+  }
   for (const candidate of candidates) {
     try {
-      await readFile(candidate, 'utf8');
-      return candidate;
+      const raw = await readFile(candidate, 'utf8');
+      return { path: candidate, state: JSON.parse(raw) };
     } catch {
       /* try next */
     }
   }
   return null;
+}
+
+/** The persistent profile of one engine/provider pair (outside the repository). */
+function profileDir(engineName, providerName) {
+  return path.join(
+    os.homedir(),
+    '.10x-chat',
+    'profiles',
+    'readiness',
+    `${engineName}-${providerName}`,
+  );
+}
+
+/**
+ * Does the accumulated report cover the whole matrix?
+ *
+ * Every engine has to have every provider with the full run count — no
+ * matter in how many runs the matrix was measured.
+ */
+function coverageComplete(perEngine) {
+  return ENGINE_NAMES.every((engine) =>
+    PROVIDERS.every((provider) => {
+      const measured = perEngine?.[engine]?.[provider.name]?.runs ?? 0;
+      return measured >= provider.runs;
+    }),
+  );
 }
 
 /** The exit IP of one engine, to prove both engines use the same egress. */
@@ -164,6 +219,18 @@ async function classifyRun(engine, provider, storageState) {
       ? await browser.newContext({ storageState })
       : await browser.newContext();
     const page = await context.newPage();
+    // The session keeps living while the browser is open: the provider
+    // rotates its session token. The cookies of this run are handed back so
+    // that the *next* browser continues the same session instead of
+    // replaying a stale cookie file (which the provider would reject with
+    // "Your account changed").
+    const liveCookies = async () => {
+      try {
+        return await context.cookies();
+      } catch {
+        return null;
+      }
+    };
     let status = 0;
     let title = '';
     let url = '';
@@ -187,7 +254,11 @@ async function classifyRun(engine, provider, storageState) {
     // Give the Cloudflare challenge a chance to settle.
     for (let i = 0; i < 6; i++) {
       title = await page.title().catch(() => '');
-      if (!CF_TITLE.test(title)) break;
+      if (
+        !/just a moment|attention required|checking your browser|verify you are human/i.test(title)
+      ) {
+        break;
+      }
       await sleep(2000);
     }
     url = page.url();
@@ -197,7 +268,7 @@ async function classifyRun(engine, provider, storageState) {
     let cfVisible = false;
     let loginVisible = false;
     let composerVisible = false;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 30; i++) {
       cfVisible = await page
         .locator(CF_SELECTORS)
         .first()
@@ -213,7 +284,11 @@ async function classifyRun(engine, provider, storageState) {
         .first()
         .isVisible()
         .catch(() => false);
-      if (cfVisible || loginVisible || composerVisible) break;
+      // The loop waits for the *composer*: a login button in the header is
+      // also shown for an authorized session, so it must not end the wait.
+      // A login wall without a composer is accepted after 15 s.
+      if (cfVisible || composerVisible) break;
+      if (loginVisible && i >= 15) break;
       await sleep(1000);
     }
     return {
@@ -223,27 +298,207 @@ async function classifyRun(engine, provider, storageState) {
       cfVisible,
       loginVisible,
       composerVisible,
-      outcome: classify({ status, title, url, cfVisible, loginVisible, composerVisible }),
+      // The cookies of this run: the next browser continues this session.
+      cookies: await liveCookies(),
+      // A redirect to a login page is an auth failure, not a provider error.
+      authRedirect: LOGIN_URL.test(url),
+      outcome: classifyOutcome({
+        status,
+        title,
+        url,
+        cfVisible,
+        loginVisible,
+        composerVisible,
+      }),
     };
   } finally {
     await browser.close().catch(() => {});
   }
 }
 
+/** The answers on the page right now: how many and what they say. */
+async function snapshotAnswers(page, provider) {
+  const locator = page.locator(provider.response);
+  const count = await locator.count();
+  const texts = [];
+  for (let i = 0; i < count; i++) {
+    texts.push(
+      (
+        (await locator
+          .nth(i)
+          .textContent()
+          .catch(() => '')) ?? ''
+      ).trim(),
+    );
+  }
+  return { count, texts };
+}
+
 /**
- * One authorized exchange: open the provider with a stored session, send the
- * probe prompt and require a non-empty answer.
+ * Wait for an answer that appeared *after* the prompt was sent.
+ *
+ * An answer counts only when it is new (the count grew), non-empty and not a
+ * copy of an answer that was already there.
  */
-async function exchange(engine, provider, storageState) {
-  const browser = await engine.launch({ headless: HEADLESS, proxy: { server: PROXY } });
+async function waitForNewAnswer(page, provider, before, timeoutMs = 45_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const now = await snapshotAnswers(page, provider);
+    if (now.count > before.count) {
+      // Throws when the count did not grow — the explicit "new answer" check.
+      newAnswerIndex(before.count, now.count);
+      for (let i = before.count; i < now.count; i++) {
+        const text = now.texts[i];
+        if (!text) continue;
+        if (before.texts.includes(text)) continue;
+        return { text, index: i, before: before.count, after: now.count };
+      }
+    }
+    await sleep(1000);
+  }
+  const now = await snapshotAnswers(page, provider);
+  throw new Error(
+    `no new answer appeared within ${timeoutMs}ms (answers before=${before.count}, now=${now.count})`,
+  );
+}
+
+/**
+ * A combination that could not be measured at all: the provider sent the
+ * browser to its login page because no authorized session was available.
+ * That is not a failure of the engine — it is a missing precondition.
+ */
+class NotMeasuredError extends Error {}
+
+/**
+ * The paywall text of the page, if the provider keeps its answer behind an
+ * account ("Sign up and repeat your request").
+ */
+async function signupWallOnPage(page) {
+  const body = await page.evaluate(() => document.body.innerText.slice(0, 4000)).catch(() => '');
+  return body.match(SIGNUP_WALL)?.[0] ?? null;
+}
+
+/**
+ * Was the prompt really submitted?
+ *
+ * The marker has to leave the composer and appear in the conversation: a
+ * click on a still-disabled send button does nothing, and a filled composer
+ * that was never sent would otherwise look like a submitted prompt.
+ */
+async function promptSubmitted(page, provider, marker) {
+  const composerText = await page
+    .locator(provider.composer)
+    .first()
+    .innerText()
+    .catch(() => '');
+  if (composerText.includes(marker)) return false;
+  return page.evaluate((m) => document.body.innerText.includes(m), marker).catch(() => false);
+}
+
+/**
+ * Put the prompt into the composer.
+ *
+ * `fill()` does not reach every editor: under Firefox the ProseMirror of
+ * Claude keeps the text out of the DOM, so the prompt would silently stay
+ * empty. The text is therefore verified in the composer and, if it did not
+ * arrive, typed with real key events.
+ *
+ * @returns {'fill'|'type'|'unknown'} how the prompt reached the composer
+ */
+async function fillComposer(page, provider, text) {
+  const composer = page.locator(provider.composer).first();
+  const needle = text.slice(-16);
+  await composer.fill(text).catch(() => {});
+  if ((await composer.innerText().catch(() => '')).includes(needle)) return 'fill';
+  // The editor did not take the text: clear it and type instead.
+  await composer.click().catch(() => {});
+  await composer.press('ControlOrMeta+A').catch(() => {});
+  await composer.press('Backspace').catch(() => {});
+  await composer.pressSequentially(text, { delay: 10 }).catch(() => {});
+  if ((await composer.innerText().catch(() => '')).includes(needle)) return 'type';
+  // The composer cannot be read (a half-loaded page, a replaced editor).
+  // Whether the prompt was really sent is decided by `promptSubmitted`.
+  return 'unknown';
+}
+
+/**
+ * Send the probe prompt and make sure it was submitted.
+ *
+ * A click on the send button is not enough: the button can still be disabled
+ * while the framework processes the filled composer, and the click is then
+ * swallowed. The marker in the prompt is the proof that the prompt reached
+ * the conversation.
+ */
+async function submitPrompt(page, provider, marker) {
+  const composer = page.locator(provider.composer).first();
+  const send = page.locator(provider.send).first();
+  const methods = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    methods.push(await fillComposer(page, provider, probePrompt(marker)));
+    // Give the framework a moment to enable the send button.
+    await sleep(500);
+    if (attempt === 2) {
+      // Second attempt: send with the keyboard.
+      await composer.press('Enter').catch(() => {});
+    } else {
+      await send.click({ force: true }).catch(() => {});
+    }
+    for (let i = 0; i < 10; i++) {
+      if (await promptSubmitted(page, provider, marker)) {
+        return { attempts: attempt, methods };
+      }
+      await sleep(1000);
+    }
+  }
+  throw new Error(
+    `the prompt was not submitted (the marker never left the composer, methods=${methods.join(',')})`,
+  );
+}
+
+/**
+ * One authorized exchange in a persistent profile.
+ *
+ * @param {object} options
+ * @param {string} options.userDataDir the profile directory of this pair
+ * @param {object|null} options.seedCookies storage state to seed the profile
+ *   with (only for the first launch — the second launch must find the
+ *   session on disk)
+ */
+async function exchangeInProfile(engine, provider, { userDataDir, seedCookies, marker }) {
+  const context = await engine.launchPersistent({
+    headless: HEADLESS,
+    proxy: { server: PROXY },
+    userDataDir,
+  });
   try {
-    const context = await browser.newContext({ storageState });
+    if (seedCookies?.cookies?.length) {
+      await context.addCookies(seedCookies.cookies);
+    }
     const page = await context.newPage();
-    await page.goto(provider.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    // The proxy occasionally drops a connection (ERR_NETWORK_CHANGED). That is
+    // an infrastructure hiccup, not a result of the provider — a second try
+    // keeps the measurement honest.
+    let lastError;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await page.goto(provider.url, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60_000,
+        });
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        await sleep(2000);
+      }
+    }
+    if (lastError) throw lastError;
     const url = page.url();
     // A session that is not authorized ends up on a login page: that is the
     // proof that the stored state was not reused.
-    assert(!LOGIN_URL.test(url), `the session was not authorized, landed on ${url}`);
+    if (LOGIN_URL.test(url)) {
+      throw new NotMeasuredError(`the session was not authorized, landed on ${url}`);
+    }
     const composer = page.locator(provider.composer).first();
     await composer.waitFor({ state: 'visible', timeout: 20_000 });
     // Diagnostic only: some providers keep a login button in the header even
@@ -253,45 +508,89 @@ async function exchange(engine, provider, storageState) {
       .first()
       .isVisible()
       .catch(() => false);
-    await composer.fill(PROBE_PROMPT);
-    await page.locator(provider.send).first().click({ force: true });
-    const answer = page.locator(provider.response).first();
-    await answer.waitFor({ state: 'visible', timeout: 45_000 });
-    // The turn container appears before the answer is written into it.
-    let text = '';
-    for (let i = 0; i < 20; i++) {
-      text = (await answer.textContent().catch(() => '')) ?? '';
-      if (text.trim().length > 0) break;
-      await sleep(1000);
+    // What is on the page *before* the prompt is sent: an old answer must not
+    // be mistaken for the answer to this prompt.
+    const before = await snapshotAnswers(page, provider);
+    let attempts;
+    let submitMethods = [];
+    let answer;
+    try {
+      const submit = await submitPrompt(page, provider, marker);
+      attempts = submit.attempts;
+      submitMethods = submit.methods;
+      answer = await waitForNewAnswer(page, provider, before);
+    } catch (err) {
+      // The provider can accept the request and still keep the answer behind
+      // an account ("Sign up and repeat your request"). Such a combination is
+      // not measurable without credentials — it says nothing about the engine
+      // — so it is reported apart from a real failure.
+      const wall = await signupWallOnPage(page);
+      if (wall) {
+        throw new NotMeasuredError(`the provider requires an authorized session ("${wall}")`);
+      }
+      throw err;
     }
-    assert(text.trim().length > 0, 'the provider answered with an empty bubble');
+    // The answer itself can be the paywall text: Perplexity answers a guest
+    // with "Sign up and repeat your request." — a non-empty answer that is
+    // not an answer at all. The check looks at the answer first, so a banner
+    // of an authorized session cannot turn a real answer into a skip.
+    const answerWall = answer.text.match(SIGNUP_WALL);
+    if (answerWall) {
+      throw new NotMeasuredError(
+        `the provider requires an authorized session ("${answerWall[0]}")`,
+      );
+    }
     return {
-      answerChars: text.trim().length,
+      answerChars: answer.text.length,
+      // How many answers the page had before and after: proof that the
+      // measured answer is a new one.
+      answersBefore: answer.before,
+      answersAfter: answer.after,
+      answerIndex: answer.index,
+      submitAttempts: attempts,
+      // How the prompt reached the composer: `fill` (the DOM was set) or
+      // `type` (real key events — Firefox/ProseMirror needs that).
+      submitMethods,
+      // The model did not have to echo the marker; it is recorded, not asserted.
+      markerEchoed: containsMarker(answer.text, marker),
       loginWall,
-      // The session as it looks after the exchange — the second run reuses it.
-      storageState: await context.storageState(),
     };
   } finally {
-    await browser.close().catch(() => {});
+    await context.close().catch(() => {});
   }
 }
 
 /**
- * The §4 criterion for one engine/provider pair: an authorized round-trip and
- * a repeated exchange on the same session after a browser restart, without a
- * re-login.
+ * The §4 criterion for one engine/provider pair: an authorized round-trip in a
+ * persistent profile and a repeated exchange on the same profile after the
+ * browser was closed and started again — without a new authorization.
  */
-async function roundTrip(engine, provider, storageState) {
-  const first = await exchange(engine, provider, storageState);
-  // Restart the browser and continue with the session the first exchange left
-  // behind: the provider must answer again without a new authorization.
-  const second = await exchange(engine, provider, first.storageState);
+async function roundTrip(engine, provider, storageState, engineName) {
+  const userDataDir = profileDir(engineName, provider.name);
+  await rm(userDataDir, { recursive: true, force: true });
+  const first = await exchangeInProfile(engine, provider, {
+    userDataDir,
+    seedCookies: storageState,
+    marker: newMarker('first'),
+  });
+  // The browser is closed. The same profile is opened again — a new process,
+  // no cookies are seeded: the session has to come from the profile itself.
+  const second = await exchangeInProfile(engine, provider, {
+    userDataDir,
+    seedCookies: null,
+    marker: newMarker('second'),
+  });
   return {
     answerChars: [first.answerChars, second.answerChars],
+    answersBefore: [first.answersBefore, second.answersBefore],
+    answersAfter: [first.answersAfter, second.answersAfter],
+    submitAttempts: [first.submitAttempts, second.submitAttempts],
+    markerEchoed: [first.markerEchoed, second.markerEchoed],
     loginWall: first.loginWall || second.loginWall,
-    // The second exchange ran in a fresh browser on the session state the
-    // first exchange returned and was not redirected to a login page.
+    // The second exchange ran in a new browser process on the same profile
+    // and was not redirected to a login page.
     sessionReused: true,
+    profile: { userDataDir, reseeded: false },
   };
 }
 
@@ -302,19 +601,30 @@ async function roundTrip(engine, provider, storageState) {
 
 async function main() {
   const checker = createChecker();
-  const storageStatePath = await authStatePath();
-  const storageState = storageStatePath
-    ? JSON.parse(await readFile(storageStatePath, 'utf8'))
-    : null;
+  // One storage state per provider: a ChatGPT session says nothing about
+  // Claude, Gemini or Grok.
+  const sessions = {};
+  for (const provider of PROVIDERS) {
+    const found = await storageStateFor(provider.name);
+    sessions[provider.name] = found;
+  }
+  const sessionPaths = Object.fromEntries(
+    Object.entries(sessions).map(([name, found]) => [name, found?.path ?? null]),
+  );
 
   console.log(
-    `storage state: ${storageStatePath ?? 'NOT FOUND — authorized round-trip is UNFINISHED, not PASS'}`,
+    `storage states: ${Object.entries(sessionPaths)
+      .map(([name, p]) => `${name}=${p ? 'found' : 'NOT FOUND'}`)
+      .join(', ')}`,
   );
 
   const perEngine = {};
   const egress = {};
   // The authorized round-trip state; merged into the report on every write.
-  let authorizedRoundTrip = { status: 'unfinished', reason: 'no storage state found' };
+  let authorizedRoundTrip = {
+    status: 'unfinished',
+    reason: 'no storage state found for any provider',
+  };
   // The matrix runs for hours: persist after every provider so an interruption
   // never costs more than one provider block.
   const persist = async (partial) => {
@@ -337,7 +647,7 @@ async function main() {
       proxy: PROXY,
       headless: HEADLESS,
       egressIp: mergedEgress,
-      storageStatePath,
+      storageStatePaths: sessionPaths,
       harness: harnessSettings('provider-matrix'),
       authorizedRoundTrip: mergeRoundTrip(
         existing.authorizedRoundTrip,
@@ -345,11 +655,16 @@ async function main() {
         MANDATORY_COMBOS,
       ),
       reduced: REDUCED,
-      partial,
+      // The report is complete when *every* engine has every provider with
+      // the full run count — no matter in how many runs that was measured.
+      partial: partial || !coverageComplete(mergedPerEngine),
       perEngine: mergedPerEngine,
       results: mergedResults,
       passed: mergedResults.filter((r) => r.ok).length,
-      failed: mergedResults.filter((r) => !r.ok).length,
+      // A combination that could not be measured (no credentials) is neither
+      // a pass nor a failure — it is counted apart.
+      failed: mergedResults.filter((r) => !r.ok && !r.skipped).length,
+      skipped: mergedResults.filter((r) => r.skipped).length,
     };
     await writeReport('provider-matrix', payload);
     return payload;
@@ -367,7 +682,7 @@ async function main() {
       for (let i = 0; i < runCount; i++) {
         let result;
         try {
-          result = await classifyRun(engine, provider, storageState);
+          result = await classifyRun(engine, provider, sessions[provider.name]?.state ?? null);
         } catch (err) {
           result = {
             status: 0,
@@ -377,6 +692,15 @@ async function main() {
           };
         }
         runs.push(result);
+        // The session lives on: the next browser of this provider continues
+        // the rotated session instead of replaying the original cookie file.
+        if (result.cookies?.length && sessions[provider.name]?.state) {
+          sessions[provider.name].state = {
+            ...sessions[provider.name].state,
+            cookies: result.cookies,
+          };
+        }
+        delete result.cookies;
         console.log(
           `${engineName.padEnd(13)} ${provider.name.padEnd(11)} run${String(i + 1).padStart(2)}: ${String(result.status).padStart(3)} ${result.outcome.padEnd(16)} "${result.title}"`,
         );
@@ -405,29 +729,41 @@ async function main() {
   // combination must never report the criterion as done.
   const roundTripCombos = {};
 
-  if (storageStatePath) {
-    for (const engineName of ENGINE_LIST) {
-      for (const provider of SELECTED_PROVIDERS) {
-        const key = `${engineName}/${provider.name}`;
-        const r = await checker.check(
-          `${engineName}: ${provider.name} authorized round-trip + session reuse`,
-          async () => roundTrip(engines[engineName], provider, storageState),
-        );
-        roundTripCombos[key] = { ok: r.ok, detail: r.detail };
-        authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
-        await persist(true);
-        console.log(`[checkpoint] round-trip ${key}`);
+  for (const engineName of ENGINE_LIST) {
+    for (const provider of SELECTED_PROVIDERS) {
+      const key = `${engineName}/${provider.name}`;
+      const session = sessions[provider.name];
+      const name = `${engineName}: ${provider.name} authorized round-trip + session reuse`;
+      let ok = false;
+      let skipped = false;
+      let detail;
+      try {
+        detail = await roundTrip(engines[engineName], provider, session?.state ?? null, engineName);
+        ok = true;
+      } catch (err) {
+        // Without an authorized session the combination cannot be measured:
+        // a guest answer (or the absence of one) says nothing about the
+        // engine. It is recorded as `skipped`, not as a failure.
+        const noSession = !session?.state?.cookies?.length;
+        skipped = err instanceof NotMeasuredError || noSession;
+        detail = skipped
+          ? `not measurable: ${noSession && !(err instanceof NotMeasuredError) ? `no authorized session for ${provider.name}; the guest attempt did not answer (${err.message})` : err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
       }
+      checker.record(name, ok, detail, { skipped });
+      roundTripCombos[key] = { ok, skipped, detail };
+      authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
+      await persist(true);
+      console.log(`[checkpoint] round-trip ${key}`);
     }
-    authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
-  } else {
-    console.log(
-      'SKIP  authorized prompt/response round-trip — UNFINISHED (no credentials in this environment)',
-    );
   }
+  authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
 
+  // persist(false) writes the report with the merged data of every engine it
+  // knows about and marks it `partial` when the matrix is not fully covered.
   const payload = await persist(false);
-  payload.partial = false;
   const file = await writeReport('provider-matrix', payload);
   console.log(`\nprovider matrix: ${payload.passed} passed, ${payload.failed} failed -> ${file}`);
 }

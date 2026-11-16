@@ -4,9 +4,20 @@
     "node": "v22.22.2",
     "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
     "host": "192.168.1.107",
-    "camoufoxPackage": null,
-    "playwrightCoreSpike": "1.61.1",
-    "cloakbrowser": null,
+    "camoufoxPackage": "0.5.9",
+    "playwrightCoreSpike": "1.62.0",
+    "playwrightCoreRepo": "1.61.1",
+    "cloakbrowser": "0.4.10",
+    "camoufoxBrowser": "158.0.1-beta.41",
+    "camoufoxBrowserSha256": "3f2eb1d0",
+    "versionSources": {
+      "camoufoxPackage": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/camoufox/package.json",
+      "playwrightCoreSpike": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/playwright-core/package.json",
+      "playwrightCoreRepo": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/playwright-core/package.json",
+      "cloakbrowser": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/cloakbrowser/package.json",
+      "camoufoxBrowser": "/home/max/.cache/camoufox/config.json"
+    },
+    "display": ":99",
     "proxyEnv": {
       "HTTPS_PROXY": "http://127.0.0.1:3128",
       "HTTP_PROXY": "http://127.0.0.1:3128",
@@ -25,72 +36,169 @@
       "ip": "88.218.94.56"
     }
   },
-  "storageStatePath": "/home/max/.10x-chat/profiles/default/storage-state.json",
+  "storageStatePaths": {
+    "chatgpt": "/home/max/.10x-chat/profiles/default/storage-state-chatgpt.json",
+    "gemini": "/home/max/.10x-chat/profiles/default/storage-state-gemini.json",
+    "claude": "/home/max/.10x-chat/profiles/default/storage-state-claude.json",
+    "grok": null,
+    "perplexity": "/home/max/.10x-chat/profiles/default/storage-state-perplexity.json"
+  },
   "harness": {
     "proxy": "http://127.0.0.1:3128",
     "headless": false
   },
   "authorizedRoundTrip": {
-    "status": "failed",
+    "status": "partial",
     "mandatory": 10,
-    "attempted": 10,
-    "passed": 4,
-    "failed": 6,
+    "attempted": 8,
+    "passed": 8,
+    "failed": 0,
+    "skipped": 2,
     "combinations": {
       "camoufox/chatgpt": {
         "ok": true,
+        "skipped": false,
         "detail": {
           "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-chatgpt",
+            "reseeded": false
+          }
         }
       },
       "camoufox/gemini": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [6, 6],
+          "answersBefore": [0, 0],
+          "answersAfter": [2, 2],
+          "submitAttempts": [2, 2],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-gemini",
+            "reseeded": false
+          }
+        }
       },
       "camoufox/claude": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 41],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-claude",
+            "reseeded": false
+          }
+        }
       },
       "camoufox/grok": {
         "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+        "skipped": true,
+        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
       },
       "camoufox/perplexity": {
         "ok": true,
+        "skipped": false,
         "detail": {
-          "answerChars": [32, 32],
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-perplexity",
+            "reseeded": false
+          }
         }
       },
       "cloakbrowser/chatgpt": {
         "ok": true,
+        "skipped": false,
         "detail": {
           "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [2, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+            "reseeded": false
+          }
         }
       },
       "cloakbrowser/gemini": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [6, 70],
+          "answersBefore": [0, 0],
+          "answersAfter": [2, 2],
+          "submitAttempts": [2, 2],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+            "reseeded": false
+          }
+        }
       },
       "cloakbrowser/claude": {
-        "ok": false,
-        "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-claude",
+            "reseeded": false
+          }
+        }
       },
       "cloakbrowser/grok": {
         "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+        "skipped": true,
+        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
       },
       "cloakbrowser/perplexity": {
         "ok": true,
+        "skipped": false,
         "detail": {
-          "answerChars": [32, 32],
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-perplexity",
+            "reseeded": false
+          }
         }
       }
     }
@@ -112,6 +220,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -121,6 +230,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -130,6 +240,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -139,6 +250,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -148,6 +260,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -157,6 +270,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -166,6 +280,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -175,6 +290,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -184,6 +300,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -193,6 +310,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -202,6 +320,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -211,6 +330,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -220,6 +340,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -229,6 +350,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -238,6 +360,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -247,6 +370,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -256,6 +380,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -265,6 +390,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -274,6 +400,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -283,6 +410,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -292,6 +420,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -301,6 +430,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -310,6 +440,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -319,6 +450,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -328,6 +460,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -337,6 +470,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -346,6 +480,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -355,6 +490,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -364,6 +500,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -373,14 +510,15 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "camoufox: chatgpt reachable in 30 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+          "ms": 1
         }
       },
       "gemini": {
@@ -391,11 +529,12 @@
         "records": [
           {
             "status": 200,
-            "title": "‎Google Gemini",
+            "title": "Google Gemini",
             "url": "https://gemini.google.com/app",
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -405,6 +544,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -414,6 +554,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -423,6 +564,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -432,6 +574,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -441,6 +584,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -450,6 +594,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -459,6 +604,17 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "Google Gemini",
+            "url": "https://gemini.google.com/app",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -468,128 +624,129 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "‎Google Gemini",
-            "url": "https://gemini.google.com/app",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "camoufox: gemini reachable in 10 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 0
         }
       },
       "claude": {
         "runs": 10,
         "counts": {
-          "provider-error": 8,
-          "infra-error": 2
+          "composer-visible": 10
         },
         "records": [
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
-          },
-          {
-            "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
-          },
-          {
-            "status": 200,
-            "title": "",
+            "title": "New chat - Claude",
             "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
-          },
-          {
-            "status": 0,
-            "title": "Loading https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
-            "url": "https://claude.ai/new",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "infra-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "",
+            "title": "New chat - Claude",
             "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "",
+            "title": "New chat - Claude",
             "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
-          },
-          {
-            "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
-          },
-          {
-            "status": 200,
-            "title": "Claude",
+            "title": "New chat - Claude",
             "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
-            "status": 0,
-            "title": "Loading https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
+            "status": 200,
+            "title": "New chat - Claude",
             "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "infra-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "camoufox: claude reachable in 10 runs",
-          "ok": false,
-          "ms": 1,
-          "detail": "2 infra errors"
+          "ok": true,
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 0
         }
       },
       "grok": {
@@ -605,6 +762,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -614,6 +772,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -623,6 +782,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -632,6 +792,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -641,6 +802,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -650,6 +812,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -659,6 +822,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -668,6 +832,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -677,6 +842,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -686,14 +852,15 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "camoufox: grok reachable in 10 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 0
         }
       },
       "perplexity": {
@@ -709,6 +876,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -718,6 +886,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -727,6 +896,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -736,6 +906,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -745,6 +916,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -754,6 +926,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -763,6 +936,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -772,6 +946,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -781,6 +956,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -790,6 +966,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -799,6 +976,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -808,6 +986,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -817,6 +996,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -826,6 +1006,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -835,6 +1016,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -844,6 +1026,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -853,6 +1036,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -862,6 +1046,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -871,6 +1056,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -880,6 +1066,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -889,6 +1076,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -898,6 +1086,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -907,6 +1096,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -916,6 +1106,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -925,6 +1116,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -934,6 +1126,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -943,6 +1136,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -952,6 +1146,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -961,6 +1156,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -970,14 +1166,15 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "camoufox: perplexity reachable in 30 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+          "ms": 0
         }
       }
     },
@@ -985,7 +1182,8 @@
       "chatgpt": {
         "runs": 30,
         "counts": {
-          "composer-visible": 30
+          "composer-visible": 27,
+          "cloudflare": 3
         },
         "records": [
           {
@@ -995,6 +1193,27 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 403,
+            "title": "",
+            "url": "https://chatgpt.com/?__cf_chl_rt_tk=2W184xMXghwVp9.aeLfKXM1Ua97SYcLdWUPapQS0FzM-1794852053-1.0.1.1-lVsb9JsmUjScDtZyuixDA",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": false,
+            "authRedirect": false,
+            "outcome": "cloudflare"
+          },
+          {
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1004,6 +1223,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1013,6 +1233,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1022,6 +1243,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1031,6 +1253,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1040,6 +1263,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1049,6 +1273,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1058,6 +1283,27 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 403,
+            "title": "",
+            "url": "https://chatgpt.com/?__cf_chl_rt_tk=2eN2NOZ4VhGNveyL7_zySUyXiouuJCLPoNfauJ2ILzM-1794852146-1.0.1.1-2aWhkuwLQAFME5H_W5UXT",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": false,
+            "authRedirect": false,
+            "outcome": "cloudflare"
+          },
+          {
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1067,6 +1313,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1076,6 +1323,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1085,6 +1333,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1094,6 +1343,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1103,6 +1353,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1112,6 +1363,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1121,6 +1373,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1130,6 +1383,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1139,6 +1393,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1148,6 +1403,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1157,6 +1413,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1166,6 +1423,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1175,6 +1433,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1184,6 +1443,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1193,6 +1453,27 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 403,
+            "title": "",
+            "url": "https://chatgpt.com/?__cf_chl_rt_tk=UU1impgDsDbmvZLBEL0s2YyDqaP0tijIB9XWH.M18WU-1794852286-1.0.1.1-JY1mcNwVIDL4eoocTKIN9",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": false,
+            "authRedirect": false,
+            "outcome": "cloudflare"
+          },
+          {
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1202,68 +1483,15 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "ChatGPT",
-            "url": "https://chatgpt.com/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "cloakbrowser: chatgpt reachable in 30 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+          "detail": "composer-visible 27/30, outcomes={\"composer-visible\":27,\"cloudflare\":3}",
+          "ms": 1
         }
       },
       "gemini": {
@@ -1279,6 +1507,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1288,6 +1517,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1297,6 +1527,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1306,6 +1537,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1315,6 +1547,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1324,6 +1557,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1333,6 +1567,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1342,6 +1577,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1351,6 +1587,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1360,118 +1597,129 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "cloakbrowser: gemini reachable in 10 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 0
         }
       },
       "claude": {
         "runs": 10,
         "counts": {
-          "provider-error": 10
+          "composer-visible": 10
         },
         "records": [
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Sign in or create an account | Claude.ai",
-            "url": "https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Loading https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
-            "url": "https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_tk=dj8ojR2CWPFuj5YcIDFjUrZUyf15LSemB3Uqjxy.PPY-",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Loading https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
-            "url": "https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_tk=04zlLA5eW7TGrxJaseiNCr2m41OsBycDXSt_S0wP4nA-",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Sign in or create an account | Claude.ai",
-            "url": "https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
-            "title": "Claude",
-            "url": "https://claude.ai/logout?involuntary=1&returnTo=%2Flogin%3Ffrom%3Dlogout%26reauth%3D1%26returnTo%3D%252Fnew%253F",
+            "title": "New chat - Claude",
+            "url": "https://claude.ai/new",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
-            "outcome": "provider-error"
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "cloakbrowser: claude reachable in 10 runs",
-          "ok": false,
-          "ms": 0,
-          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
+          "ok": true,
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 1
         }
       },
       "grok": {
@@ -1487,6 +1735,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1496,6 +1745,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1505,6 +1755,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1514,6 +1765,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1523,6 +1775,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1532,6 +1785,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1541,6 +1795,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1550,6 +1805,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1559,6 +1815,7 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1568,14 +1825,15 @@
             "cfVisible": false,
             "loginVisible": true,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "cloakbrowser: grok reachable in 10 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+          "ms": 0
         }
       },
       "perplexity": {
@@ -1591,6 +1849,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1600,6 +1859,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1609,6 +1869,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1618,6 +1879,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1627,6 +1889,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1636,6 +1899,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1645,6 +1909,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1654,6 +1919,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1663,6 +1929,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1672,6 +1939,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1681,6 +1949,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1690,6 +1959,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1699,6 +1969,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1708,6 +1979,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1717,6 +1989,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1726,6 +1999,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1735,6 +2009,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1744,6 +2019,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1753,6 +2029,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1762,6 +2039,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1771,6 +2049,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1780,6 +2059,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1789,6 +2069,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1798,6 +2079,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1807,6 +2089,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1816,6 +2099,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1825,6 +2109,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1834,6 +2119,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1843,6 +2129,7 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           },
           {
@@ -1852,14 +2139,15 @@
             "cfVisible": false,
             "loginVisible": false,
             "composerVisible": true,
+            "authRedirect": false,
             "outcome": "composer-visible"
           }
         ],
         "summary": {
           "name": "cloakbrowser: perplexity reachable in 30 runs",
           "ok": true,
-          "ms": 0,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+          "ms": 0
         }
       }
     }
@@ -1868,140 +2156,221 @@
     {
       "name": "camoufox: chatgpt reachable in 30 runs",
       "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+      "ms": 1
     },
     {
       "name": "camoufox: gemini reachable in 10 runs",
       "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
     },
     {
       "name": "camoufox: claude reachable in 10 runs",
-      "ok": false,
-      "ms": 1,
-      "detail": "2 infra errors"
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
     },
     {
       "name": "camoufox: grok reachable in 10 runs",
       "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
     },
     {
       "name": "camoufox: perplexity reachable in 30 runs",
       "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
-    },
-    {
-      "name": "cloakbrowser: chatgpt reachable in 30 runs",
-      "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
-    },
-    {
-      "name": "cloakbrowser: gemini reachable in 10 runs",
-      "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
-    },
-    {
-      "name": "cloakbrowser: claude reachable in 10 runs",
-      "ok": false,
-      "ms": 0,
-      "detail": "never reached the composer, outcomes={\"provider-error\":10}"
-    },
-    {
-      "name": "cloakbrowser: grok reachable in 10 runs",
-      "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}"
-    },
-    {
-      "name": "cloakbrowser: perplexity reachable in 30 runs",
-      "ok": true,
-      "ms": 0,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}"
+      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+      "ms": 0
     },
     {
       "name": "camoufox: chatgpt authorized round-trip + session reuse",
       "ok": true,
-      "ms": 28860,
       "detail": {
         "answerChars": [20, 20],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
+        "markerEchoed": [false, false],
         "loginWall": false,
-        "sessionReused": true
-      }
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-chatgpt",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "camoufox: gemini authorized round-trip + session reuse",
-      "ok": false,
-      "ms": 78037,
-      "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+      "ok": true,
+      "detail": {
+        "answerChars": [6, 6],
+        "answersBefore": [0, 0],
+        "answersAfter": [2, 2],
+        "submitAttempts": [2, 2],
+        "markerEchoed": [false, false],
+        "loginWall": false,
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-gemini",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "camoufox: claude authorized round-trip + session reuse",
-      "ok": false,
-      "ms": 27057,
-      "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
+      "ok": true,
+      "detail": {
+        "answerChars": [41, 41],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
+        "markerEchoed": [false, false],
+        "loginWall": false,
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-claude",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "camoufox: grok authorized round-trip + session reuse",
       "ok": false,
-      "ms": 51688,
-      "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+      "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))",
+      "skipped": true
     },
     {
       "name": "camoufox: perplexity authorized round-trip + session reuse",
       "ok": true,
-      "ms": 25210,
       "detail": {
-        "answerChars": [32, 32],
+        "answerChars": [5, 5],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
+        "markerEchoed": [false, false],
         "loginWall": false,
-        "sessionReused": true
-      }
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-perplexity",
+          "reseeded": false
+        }
+      },
+      "skipped": false
+    },
+    {
+      "name": "cloakbrowser: chatgpt reachable in 30 runs",
+      "ok": true,
+      "detail": "composer-visible 27/30, outcomes={\"composer-visible\":27,\"cloudflare\":3}",
+      "ms": 1
+    },
+    {
+      "name": "cloakbrowser: gemini reachable in 10 runs",
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
+    },
+    {
+      "name": "cloakbrowser: claude reachable in 10 runs",
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 1
+    },
+    {
+      "name": "cloakbrowser: grok reachable in 10 runs",
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
+    },
+    {
+      "name": "cloakbrowser: perplexity reachable in 30 runs",
+      "ok": true,
+      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+      "ms": 0
     },
     {
       "name": "cloakbrowser: chatgpt authorized round-trip + session reuse",
       "ok": true,
-      "ms": 26307,
       "detail": {
         "answerChars": [20, 20],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [2, 1],
+        "markerEchoed": [false, false],
         "loginWall": false,
-        "sessionReused": true
-      }
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "cloakbrowser: gemini authorized round-trip + session reuse",
-      "ok": false,
-      "ms": 49610,
-      "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+      "ok": true,
+      "detail": {
+        "answerChars": [6, 70],
+        "answersBefore": [0, 0],
+        "answersAfter": [2, 2],
+        "submitAttempts": [2, 2],
+        "markerEchoed": [false, false],
+        "loginWall": false,
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "cloakbrowser: claude authorized round-trip + session reuse",
-      "ok": false,
-      "ms": 2903,
-      "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+      "ok": true,
+      "detail": {
+        "answerChars": [41, 5],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
+        "markerEchoed": [false, false],
+        "loginWall": false,
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-claude",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     },
     {
       "name": "cloakbrowser: grok authorized round-trip + session reuse",
       "ok": false,
-      "ms": 49783,
-      "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+      "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))",
+      "skipped": true
     },
     {
       "name": "cloakbrowser: perplexity authorized round-trip + session reuse",
       "ok": true,
-      "ms": 17127,
       "detail": {
-        "answerChars": [32, 32],
+        "answerChars": [5, 5],
+        "answersBefore": [0, 0],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
+        "markerEchoed": [false, false],
         "loginWall": false,
-        "sessionReused": true
-      }
+        "sessionReused": true,
+        "profile": {
+          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-perplexity",
+          "reseeded": false
+        }
+      },
+      "skipped": false
     }
   ],
-  "passed": 12,
-  "failed": 8
+  "passed": 18,
+  "failed": 0,
+  "skipped": 2
 }

@@ -190,9 +190,17 @@ authentication turned out to be deeper than "the Node launcher has no equivalent
 matrix (`camoufox@0.5.9` + browser build `158.0.1-beta.41`) **neither** the TS launcher **nor**
 the browser build can carry SOCKS5 credentials, and HTTP proxies with Basic auth fail the same
 way (`407`). The upstream fix exists but needs a Camoufox beta plus a newer browser build, which
-this gate is not allowed to apply on the side. The authorized prompt/response round-trip remains
-**unfinished** (no credentials in the environment), and a proxy-credential leak in the current
-CloakBrowser runtime (credentials on the browser command line) was measured as well.
+this gate is not allowed to apply on the side.
+
+The authorized prompt/response round-trip was since **measured** rather than left `unfinished`: it
+is a matrix of 5 providers × 2 engines = 10 mandatory combinations, each measured on its own
+persistent profile (the browser is closed and reopened on the same profile — the session has to
+survive a restart without a re-login) and only an answer that appeared **after** the prompt was
+sent counts. 8 of the 10 combinations are measured and pass; the 2 Grok combinations have **no
+credentials** in this environment and are therefore `skipped` ("not measurable"), not a failure of
+the engine — the criterion status is `partial`, never `done` while a combination is unmeasured.
+A proxy-credential leak in the current CloakBrowser runtime (credentials on the browser command
+line) was measured as well.
 
 The 3/8 spike files (`spike/camoufox/`) are untouched except for one fixture change: the
 `/storage` endpoint now seeds `localStorage`, so that the 4/9 lifecycle matrix can prove that

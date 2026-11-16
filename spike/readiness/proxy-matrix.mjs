@@ -12,7 +12,7 @@ import { createFixtureServer, listen as listenFixture } from '../camoufox/fixtur
 import { createHttpProxy, createSocks5Proxy, listen as listenProxy } from '../camoufox/proxies.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
 import { createSocks5Relay } from './socks5-relay.mjs';
-import { assert, createChecker, envInfo, harnessSettings, writeReport } from './util.mjs';
+import { assert, createChecker, envInfo, harnessSettings, sleep, writeReport } from './util.mjs';
 
 const EGRESS_URL = 'https://api.ipify.org';
 const HTTP_USER = 'leakuser';
@@ -48,9 +48,24 @@ async function visit(engine, proxy, url = EGRESS_URL) {
   const browser = await engine.launch({ headless: true, proxy });
   try {
     const page = await browser.newPage();
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    const body = (await page.textContent('body').catch(() => '')) ?? '';
-    return { status: response?.status() ?? 0, body: body.trim() };
+    // The proxy rotates its exit IP and occasionally drops the connection
+    // (`ERR_NETWORK_CHANGED`). That is an infrastructure hiccup, not a result
+    // of the engine — a second attempt keeps the measurement honest.
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await page.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30_000,
+        });
+        const body = (await page.textContent('body').catch(() => '')) ?? '';
+        return { status: response?.status() ?? 0, body: body.trim() };
+      } catch (err) {
+        lastError = err;
+        await sleep(2000);
+      }
+    }
+    throw lastError;
   } finally {
     await browser.close().catch(() => {});
   }
@@ -209,7 +224,11 @@ async function main() {
         });
         try {
           const page = await browser.newPage();
-          await page.goto(EGRESS_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          // The navigation only serves the leak measurement (the page content);
+          // a dropped connection of the rotating proxy must not decide it.
+          await page
+            .goto(EGRESS_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+            .catch(() => null);
           pageContent = await page.evaluate(() => document.documentElement.outerHTML);
           // Scan while the browser is still running: the credentials only live
           // in the process table for as long as the process does.

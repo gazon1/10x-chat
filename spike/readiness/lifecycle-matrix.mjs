@@ -11,10 +11,12 @@ import path from 'node:path';
 import { createFixtureServer, listen as listenFixture } from '../camoufox/fixtures.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
 import {
+  alivePids,
   assert,
   createChecker,
   envInfo,
   harnessSettings,
+  newPids,
   pids,
   sleep,
   writeReport,
@@ -238,19 +240,21 @@ async function main() {
       const r = await checker.check(
         `${engineName}: no browser processes left after close`,
         async () => {
-          const before = pids(engine.processPattern).length;
+          // Only the processes of this launch count: a browser the user has
+          // open by hand must not be counted as a leftover of the test.
+          const before = pids(engine.processPattern);
           const browser = await engine.launch({ headless: true });
           const page = await browser.newPage();
           await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          const during = pids(engine.processPattern).length;
+          const spawned = newPids(engine.processPattern, before);
           await browser.close().catch(() => {});
           await sleep(2000);
-          const after = pids(engine.processPattern).length;
+          const leftover = alivePids(spawned);
           assert(
-            after <= before,
-            `processes left behind: before=${before} during=${during} after=${after}`,
+            leftover.length === 0,
+            `processes left behind: ${leftover.join(', ')} (machine-wide before=${before.length})`,
           );
-          return `before=${before} during=${during} after=${after}`;
+          return `spawned=${spawned.length} leftover=0 (machine-wide before=${before.length})`;
         },
       );
       results.cleanup = r;

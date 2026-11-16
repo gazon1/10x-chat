@@ -56,9 +56,15 @@ for (const [name, script] of MATRICES) {
     reused: Boolean(existing),
     passed: report?.passed ?? null,
     failed: report?.failed ?? null,
+    // A combination that could not be measured (no credentials) is neither a
+    // pass nor a failure — it is counted apart, never listed as a FAIL.
+    skipped: report?.skipped ?? null,
     partial: report?.partial ?? false,
     failedChecks: (report?.results ?? [])
-      .filter((r) => !r.ok)
+      .filter((r) => !r.ok && !r.skipped)
+      .map((r) => ({ name: r.name, detail: r.detail })),
+    skippedChecks: (report?.results ?? [])
+      .filter((r) => !r.ok && r.skipped)
       .map((r) => ({ name: r.name, detail: r.detail })),
   });
 }
@@ -75,10 +81,13 @@ await writeReport('summary', summary);
 console.log('\n===== SUMMARY =====');
 for (const outcome of outcomes) {
   console.log(
-    `${outcome.matrix.padEnd(18)} exit=${outcome.exitCode} passed=${outcome.passed} failed=${outcome.failed}${outcome.partial ? ' PARTIAL' : ''}${outcome.reused ? ' (reused)' : ''}`,
+    `${outcome.matrix.padEnd(18)} exit=${outcome.exitCode} passed=${outcome.passed} failed=${outcome.failed} skipped=${outcome.skipped ?? 0}${outcome.partial ? ' PARTIAL' : ''}${outcome.reused ? ' (reused)' : ''}`,
   );
   for (const failure of outcome.failedChecks ?? []) {
     console.log(`  FAIL ${failure.name} - ${failure.detail}`);
+  }
+  for (const skipped of outcome.skippedChecks ?? []) {
+    console.log(`  SKIP ${skipped.name} - ${skipped.detail}`);
   }
 }
 

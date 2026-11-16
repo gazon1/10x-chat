@@ -1,12 +1,13 @@
 {
-  "generatedAt": "2026-11-16T15:44:28.201Z",
+  "generatedAt": "2026-11-16T18:20:47.737Z",
   "outcomes": [
     {
       "matrix": "proxy-matrix",
       "exitCode": 0,
-      "reused": false,
+      "reused": true,
       "passed": 12,
       "failed": 3,
+      "skipped": null,
       "partial": false,
       "failedChecks": [
         {
@@ -19,135 +20,208 @@
         },
         {
           "name": "cloakbrowser: proxy credentials do not leak",
-          "detail": "password visible in argv of pids 3098479,3098564,3098565"
+          "detail": "password visible in argv of pids 3774001,3774094,3774096"
         }
-      ]
+      ],
+      "skippedChecks": []
     },
     {
       "matrix": "lifecycle-matrix",
       "exitCode": 0,
-      "reused": false,
+      "reused": true,
       "passed": 14,
       "failed": 0,
+      "skipped": null,
       "partial": false,
-      "failedChecks": []
+      "failedChecks": [],
+      "skippedChecks": []
     },
     {
       "matrix": "ops-matrix",
       "exitCode": 0,
-      "reused": false,
+      "reused": true,
       "passed": 11,
       "failed": 0,
+      "skipped": null,
       "partial": false,
-      "failedChecks": []
+      "failedChecks": [],
+      "skippedChecks": []
     },
     {
       "matrix": "provider-matrix",
       "exitCode": 0,
-      "reused": false,
-      "passed": 12,
-      "failed": 8,
+      "reused": true,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 2,
       "partial": false,
-      "failedChecks": [
-        {
-          "name": "camoufox: claude reachable in 10 runs",
-          "detail": "2 infra errors"
-        },
-        {
-          "name": "cloakbrowser: claude reachable in 10 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
-        },
-        {
-          "name": "camoufox: gemini authorized round-trip + session reuse",
-          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
-        },
-        {
-          "name": "camoufox: claude authorized round-trip + session reuse",
-          "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
-        },
+      "failedChecks": [],
+      "skippedChecks": [
         {
           "name": "camoufox: grok authorized round-trip + session reuse",
-          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
-        },
-        {
-          "name": "cloakbrowser: gemini authorized round-trip + session reuse",
-          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
-        },
-        {
-          "name": "cloakbrowser: claude authorized round-trip + session reuse",
-          "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+          "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
         },
         {
           "name": "cloakbrowser: grok authorized round-trip + session reuse",
-          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+          "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
         }
       ]
     }
   ],
   "authorizedRoundTrip": {
-    "status": "failed",
+    "status": "partial",
     "mandatory": 10,
-    "attempted": 10,
-    "passed": 4,
-    "failed": 6,
+    "attempted": 8,
+    "passed": 8,
+    "failed": 0,
+    "skipped": 2,
     "combinations": {
       "camoufox/chatgpt": {
         "ok": true,
+        "skipped": false,
         "detail": {
           "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-chatgpt",
+            "reseeded": false
+          }
         }
       },
       "camoufox/gemini": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [6, 6],
+          "answersBefore": [0, 0],
+          "answersAfter": [2, 2],
+          "submitAttempts": [2, 2],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-gemini",
+            "reseeded": false
+          }
+        }
       },
       "camoufox/claude": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 41],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-claude",
+            "reseeded": false
+          }
+        }
       },
       "camoufox/grok": {
         "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+        "skipped": true,
+        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
       },
       "camoufox/perplexity": {
         "ok": true,
+        "skipped": false,
         "detail": {
-          "answerChars": [32, 32],
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-perplexity",
+            "reseeded": false
+          }
         }
       },
       "cloakbrowser/chatgpt": {
         "ok": true,
+        "skipped": false,
         "detail": {
           "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [2, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+            "reseeded": false
+          }
         }
       },
       "cloakbrowser/gemini": {
-        "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [6, 70],
+          "answersBefore": [0, 0],
+          "answersAfter": [2, 2],
+          "submitAttempts": [2, 2],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+            "reseeded": false
+          }
+        }
       },
       "cloakbrowser/claude": {
-        "ok": false,
-        "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-claude",
+            "reseeded": false
+          }
+        }
       },
       "cloakbrowser/grok": {
         "ok": false,
-        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+        "skipped": true,
+        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
       },
       "cloakbrowser/perplexity": {
         "ok": true,
+        "skipped": false,
         "detail": {
-          "answerChars": [32, 32],
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
           "loginWall": false,
-          "sessionReused": true
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-perplexity",
+            "reseeded": false
+          }
         }
       }
-    },
-    "reason": "no storage state found"
+    }
   }
 }

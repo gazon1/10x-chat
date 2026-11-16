@@ -16,6 +16,25 @@ export function savedSettings(name, report) {
 }
 
 /**
+ * The facts a report depends on. A mismatch in any of them means the report
+ * describes another experiment and must not be reused.
+ *
+ * `null` counts as a value: a report that recorded a version which cannot be
+ * resolved now (or the other way round) is not comparable either — that was
+ * exactly the hole the missing versions of the nested Camoufox sandbox left.
+ */
+export const VERSION_KEYS = [
+  'node',
+  'platform',
+  'camoufoxPackage',
+  'camoufoxBrowser',
+  'camoufoxBrowserSha256',
+  'playwrightCoreSpike',
+  'playwrightCoreRepo',
+  'cloakbrowser',
+];
+
+/**
  * Why a saved report must not be reused as-is: different versions, different
  * proxy or headless setting, or an interrupted run.
  */
@@ -24,16 +43,10 @@ export function compatibilityIssues(name, report, now = envInfo()) {
   if (report.partial) issues.push('the saved report is partial (an interrupted run)');
   if (report.reduced) issues.push('the saved report comes from a reduced (smoke) run');
   const savedEnv = report.env ?? {};
-  for (const key of [
-    'node',
-    'platform',
-    'camoufoxPackage',
-    'playwrightCoreSpike',
-    'cloakbrowser',
-  ]) {
-    const saved = savedEnv[key];
-    const current = now[key];
-    if (saved != null && current != null && saved !== current) {
+  for (const key of VERSION_KEYS) {
+    const saved = savedEnv[key] ?? null;
+    const current = now[key] ?? null;
+    if (saved !== current) {
       issues.push(`${key}: report=${saved}, now=${current}`);
     }
   }

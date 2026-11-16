@@ -1,4 +1,8 @@
-export type RoundTripCombination = { ok: boolean; detail?: unknown };
+export type RoundTripCombination = {
+  ok: boolean;
+  skipped?: boolean;
+  detail?: unknown;
+};
 
 export type RoundTripState = {
   status: 'done' | 'failed' | 'partial' | 'unfinished';
@@ -6,6 +10,7 @@ export type RoundTripState = {
   attempted: number;
   passed: number;
   failed: number;
+  skipped: number;
   combinations: Record<string, RoundTripCombination>;
   reason?: string;
 };
