@@ -13,11 +13,9 @@ import { createHistoryCommand } from '../cli/history.js';
 import { createImageCommand } from '../cli/image.js';
 import { createLoginCommand } from '../cli/login.js';
 import { createMigrateCommand } from '../cli/migrate.js';
-import { createNotebookLMCommand } from '../cli/notebooklm.js';
 import { createResearchCommand } from '../cli/research.js';
 import { createSkillCommand } from '../cli/skill.js';
 import { createSessionCommand, createStatusCommand } from '../cli/status.js';
-import { createVideoCommand } from '../cli/video.js';
 
 // Ensure the browser daemon is stopped on unexpected exit (Ctrl+C, crash, etc.)
 // so Chrome for Testing doesn't linger in the dock after the CLI finishes.
@@ -42,7 +40,7 @@ const program = new Command();
 program
   .name('10x-chat')
   .description(
-    'Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, NotebookLM) and generate video (Flow, Dreamina) via browser automation',
+    'Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity) via browser automation',
   )
   .version(pkg.version);
 
@@ -52,12 +50,10 @@ program.addCommand(createDelegateCommand());
 program.addCommand(createHistoryCommand());
 program.addCommand(createImageCommand());
 program.addCommand(createResearchCommand());
-program.addCommand(createVideoCommand());
 program.addCommand(createStatusCommand());
 program.addCommand(createSessionCommand());
 program.addCommand(createConfigCommand());
 program.addCommand(createSkillCommand());
-program.addCommand(createNotebookLMCommand());
 program.addCommand(createMigrateCommand());
 
 program.parseAsync(process.argv).catch((error) => {

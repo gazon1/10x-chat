@@ -12,15 +12,7 @@ export type ProfileMode = 'shared' | 'isolated';
 
 // ── Provider Types ──────────────────────────────────────────────
 
-export type ProviderName =
-  | 'chatgpt'
-  | 'gemini'
-  | 'claude'
-  | 'grok'
-  | 'perplexity'
-  | 'notebooklm'
-  | 'flow'
-  | 'dreamina';
+export type ProviderName = 'chatgpt' | 'gemini' | 'claude' | 'grok' | 'perplexity';
 
 export interface ProviderConfig {
   name: ProviderName;
@@ -194,34 +186,4 @@ export interface ImageGenResult {
   text: string;
   truncated: boolean;
   durationMs: number;
-}
-
-// ── Video Generation Types ──────────────────────────────────────
-
-export type VideoMode = 'ingredients' | 'frames';
-export type VideoModel = 'Omni Flash' | 'Veo 3.1 - Lite' | 'Veo 3.1 - Fast' | 'Veo 3.1 - Quality';
-export type VideoOrientation = 'landscape' | 'portrait';
-
-export interface GeneratedVideo {
-  /** Local file path after download. */
-  localPath?: string;
-  /** Duration in seconds, if known. */
-  durationSecs?: number;
-}
-
-export interface VideoOptions {
-  prompt: string;
-  mode?: VideoMode;
-  model?: VideoModel;
-  orientation?: VideoOrientation;
-  count?: 1 | 2 | 3 | 4;
-  durationSecs?: 4 | 6 | 8 | 10;
-  /** Reference image for ingredients mode (image-to-video). Single file. */
-  refImage?: string;
-  startFrame?: string;
-  endFrame?: string;
-  headed?: boolean;
-  timeoutMs?: number;
-  saveDir?: string;
-  isolatedProfile?: boolean;
 }

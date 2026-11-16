@@ -2,6 +2,8 @@
 
 Snapshot for [#2](https://github.com/gazon1/10x-chat/issues/2). No production code was changed.
 
+> Historical snapshot: it predates [#3](https://github.com/gazon1/10x-chat/issues/3), which removed the NotebookLM, Flow, and Dreamina integrations.
+
 - Branch / commit: `gazon1/refactor-1-8-baseline` @ `3fda497`
 - Date: 2026-11-16
 - Environment: Linux, Node `v22.22.2`, npm. `bun` is **not installed** here (repo declares `bun@1.3.14`).

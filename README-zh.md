@@ -1,6 +1,6 @@
 # 10x-chat
 
-> 透過瀏覽器自動化，從終端機與網頁 AI 助手（ChatGPT、Gemini、Claude、Grok、Perplexity、NotebookLM）對話。
+> 透過瀏覽器自動化，從終端機與網頁 AI 助手（ChatGPT、Gemini、Claude、Grok、Perplexity）對話。
 
 10x-chat 使用 [Playwright](https://playwright.dev) 自動化瀏覽器工作階段，並保存登入設定。只需登入一次，即可從 CLI 或 AI 編碼助手發送提示——自動附帶檔案內容。
 
@@ -48,12 +48,8 @@ npx 10x-chat@latest login gemini         # 登入 Gemini
 npx 10x-chat@latest login claude         # 登入 Claude
 npx 10x-chat@latest login grok           # 登入 Grok
 npx 10x-chat@latest login perplexity     # 登入 Perplexity
-npx 10x-chat@latest login notebooklm     # 登入 NotebookLM
-npx 10x-chat@latest login dreamina       # 登入 Dreamina（CapCut）以使用影片功能
 npx 10x-chat@latest login --status       # 檢查所有提供者的登入狀態
 ```
-
-> Google Flow（Veo）影片使用你的 Google 登入——在共用設定模式下，登入 Gemini 即涵蓋。
 
 ### `chat`
 
@@ -70,7 +66,7 @@ npx 10x-chat@latest chat -p "長時間任務" --timeout 600000 --headed  # 10 �
 | 參數 | 說明 |
 |------|------|
 | `-p, --prompt <text>` | **（必填）** 要發送的提示 |
-| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity`、`notebooklm`（預設：設定檔） |
+| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity`（預設：設定檔） |
 | `--model <name>` | 要在 UI 中選擇的模型/模式（例如 Gemini：`Fast`、`Thinking`、`Deep Think`、`Pro`） |
 | `-f, --file <paths...>` | 要作為上下文打包的檔案/glob 模式 |
 | `--copy` | 將打包內容複製到剪貼簿而不發送 |
@@ -78,57 +74,9 @@ npx 10x-chat@latest chat -p "長時間任務" --timeout 600000 --headed  # 10 �
 | `--headed` | 在聊天期間顯示瀏覽器視窗 |
 | `--timeout <ms>` | 回應逾時（毫秒，預設：300000） |
 
-### `video`
-
-透過瀏覽器自動化生成影片——**Google Flow**（Veo）或 **Dreamina**（Seedance）。
-
-```bash
-# Google Flow / Veo（預設）——使用你的 Google 登入（與 Gemini 共用）
-npx 10x-chat@latest video -p "日出時飛越雪山的空拍鏡頭" --provider flow
-npx 10x-chat@latest video -p "霓虹城市街道，下雨" --provider flow --model "Omni Flash" --duration 10 --orientation portrait
-npx 10x-chat@latest video -p "電影感黃金時段縮時攝影" --provider flow --model "Veo 3.1 - Quality" --duration 8
-
-# Dreamina / Seedance（CapCut）
-npx 10x-chat@latest login dreamina   # 一次性 CapCut 登入
-npx 10x-chat@latest video -p "雨水溝中的紙船，微距" --provider dreamina --aspect 9:16 --dreamina-duration 4
-npx 10x-chat@latest video -p "發光的球體脈動並向上飄浮" --provider dreamina --image ref.png --ref-mode omni
-```
-
-共用參數：
-
-| 參數 | 說明 |
-|------|------|
-| `-p, --prompt <text>` | **（必填）** 影片生成提示 |
-| `--provider <name>` | `flow`（預設）或 `dreamina` |
-| `--model <name>` | 模型（依提供者而定——見下方） |
-| `--headed` | 生成期間顯示瀏覽器視窗 |
-| `--timeout <ms>` | 生成逾時（預設：600000 / 10 分鐘） |
-| `--save-dir <dir>` | 儲存生成影片的目錄 |
-
-**Flow（Veo）** — 模型：`Omni Flash`（預設）、`Veo 3.1 - Lite`、`Veo 3.1 - Fast`、`Veo 3.1 - Quality`。
-
-| 參數 | 說明 |
-|------|------|
-| `--mode <mode>` | `ingredients`（預設）或 `frames` |
-| `--orientation <dir>` | `landscape`（預設）或 `portrait` |
-| `--count <n>` | 同時生成數量（1-4） |
-| `--image <path>` | 圖生影片的參考圖片（ingredients 模式） |
-| `--duration <secs>` | 影片長度（秒）：`4`、`6`、`8`、`10` |
-| `--start-frame <path>` / `--end-frame <path>` | 關鍵影格圖片（frames 模式） |
-
-**Dreamina（Seedance）** — 需要 `login dreamina`（CapCut 帳號）。模型：`Seedance 2.0 Fast`（預設，最便宜）、`Seedance 2.0`；`Seedance 1.5 Pro` / `1.0` / `1.0 Fast` 可能依方案/地區而鎖定。
-
-| 參數 | 說明 |
-|------|------|
-| `--aspect <ratio>` | `21:9`、`16:9`、`4:3`、`1:1`、`3:4`、`9:16` |
-| `--resolution <res>` | `720P`（預設）或 `1080P`（依模型而定） |
-| `--dreamina-duration <secs>` | 影片長度（秒，4-15） |
-| `--ref-mode <mode>` | 輸入圖片模式：`omni`（預設）、`frames`、`multiframes` |
-| `--image <path>` | 圖生影片的參考/輸入圖片（可重複，最多 12 張） |
-
 ### `history`
 
-列出各提供者側邊欄可見的聊天歷史（ChatGPT、Gemini、Claude、Grok、Perplexity、NotebookLM）。
+列出各提供者側邊欄可見的聊天歷史（ChatGPT、Gemini、Claude、Grok、Perplexity）。
 
 ```bash
 npx 10x-chat@latest history --provider gemini
@@ -180,25 +128,6 @@ npx 10x-chat@latest skill install   # 安裝 SKILL.md 到 ~/.codex/skills/
 npx 10x-chat@latest skill show      # 顯示 SKILL.md 內容
 ```
 
-### `notebooklm`（別名：`nb`）
-
-透過 RPC API 管理 NotebookLM 筆記本和來源。
-
-```bash
-npx 10x-chat@latest notebooklm list                              # 列出所有筆記本
-npx 10x-chat@latest notebooklm create "研究主題"                   # 建立筆記本
-npx 10x-chat@latest notebooklm delete <notebookId>                # 刪除筆記本
-npx 10x-chat@latest notebooklm sources <notebookId>               # 列出筆記本中的來源
-npx 10x-chat@latest notebooklm add-url <notebookId> <url>         # 新增網址來源
-npx 10x-chat@latest notebooklm add-url <notebookId> <url> --wait  # 新增網址並等待處理
-npx 10x-chat@latest notebooklm add-file <notebookId> ./paper.pdf  # 上傳檔案來源
-npx 10x-chat@latest notebooklm add-text <id> "標題" "內容"         # 新增文字來源
-npx 10x-chat@latest notebooklm summarize <notebookId>             # AI 摘要與建議主題
-
-# 接著與筆記本的來源對話：
-npx 10x-chat@latest chat -p "摘要重點" --provider notebooklm
-```
-
 ## 檔案打包
 
 `--file` 參數接受 glob 模式。檔案會組裝成 Markdown 打包內容作為提示發送：
@@ -217,8 +146,7 @@ npx 10x-chat@latest chat -p "檢查這些檔案" --file "src/**/*.ts" "!src/**/*
 │   ├── chatgpt/          # Playwright 持久化瀏覽器設定
 │   ├── gemini/
 │   ├── claude/
-│   ├── grok/
-│   └── notebooklm/       # NotebookLM 瀏覽器設定（共用 Google 驗證）
+│   └── grok/
 ├── sessions/
 │   └── <uuid>/
 │       ├── meta.json     # 工作階段中繼資料
@@ -246,9 +174,6 @@ npx 10x-chat@latest skill install
 | Claude | ✅ 對話 | — | claude.ai |
 | Grok | ✅ 對話 + 圖片 | — | grok.com |
 | Perplexity | ✅ | — | perplexity.ai |
-| NotebookLM | ✅ | — | notebooklm.google.com |
-| Google Flow | ✅ 影片（Veo） | **Omni Flash**（預設）、Veo 3.1 Lite/Fast/Quality | labs.google/fx/tools/flow |
-| Dreamina | ✅ 影片（Seedance） | Seedance 2.0 Fast/2.0（1.x 常因方案鎖定） | dreamina.capcut.com |
 
 ## 開發
 

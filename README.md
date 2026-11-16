@@ -1,6 +1,6 @@
 # 10x-chat
 
-> Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, NotebookLM) from your terminal via browser automation.
+> Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity) from your terminal via browser automation.
 
 **English** | [繁體中文](./README-zh.md)
 
@@ -44,12 +44,8 @@ npx 10x-chat@latest login gemini         # Login to Gemini
 npx 10x-chat@latest login claude         # Login to Claude
 npx 10x-chat@latest login grok           # Login to Grok
 npx 10x-chat@latest login perplexity     # Login to Perplexity
-npx 10x-chat@latest login notebooklm     # Login to NotebookLM
-npx 10x-chat@latest login dreamina       # Login to Dreamina (CapCut) for video
 npx 10x-chat@latest login --status       # Check login status for all providers
 ```
-
-> Google Flow (Veo) video uses your Google login — logging into Gemini covers it in shared-profile mode.
 
 ### `chat`
 
@@ -66,7 +62,7 @@ npx 10x-chat@latest chat -p "Long task" --timeout 600000 --headed  # 10min timeo
 | Flag | Description |
 |------|-------------|
 | `-p, --prompt <text>` | **(required)** The prompt to send |
-| `--provider <name>` | Provider: `chatgpt`, `gemini`, `claude`, `grok`, `perplexity`, `notebooklm` (default: config) |
+| `--provider <name>` | Provider: `chatgpt`, `gemini`, `claude`, `grok`, `perplexity` (default: config) |
 | `--model <name>` | Model/mode to select in the provider UI (e.g. ChatGPT: `GPT-5.6 Sol High`, `Pro`; Gemini: `Fast`, `Thinking`, `Deep Think`, `Pro`) |
 | `-f, --file <paths...>` | Files/globs to bundle as context |
 | `--copy` | Copy bundle to clipboard instead of sending |
@@ -145,54 +141,6 @@ npx 10x-chat@latest research -p "Compare React vs Vue in 2026" --provider perple
 
 ChatGPT Deep Research is selected from the composer `+` (`Add files and more`) menu, then verified by the active `Deep research` pill before the prompt is submitted. Model/thinking level is selected separately from the composer model pill (`Instant`, `Medium`, `High`, `Extra High`, `Pro`) and the GPT family submenu (`GPT-5.6 Sol`, `GPT-5.5`, `GPT-5.4`, `GPT-5.3`, `o3`). You can combine both in one `--model`, e.g. `--model "GPT-5.6 Sol High"`. See [`docs/chatgpt-deep-research.md`](docs/chatgpt-deep-research.md).
 
-### `video`
-
-Generate video via browser automation — **Google Flow** (Veo) or **Dreamina** (Seedance).
-
-```bash
-# Google Flow / Veo (default) — uses your Google login (shared with Gemini)
-npx 10x-chat@latest video -p "A drone shot over snowy mountains at sunrise" --provider flow
-npx 10x-chat@latest video -p "Neon city street, rain" --provider flow --model "Omni Flash" --duration 10 --orientation portrait
-npx 10x-chat@latest video -p "She walks forward" --provider flow --image ref.png   # image-to-video
-
-# Dreamina / Seedance (CapCut)
-npx 10x-chat@latest login dreamina   # one-time CapCut login
-npx 10x-chat@latest video -p "A paper boat in a rain gutter, macro" --provider dreamina --aspect 9:16 --dreamina-duration 4
-npx 10x-chat@latest video -p "The glowing orb pulses and floats up" --provider dreamina --image ref.png --ref-mode omni
-```
-
-Shared flags:
-
-| Flag | Description |
-|------|-------------|
-| `-p, --prompt <text>` | **(required)** The video generation prompt |
-| `--provider <name>` | `flow` (default) or `dreamina` |
-| `--model <name>` | Model (provider-specific — see below) |
-| `--headed` | Show browser window during generation |
-| `--timeout <ms>` | Generation timeout (default: 600000 / 10 min) |
-| `--save-dir <dir>` | Directory to save generated videos |
-
-**Flow (Veo)** — models: `Omni Flash` (default), `Veo 3.1 - Lite`, `Veo 3.1 - Fast`, `Veo 3.1 - Quality`.
-
-| Flag | Description |
-|------|-------------|
-| `--mode <mode>` | `ingredients` (default) or `frames` |
-| `--orientation <dir>` | `landscape` (default) or `portrait` |
-| `--count <n>` | Simultaneous generations (1-4) |
-| `--image <path>` | Reference image for image-to-video (ingredients mode) |
-| `--duration <secs>` | Clip length in seconds: `4`, `6`, `8`, `10` |
-| `--start-frame <path>` / `--end-frame <path>` | Keyframe images (frames mode) |
-
-**Dreamina (Seedance)** — requires `login dreamina` (CapCut account). Models: `Seedance 2.0 Fast` (default, cheapest), `Seedance 2.0`; `Seedance 1.5 Pro` / `1.0` / `1.0 Fast` may be locked depending on your plan/region.
-
-| Flag | Description |
-|------|-------------|
-| `--aspect <ratio>` | `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16` |
-| `--resolution <res>` | `720P` (default) or `1080P` (model-dependent) |
-| `--dreamina-duration <secs>` | Clip length in seconds (4-15) |
-| `--ref-mode <mode>` | Input-image mode: `omni` (default), `frames`, `multiframes` |
-| `--image <path>` | Reference/input image for image-to-video (repeatable, up to 12) |
-
 ### `history`
 
 List chat history visible in provider sidebars (ChatGPT, Gemini, Claude, Grok, Perplexity).
@@ -247,25 +195,6 @@ npx 10x-chat@latest skill install   # Install SKILL.md to ~/.codex/skills/
 npx 10x-chat@latest skill show      # Display SKILL.md content
 ```
 
-### `notebooklm` (alias: `nb`)
-
-Manage NotebookLM notebooks and sources via RPC API.
-
-```bash
-npx 10x-chat@latest notebooklm list                              # List all notebooks
-npx 10x-chat@latest notebooklm create "Research Topic"            # Create a notebook
-npx 10x-chat@latest notebooklm delete <notebookId>                # Delete a notebook
-npx 10x-chat@latest notebooklm sources <notebookId>               # List sources in notebook
-npx 10x-chat@latest notebooklm add-url <notebookId> <url>         # Add URL source
-npx 10x-chat@latest notebooklm add-url <notebookId> <url> --wait  # Add URL and wait for processing
-npx 10x-chat@latest notebooklm add-file <notebookId> ./paper.pdf  # Upload file source
-npx 10x-chat@latest notebooklm add-text <id> "Title" "Content"    # Add pasted text source
-npx 10x-chat@latest notebooklm summarize <notebookId>             # AI summary + suggested topics
-
-# Then chat with the notebook's sources:
-npx 10x-chat@latest chat -p "Summarize key points" --provider notebooklm
-```
-
 ### `migrate`
 
 Merge older per-provider isolated browser profiles into the single shared
@@ -297,8 +226,7 @@ Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically exc
 │   ├── chatgpt/          # Playwright persistent browser profile
 │   ├── gemini/
 │   ├── claude/
-│   ├── grok/
-│   └── notebooklm/       # NotebookLM browser profile (shared Google auth)
+│   └── grok/
 ├── sessions/
 │   └── <uuid>/
 │       ├── meta.json     # Session metadata
@@ -326,9 +254,6 @@ This lets agents like Codex or Claude Code use 10x-chat to query other models fo
 | Claude | ✅ chat | — | claude.ai |
 | Grok | ✅ chat + image | — | grok.com |
 | Perplexity | ✅ | — | perplexity.ai |
-| NotebookLM | ✅ | — | notebooklm.google.com |
-| Google Flow | ✅ video (Veo) | **Omni Flash** (default), Veo 3.1 Lite/Fast/Quality | labs.google/fx/tools/flow |
-| Dreamina | ✅ video (Seedance) | Seedance 2.0 Fast/2.0 (1.x often plan-locked) | dreamina.capcut.com |
 
 ## Development
 
