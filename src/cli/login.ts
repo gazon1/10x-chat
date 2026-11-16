@@ -13,10 +13,7 @@ import type { ProfileMode, ProviderName } from '../types.js';
 export function createLoginCommand(): Command {
   const cmd = new Command('login')
     .description('Login to an AI provider (opens browser for authentication)')
-    .argument(
-      '[provider]',
-      'Provider to login to (chatgpt, gemini, claude, grok, perplexity, notebooklm, dreamina)',
-    )
+    .argument('[provider]', 'Provider to login to (chatgpt, gemini, claude, grok, perplexity)')
     .option('--all', 'Login to all providers')
     .option('--tabs', 'Open all providers as tabs in one browser window (use with --all)')
     .option('--status', 'Check login status for all providers')

@@ -1,11 +1,11 @@
 ---
 name: 10x-chat
-description: Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, NotebookLM) via browser automation. Use when stuck, need cross-validation, want a second-model review, need image generation, want deep research, want to generate video (Google Flow/Veo, Dreamina/Seedance), or need to inspect ChatGPT chats, download ChatGPT artifacts/ZIPs, or upload files to ChatGPT.
+description: Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity) via browser automation. Use when stuck, need cross-validation, want a second-model review, need image generation, want deep research, or need to inspect ChatGPT chats, download ChatGPT artifacts/ZIPs, or upload files to ChatGPT.
 ---
 
 # 10x-chat — AI Agent Skill
 
-Use 10x-chat to send prompts to web-based AI agents via automated browser sessions. Supports chat, image generation, deep research, and video generation. Sessions use a shared persisted profile by default.
+Use 10x-chat to send prompts to web-based AI agents via automated browser sessions. Supports chat, image generation, and deep research. Sessions use a shared persisted profile by default.
 
 ## Architecture (v0.9.0+)
 
@@ -36,20 +36,16 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 - **Knowledge gaps**: leverage a model with different training data
 - **Image generation**: DALL-E via ChatGPT or Imagen via Gemini
 - **Deep research**: long-form analysis via Perplexity, ChatGPT, or Gemini
-- **Video generation**: text/image-to-video via Google Flow (Veo) or Dreamina (Seedance)
 
 ## Providers
 
-| Provider | Chat | Image | Research | Video | Models | Notes |
-|----------|------|-------|----------|-------|--------|-------|
-| chatgpt | ✅ | ✅ (DALL-E) | ✅ | ❌ | — | Runs headed by default (anti-bot) |
-| gemini | ✅ | ✅ (Imagen) | ✅ | ❌ | Fast, **Thinking** (default), Deep Think (Ultra tool), Pro | `--model` switches mode |
-| claude | ✅ | ❌ | ❌ | ❌ | — | Runs headed by default |
-| grok | ✅ | ✅ | ❌ | ❌ | — | UI changes often; keep the local checkout current |
-| perplexity | ✅ | ❌ | ✅ | ❌ | — | Best for research with citations |
-| notebooklm | ✅ | ❌ | ❌ | ❌ | — | Add sources first, then chat |
-| flow | ❌ | ❌ | ❌ | ✅ (Veo) | **Omni Flash** (default), Veo 3.1 Lite/Fast/Quality | Google login (shared with Gemini) |
-| dreamina | ❌ | ❌ | ❌ | ✅ (Seedance) | Seedance 2.0 Fast (default)/2.0; 1.x often plan-locked | `login dreamina` (CapCut); text + image-to-video |
+| Provider | Chat | Image | Research | Models | Notes |
+|----------|------|-------|----------|--------|-------|
+| chatgpt | ✅ | ✅ (DALL-E) | ✅ | — | Runs headed by default (anti-bot) |
+| gemini | ✅ | ✅ (Imagen) | ✅ | Fast, **Thinking** (default), Deep Think (Ultra tool), Pro | `--model` switches mode |
+| claude | ✅ | ❌ | ❌ | — | Runs headed by default |
+| grok | ✅ | ✅ | ❌ | — | UI changes often; keep the local checkout current |
+| perplexity | ✅ | ❌ | ✅ | — | Best for research with citations |
 
 ## Commands
 
@@ -60,7 +56,6 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 10x-chat login claude
 10x-chat login grok
 10x-chat login perplexity
-10x-chat login notebooklm
 
 # Chat
 10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
@@ -88,14 +83,6 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 # Revalidate before use: on 2026-06-25 these ~/.10x-chat/profiles had no Google SID/LSID auth cookies and opened signed-out Gemini.
 # Use the above profiles for parallel targeted Deep Research only after login is revalidated; validate every report is non-placeholder.
 
-# Video generation (Flow / Veo default, or Dreamina / Seedance)
-10x-chat video -p "Drone shot over snowy peaks at sunrise" --provider flow
-10x-chat video -p "She walks, TikTok style" --provider flow --orientation portrait --duration 8 --image ref.png  # 9:16 i2v
-10x-chat video -p "Neon street, rain" --provider flow --model "Veo 3.1 - Quality" --duration 10
-10x-chat login dreamina   # one-time CapCut login for Dreamina
-10x-chat video -p "A paper boat in a rain gutter, macro" --provider dreamina --aspect 9:16 --dreamina-duration 4
-10x-chat video -p "The glowing orb floats up" --provider dreamina --image ref.png --ref-mode omni
-
 # Dry run / clipboard
 10x-chat chat --dry-run -p "Debug this error" --file src/
 10x-chat chat --copy -p "Explain this" --file "src/**"
@@ -105,14 +92,6 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 10x-chat history --provider all --limit 10
 10x-chat status
 10x-chat session <id> --render
-
-# NotebookLM
-10x-chat notebooklm list
-10x-chat notebooklm create "My Research"
-10x-chat notebooklm add-url <id> https://...
-10x-chat notebooklm add-file <id> ./paper.pdf
-10x-chat notebooklm sources <id>
-10x-chat notebooklm summarize <id>
 
 # Install bundled skill to coding agent
 10x-chat skill install
@@ -174,7 +153,7 @@ The daemon stores the headless/headed mode in its state file. If you switch mode
 
 ## Profile modes
 
-**Shared (default):** One browser profile, all providers share cookies. Login once per Google account covers Gemini + NotebookLM.
+**Shared (default):** One browser profile, all providers share cookies.
 
 **Isolated:** Separate profile per provider (backward compat): `--isolated-profile`
 
@@ -243,10 +222,6 @@ kill $(cat ~/.10x-chat/browser-daemon.json | python3 -c "import sys,json; print(
 - **Keep file sets small**: fewer files + focused prompt = better answers
 - **Research needs longer timeouts**: `--timeout 600000` for 10-min research jobs
 - **Image gen can take 1-2 min**: use `--timeout 120000` when needed
-- **Video gen can take 1-5 min**: Dreamina queues generations; keep the default 10-min timeout. For image-to-video, pass `--image` (Dreamina) or `--start-frame`/`--end-frame` with `--mode frames` (Flow)
-- **Flow duration**: `--duration 4|6|8|10` sets clip length in seconds (default is whatever Flow's UI defaults to, currently 8s)
-- **Dreamina duration**: use `--dreamina-duration` (not `--duration`) to avoid conflict with Flow's flag
-- **Dreamina models are plan-gated**: `Seedance 2.0 Fast` (cheapest) and `2.0` are generally available; the CLI errors clearly if a requested model is locked
 - **Use `--dry-run`** to preview what will be sent
 
 ## Known issues

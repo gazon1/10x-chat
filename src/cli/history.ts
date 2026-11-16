@@ -25,7 +25,6 @@ const HISTORY_URL_HINTS: Partial<Record<ProviderName, RegExp[]>> = {
   claude: [/claude\.ai\/chat\//],
   grok: [/grok\.com\/chat\//],
   perplexity: [/perplexity\.ai\/(?:search|thread)\//],
-  notebooklm: [/notebooklm\.google\.com\/notebook\//],
 };
 
 const HISTORY_SELECTOR_HINTS: Partial<Record<ProviderName, string>> = {
@@ -34,7 +33,6 @@ const HISTORY_SELECTOR_HINTS: Partial<Record<ProviderName, string>> = {
   claude: 'nav a, a[href*="/chat/"], a',
   grok: 'nav a, a[href*="/chat/"], a',
   perplexity: 'nav a, a[href*="/search/"], a[href*="/thread/"], a',
-  notebooklm: 'a[href*="/notebook/"], [role="link"], a',
 };
 
 export function createHistoryCommand(): Command {

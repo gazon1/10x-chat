@@ -1,11 +1,8 @@
 import type { Provider, ProviderName } from '../types.js';
 import { CHATGPT_CONFIG, chatgptActions } from './chatgpt.js';
 import { CLAUDE_CONFIG, claudeActions } from './claude.js';
-import { DREAMINA_CONFIG, dreaminaActions } from './dreamina.js';
-import { FLOW_CONFIG, flowActions } from './flow.js';
 import { GEMINI_CONFIG, geminiActions } from './gemini.js';
 import { GROK_CONFIG, grokActions } from './grok.js';
-import { NOTEBOOKLM_CONFIG, notebooklmActions } from './notebooklm.js';
 import { PERPLEXITY_CONFIG, perplexityActions } from './perplexity.js';
 
 const PROVIDERS: Record<ProviderName, Provider> = {
@@ -14,9 +11,6 @@ const PROVIDERS: Record<ProviderName, Provider> = {
   claude: { config: CLAUDE_CONFIG, actions: claudeActions },
   grok: { config: GROK_CONFIG, actions: grokActions },
   perplexity: { config: PERPLEXITY_CONFIG, actions: perplexityActions },
-  notebooklm: { config: NOTEBOOKLM_CONFIG, actions: notebooklmActions },
-  flow: { config: FLOW_CONFIG, actions: flowActions },
-  dreamina: { config: DREAMINA_CONFIG, actions: dreaminaActions },
 };
 
 /** Get a provider by name, throws if not found. */
