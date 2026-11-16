@@ -203,7 +203,11 @@ the prompt through its web UI here — the send button appears without a click h
 mouse click nor `Enter` sends anything. Neither of them could say anything about the engines; the
 production providers themselves are untouched in `src/providers/`.
 A proxy-credential leak in the current CloakBrowser runtime (credentials on the browser command
-line) was measured as well.
+line) was measured as well — and **fixed** in the production code afterwards: the credentials now
+go to Playwright instead of CloakBrowser (`src/browser/proxy.ts`), the browser only receives
+`--proxy-server=http://host` without userinfo, and the proxy variables are removed from the
+environment of the browser. A SOCKS proxy with credentials is refused with an explicit error
+instead of being leaked into the command line.
 
 The 3/8 spike files (`spike/camoufox/`) are untouched except for one fixture change: the
 `/storage` endpoint now seeds `localStorage`, so that the 4/9 lifecycle matrix can prove that

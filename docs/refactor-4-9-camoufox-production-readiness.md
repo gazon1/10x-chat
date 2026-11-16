@@ -3,24 +3,39 @@
 Validation gate for [#13](https://github.com/gazon1/10x-chat/issues/13): is Camoufox ready to
 replace CloakBrowser as the production browser runtime of 10x-chat?
 
-**No production code was touched.** The production runtime stays CloakBrowser (Chromium). The
-harness lives in [`spike/readiness/`](../spike/readiness) and talks to both engines through the
-same adapter, so every scenario runs identically on both.
+**The harness does not touch production code.** It lives in [`spike/readiness/`](../spike/readiness) and
+talks to both engines through the same adapter, so every scenario runs identically on both. The only
+production change on this branch is the fix of
+[#15](https://github.com/gazon1/10x-chat/issues/15) that came out of this gate: the proxy
+credentials no longer end up in the command line or the environment of the browser
+(`src/browser/proxy.ts`, `src/browser/engine.ts`, see [§4.1](#41-proxy-matrix--15-passed-2-failed)).
 
 - Branch / commit: `gazon1/refactor-4-9-production-readiness-camoufox`
-- Date: 2026-11-16
+- Date: 2026-11-17 (the canonical run was redone from scratch after the fix of [#15](https://github.com/gazon1/10x-chat/issues/15); the report was not edited by hand)
 - Predecessor: [docs/refactor-3-8-camoufox.md](refactor-3-8-camoufox.md) (spike 3/8)
 
 ## 1. Verdict
 
 **NO-GO.** Camoufox stays out of production; CloakBrowser remains the production engine.
 
-Two mandatory scenarios have no supported path on the pinned version matrix:
+One mandatory scenario has no supported path on the pinned version matrix:
 
 | Blocker | Camoufox 0.5.9 + build 158.0.1-beta.41 | CloakBrowser 0.4.10 + Chromium 146 |
 |---|---|---|
-| **SOCKS5 + auth** | Playwright rejects the launch: `Browser does not support socks5 proxy authentication`. No TS-side support in `camoufox@0.5.9`, no Juggler-side support in the paired browser build. | **works** — Chromium authenticates with inline credentials (`--proxy-server=socks5://user:pass@host:port`) |
-| **HTTP(S) proxy + Basic auth** | proxy answers `407`; the engine never authenticates | **works** — inline credentials in `--proxy-server` (supported on linux-x64 ≥ 146.0.7680.177.5) |
+| **SOCKS5 + auth** | Playwright rejects the launch: `Browser does not support socks5 proxy authentication`. No TS-side support in `camoufox@0.5.9`, no Juggler-side support in the paired browser build. | **refused in production** — the safe launch path rejects a SOCKS proxy with credentials instead of putting the password into `--proxy-server` (see [§4.1](#41-proxy-matrix--15-passed-2-failed)) |
+
+The second mandatory scenario — **HTTP(S) proxy + Basic auth** — turned out to be **supported on both
+engines**; the earlier "Camoufox fails with 407" verdict was a faulty check in the harness (a 407
+challenge followed by a successful authentication is the normal flow of a Basic-auth proxy, not a
+failure). Camoufox now answers the challenge and opens the authenticated tunnel
+(`status=200`, `challenge=1`, `tunnelled=2`); CloakBrowser does the same through Playwright.
+
+> **The SOCKS5 refusal is a deliberate trade-off, not a regression of the engine.** Chromium can
+> only authenticate a SOCKS proxy through the URL of the `--proxy-server` flag — that is exactly
+> the path that puts the password into the command line of every browser process
+> (`/proc/<pid>/cmdline`). The production path therefore refuses such a proxy with an explicit
+> error message instead of leaking the credentials. A SOCKS proxy **without** credentials works
+> unchanged on both engines.
 
 Per §2 of the issue, a mandatory scenario without a safe solution means NO-GO, not a production
 workaround. The upstream fix exists (see [§5](#5-upstream-blocker-socks5--auth)) but it requires
@@ -100,8 +115,9 @@ Cloudflare verdict, so it is kept off for engine parity).
 
 ## 3. The harness
 
-`spike/readiness/` — isolated from production code, no multi-engine abstraction, no stealth
-layer, no provider rewrite:
+`spike/readiness/` — no multi-engine abstraction, no stealth layer, no provider rewrite; the only
+production code it imports is the browser engine (`src/browser/engine.ts` → `src/browser/proxy.ts`),
+because the proxy matrix has to measure the **production** launch path:
 
 | File | Purpose |
 |---|---|
@@ -111,7 +127,7 @@ layer, no provider rewrite:
 | `probe.mjs` | pure helpers: outcome classification (URL vs DOM) and the bookkeeping that proves a **new** answer was received |
 | `answers.mjs` | pure helpers: the answers of a page — one answer per DOM container, not per matched element |
 | `providers.mjs` | the provider table with the selectors (one DOM level per provider) |
-| `proxy-matrix.mjs` | HTTP(S) / SOCKS5 (no auth, RFC 1929 auth), bypass list, env precedence, credential leakage |
+| `proxy-matrix.mjs` | HTTP(S) / SOCKS5 (no auth, RFC 1929 auth), bypass list, env precedence, credential leakage incl. the production launch path |
 | `lifecycle-matrix.mjs` | persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | install footprint, cold/warm start, RSS, leftover processes, install path and failure modes, licensing |
 | `provider-matrix.mjs` | 3 providers × 10 runs (30 for Cloudflare-dependent) × 2 engines + authorized round-trip (3 providers × 2 engines, with a session-reuse check) |
@@ -130,6 +146,10 @@ cd spike/camoufox && npm install --no-audit --no-fund
 cd ../.. && bun install
 TMPDIR=~/.cache/10x-chat-tmp node spike/readiness/run-all.mjs
 ```
+
+Node **≥ 22.18** is required: the proxy matrix imports the production TypeScript directly
+(`src/browser/proxy.ts`, `src/browser/engine.ts`) — the production launch path is what has to be
+measured for the credential leak, not the default of the CloakBrowser wrapper.
 
 Knobs: `SPIKE_HEADLESS=1` (headless), `SPIKE_PROXY=<url>` (endpoint for both engines),
 `SPIKE_DISPLAY=:99` (the virtual display a headed run is bound to — the run **refuses to start**
@@ -214,24 +234,62 @@ answers in one conversation → 2, 2, 2 and 4. The round-trip now reports
 
 ## 4. Results
 
-### 4.1 Proxy matrix — 12 passed, 3 failed
+### 4.1 Proxy matrix — 15 passed, 2 failed
 
 | Scenario | Camoufox | CloakBrowser |
 |---|---|---|
 | HTTP proxy, no auth | PASS | PASS |
-| HTTP proxy, Basic auth | **FAIL** — `407`, the engine never authenticates | PASS |
+| HTTP proxy, Basic auth | PASS — the engine answers the `407` challenge of the proxy and authenticates (`status=200`, `challenge=1`, `tunnelled=2`) | PASS — the same flow, the credentials travel through Playwright (CDP `Fetch.continueWithAuth`) |
 | SOCKS5, no auth | PASS | PASS |
-| SOCKS5, RFC 1929 auth | **FAIL** — `Browser does not support socks5 proxy authentication` (launch refused) | PASS (proxy log shows the authenticated user) |
+| SOCKS5, RFC 1929 auth | **FAIL** — `Browser does not support socks5 proxy authentication` (launch refused) | **refused by design** — the safe launch path rejects a SOCKS proxy with credentials: Chromium can only authenticate it through the URL of the `--proxy-server` flag, which would put the password into the argv of every browser process |
 | Proxy bypass list honoured | PASS | PASS |
 | `HTTPS_PROXY` env behaviour | uses the env proxy on its own (Firefox system-proxy settings) | ignores env vars — the repo `proxyFromEnv()` layer is mandatory |
-| Credentials do not leak (page / argv / environ) | PASS | **FAIL** — password visible in `/proc/<pid>/cmdline` of 3 processes |
+| Credentials do not leak (page / argv / environ) | PASS | PASS — after the fix of [#15](https://github.com/gazon1/10x-chat/issues/15) |
+| **Production launch path** (`src/browser/engine.ts`, `HTTPS_PROXY` with credentials) | n/a — production runs CloakBrowser | **PASS** — the browser authenticates the proxy, and neither the argv nor the environ of any browser process shows the password |
 | *Experiment*: SOCKS5 auth through a local relay adapter | PASS — works, but it is a workaround | n/a — the engine authenticates natively |
+| *Experiment*: SOCKS5 auth with inline credentials | n/a — Firefox has no `--proxy-server` flag | PASS — works, but the password is in the argv of **3** processes → not usable in production |
 
 > **Infrastructure errors are retried, not recorded as engine results.** The local proxy rotates
 > its exit IP and drops connections under load (`ERR_NETWORK_CHANGED`); the proxy and provider
 > matrices therefore retry a navigation before they call it a failure. Without that, a proxy hiccup
 > was indistinguishable from a broken engine — it is exactly how a false "CloakBrowser cannot
 > authenticate" verdict appeared in an intermediate run of this matrix.
+
+#### 4.1.1 The proxy credentials no longer leak into the browser process
+
+The earlier revision of this report recorded a **FAIL** for CloakBrowser: the credentials of the
+proxy stood in the command line of **3** browser processes (`/proc/<pid>/cmdline`) and the proxy
+variables were inherited by the environment of the browser. The cause is in the wrapper, not in
+Chromium: `cloakbrowser.launch({ proxy })` inlines the credentials into
+`--proxy-server=http://user:pass@host:port`.
+
+The fix is in the production code ([`src/browser/proxy.ts`](../../src/browser/proxy.ts),
+[`src/browser/engine.ts`](../../src/browser/engine.ts)):
+
+- the userinfo of the proxy URL is **split off** the server URL — the browser only ever sees
+  `--proxy-server=http://host:port`;
+- the credentials go to **Playwright** (`launchOptions.proxy`), which authenticates the proxy over
+  CDP (`Fetch.authRequired` → `Fetch.continueWithAuth`) — the password never reaches the process
+  table;
+- the proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and their lowercase variants) are
+  **removed from the environment of the browser**, because the environment of a process is as
+  readable as its command line;
+- a SOCKS proxy **with** credentials is rejected with an explicit error message — the only way
+  Chromium could authenticate it is the URL of the `--proxy-server` flag, i.e. the leak itself.
+
+Measured with the production launch path (`getChromium()` from `src/browser/engine.ts`, proxy
+credentials in `HTTPS_PROXY`): the egress goes through the proxy (`status=200`, authenticated
+tunnel in the proxy log), the argv of the browser processes contains no password, and their
+environ contains no password either. The unit tests for this are in
+`tests/browser-proxy.test.ts` (21 tests), the matrix row is
+`production: proxy credentials stay out of the browser process`.
+
+> **Firefox inherits the proxy from the environment.** Camoufox (Firefox) picks up `http_proxy`
+> from the environment on its own, so a proxy URL with credentials in the environment would land in
+> the environ of the Firefox process. That is why the production path does not rely on the
+> environment but passes the proxy explicitly — and it is a Camoufox-specific caveat, not a
+> property of the production runtime (production runs CloakBrowser).
+
 
 ### 4.2 Lifecycle matrix — 14 passed, 0 failed
 
@@ -245,13 +303,13 @@ file upload through the composer input, download, one browser with several seque
 | Metric | Camoufox | CloakBrowser |
 |---|---|---|
 | Install footprint on disk | 2757 MB (browser + GeoIP DB) | 1276 MB (free **and** Pro builds) |
-| Launch (cold / warm) | 2834 ms / 708 ms | 476 ms / 135 ms |
-| First paint after `goto` | 6053 ms / 3892 ms | 838 ms / 466 ms |
-| Resident memory of the process tree | ~1090 MB (7 processes) | ~790 MB (10 processes) |
+| Launch (cold / warm) | 1240 ms / 753 ms | 508 ms / 129 ms |
+| First paint after `goto` | 4628 ms / 2484 ms | 857 ms / 476 ms |
+| Resident memory of the process tree | ~1100 MB (7 processes) | ~784 MB (10 processes) |
 | Processes left after `close()` | **0** (7 spawned by the test, 0 left) | **0** (10 spawned by the test, 0 left) |
 | Missing browser build | clear error: `ENOENT … '/nonexistent/application.ini'` | clear error: `Pro binary unavailable … HTTP 404 for SHA256SUMS` |
 | Supported install path | `npx camoufox fetch` / `sync` / `list` (no manual build downloads) | `npx cloakbrowser install` (postinstall), but the download endpoint is license-gated (`401` without a key) |
-| Download throughput measured here | `http=200` for `camoufox-158.0.1-beta.41-lin.x86_64.zip` (1.3 GB) | not measurable anonymously (`401`) |
+| Download throughput measured here | `http=200` for `camoufox-158.0.1-beta.41-lin.x86_64.zip` (1.3 GB, ~3 MB/s) | not measurable anonymously (`401`) |
 
 > **The process measurements only count what the test itself started.** The RSS and the
 > "no leftover processes" figures are computed from a PID snapshot taken **before** the launch:
@@ -324,6 +382,15 @@ production, because of its operational cost:
 - `NO_PROXY` / bypass semantics would have to be re-implemented for the adapter.
 
 Per §2 of the issue, this is an experiment for the cost assessment, not a production workaround.
+
+**The same scenario is refused in the current production runtime** — with a different reason.
+CloakBrowser *can* authenticate a SOCKS proxy, but only through the URL of the `--proxy-server`
+flag, which puts the password into the command line of every browser process
+([§4.1.1](#411-the-proxy-credentials-no-longer-leak-into-the-browser-process)). Since the fix of
+[#15](https://github.com/gazon1/10x-chat/issues/15) the production path refuses a SOCKS proxy with
+credentials rather than leaking them. So the scenario is missing on **both** sides — on Camoufox
+because the capability does not exist, on CloakBrowser because the only way to support it is the
+leak.
 
 ## 6. Provider matrix (3 providers × 2 engines)
 
@@ -447,8 +514,8 @@ What this does and does not show:
 **Camoufox** — the browser build is **MPL-2.0** (Firefox's licence); the npm package (TypeScript
 tooling) is MIT; the vendored Cursory trajectories are LGPLv3-or-later. There is **no licence fee**,
 and redistribution alongside 10x-chat is allowed (MPL-2.0 is file-level copyleft and does not
-infect the rest of the project). Cost is disk (2.7 GB), RAM (~0.9 GB per browser) and slower
-start-up (~4–6 s to first paint versus ~0.5–1 s for the current engine).
+infect the rest of the project). Cost is disk (2.7 GB), RAM (~0.9–1.1 GB per browser) and slower
+start-up (~4.6 s to first paint on a cold start versus ~0.9 s for the current engine).
 
 **CloakBrowser** — the npm wrapper is MIT, but the **binary has its own licence**
 (`BINARY-LICENSE.md`, not shipped in the npm package; it comes with the downloaded build):
@@ -465,12 +532,18 @@ Two operational facts measured here:
 - the installed **Pro build 156.0.8078.47.1 does not start** (exit code 76) even though a license
   key is present in the environment; the free build 146 works. The harness therefore runs the free
   build by default (`CLOAKBROWSER_USE_PRO=1` switches back).
-- CloakBrowser passes the proxy credentials **on the command line**
-  (`--proxy-server=http://user:pass@host:port`), so they are world-readable through
-  `/proc/<pid>/cmdline` for as long as the browser runs. This is a finding about the current
-  production runtime, independent of the Camoufox decision. Tracked separately in
-  [#15](https://github.com/gazon1/10x-chat/issues/15) — production stays on CloakBrowser until that
-  issue is closed.
+- CloakBrowser used to pass the proxy credentials **on the command line**
+  (`--proxy-server=http://user:pass@host:port`), so they were world-readable through
+  `/proc/<pid>/cmdline` for as long as the browser ran. This was a finding about the current
+  production runtime, independent of the Camoufox decision, and it is tracked in
+  [#15](https://github.com/gazon1/10x-chat/issues/15). **It is fixed on this branch**: the
+  credentials now go to Playwright and the proxy variables are stripped from the environment of
+  the browser ([§4.1.1](#411-the-proxy-credentials-no-longer-leak-into-the-browser-process)).
+  The price of the fix is that a **SOCKS proxy with credentials is no longer supported** in
+  production — the engine can only authenticate a SOCKS proxy through the URL of the
+  `--proxy-server` flag, i.e. through the leak itself. Such a proxy is now refused with an
+  explicit error message instead of being started with a leaked password. HTTP(S) proxies with
+  Basic auth and SOCKS proxies without credentials are unaffected.
 
 ## 8. Not verified / unfinished criteria
 
@@ -482,7 +555,9 @@ Two operational facts measured here:
 | Provider matrix in **headed** (production-like) mode | **DONE** — the canonical run was executed headed under Xvfb `:99` with a real session per provider: 12 passed / 0 failed / 0 skipped, 50 runs per engine. Browser windows render on a virtual display and never take desktop focus (the harness cuts the Wayland connection and refuses to start without the virtual display) |
 | GeoIP coherence / a different exit geography | **NOT TESTED** — the local proxy's exit IP is not stable (it was `46.138.35.132` during the proxy-matrix run and `88.218.94.56` during the provider run — for **both** engines, which is what the comparison needs), and no GeoIP coherence check was performed |
 | `launchServer()` / remote server with a persistent profile | **NOT APPLICABLE** — Camoufox cannot serve a persistent context remotely; the daemon is in-process (`src/browser/daemon.ts`), so the production shape does not need it |
-| HTTP-proxy Basic auth on Camoufox with another Playwright version | **NOT TESTED** — 1.63+ is out of scope per the issue |
+| HTTP-proxy Basic auth on Camoufox with another Playwright version | **NOT TESTED** — 1.63+ is out of scope per the issue; on the pinned version (playwright-core 1.61.1 / 1.62.0) the Basic-auth proxy works |
+| Proxy credentials in the browser process (production runtime) | **DONE** — the leak of [#15](https://github.com/gazon1/10x-chat/issues/15) is fixed: the credentials travel through Playwright, the browser sees `--proxy-server` without userinfo, the proxy variables are stripped from the environment of the browser. Measured in the matrix row `production: proxy credentials stay out of the browser process` and covered by `tests/browser-proxy.test.ts` |
+| SOCKS5 proxy **with** credentials in production | **NOT SUPPORTED (by design)** — the production path refuses it with an explicit error instead of leaking the password into the command line. HTTP(S) + Basic auth and SOCKS5 without credentials are unaffected |
 | Crash recovery (browser killed mid-session) | **NOT TESTED** — only clean `close()` and orphan checks were run |
 
 ## 9. Conditions for re-checking (what would turn this into GO / CONDITIONAL GO)
@@ -518,11 +593,17 @@ Two operational facts measured here:
    drops connections under load (`ERR_NETWORK_CHANGED`), and a provider session that is used by
    two browsers at once is rejected ("Your account changed"). Every measurement in this report was
    taken strictly sequentially.
+7. **Keep the proxy credentials out of the browser process.** The production path must not fall
+   back to the top-level `proxy` option of CloakBrowser (`--proxy-server` with userinfo) — that
+   is the leak of [#15](https://github.com/gazon1/10x-chat/issues/15). The proxy goes through
+   `launchOptions.proxy`, the proxy variables are removed from the environment of the browser, and
+   a SOCKS proxy with credentials is refused instead of being started with a leaked password. The
+   matrix row `production: proxy credentials stay out of the browser process` and the unit tests
+   in `tests/browser-proxy.test.ts` guard this.
 
 Until then: **NO-GO, production stays on CloakBrowser, issue #5 (migration) does not start.**
 
-Follow-ups that do not change this verdict: [#15 — утечка proxy-credentials в CloakBrowser](https://github.com/gazon1/10x-chat/issues/15)
-(security, production runtime is affected today) and [#16 — заимствования из `alexandrutodor/10x-chat`](https://github.com/gazon1/10x-chat/issues/16)
+Follow-ups that do not change this verdict: [#16 — заимствования из `alexandrutodor/10x-chat`](https://github.com/gazon1/10x-chat/issues/16)
 (роадмап: per-provider headed, детект Cloudflare, ручное прохождение challenge, persistent-профили,
-отказ от лишнего stealth, классификация ошибок). Both are separate stages and are not implemented in
-PR #14.
+отказ от лишнего stealth, классификация ошибок). [#15 — утечка proxy-credentials в CloakBrowser](https://github.com/gazon1/10x-chat/issues/15)
+is **closed on this branch** (see [§4.1.1](#411-the-proxy-credentials-no-longer-leak-into-the-browser-process)).

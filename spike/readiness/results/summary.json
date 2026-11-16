@@ -1,26 +1,22 @@
 {
-  "generatedAt": "2026-11-16T21:01:04.197Z",
+  "generatedAt": "2026-11-16T21:36:39.218Z",
   "outcomes": [
     {
       "matrix": "proxy-matrix",
       "exitCode": 0,
       "reused": true,
-      "passed": 12,
-      "failed": 3,
+      "passed": 15,
+      "failed": 2,
       "skipped": null,
       "partial": false,
       "failedChecks": [
-        {
-          "name": "camoufox: http proxy (basic auth)",
-          "detail": "proxy rejected the credentials (407)"
-        },
         {
           "name": "camoufox: socks5 proxy (rfc1929 auth)",
           "detail": "browserType.launch: Browser does not support socks5 proxy authentication"
         },
         {
-          "name": "cloakbrowser: proxy credentials do not leak",
-          "detail": "password visible in argv of pids 4048624,4048743,4048744"
+          "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
+          "detail": "SOCKS proxy authentication is not supported without exposing the credentials in the process table: Chromium can only authenticate a SOCKS proxy through the URL of the --proxy-server flag. Use an HTTP proxy with credentials, or a local relay (see docs/refactor-4-9-camoufox-production-readiness.md)."
         }
       ],
       "skippedChecks": []
@@ -142,7 +138,7 @@
           "answerChars": [5, 5],
           "answersBefore": [0, 0],
           "answersAfter": [1, 1],
-          "submitAttempts": [1, 2],
+          "submitAttempts": [2, 1],
           "markerEchoed": [false, false],
           "loginWall": false,
           "sessionReused": true,

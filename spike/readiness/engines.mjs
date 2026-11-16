@@ -12,10 +12,28 @@ import {
   launch as cloakLaunch,
   launchPersistentContext as cloakLaunchPersistent,
 } from 'cloakbrowser';
+import { proxyLaunchOptions } from '../../src/browser/proxy.ts';
 import { Camoufox } from '../camoufox/node_modules/camoufox/dist/index.js';
 import { forceX11Backend, harnessDisplay, resolveDisplay } from './display.mjs';
 
 export const ENGINE_NAMES = ['camoufox', 'cloakbrowser'];
+
+/**
+ * The launch options of CloakBrowser with a proxy.
+ *
+ * The credentials are handed to Playwright, not to CloakBrowser: CloakBrowser
+ * inlines them into `--proxy-server=http://user:pass@host:port`, which puts
+ * the password into the command line of every process of the browser
+ * (`/proc/<pid>/cmdline`). This is the mechanism the production engine uses as
+ * well — `src/browser/engine.ts` → `src/browser/proxy.ts`.
+ *
+ * A SOCKS proxy with credentials is refused: Chromium can only authenticate a
+ * SOCKS proxy through the URL of the `--proxy-server` flag.
+ */
+function cloakbrowserProxyOptions(proxy) {
+  if (!proxy) return {};
+  return { launchOptions: proxyLaunchOptions(proxy) };
+}
 
 /**
  * The only display the harness may open a browser on.
@@ -98,12 +116,16 @@ export const engines = {
     processPattern: 'chromium-1',
     async launch({ headless = true, proxy } = {}) {
       guardDisplay(headless);
-      return cloakLaunchFree({ headless, proxy });
+      return cloakLaunchFree({ headless, ...cloakbrowserProxyOptions(proxy) });
     },
     /** Returns a persistent BrowserContext. */
     async launchPersistent({ headless = true, proxy, userDataDir } = {}) {
       guardDisplay(headless);
-      return cloakLaunchPersistentFree({ userDataDir, headless, proxy });
+      return cloakLaunchPersistentFree({
+        userDataDir,
+        headless,
+        ...cloakbrowserProxyOptions(proxy),
+      });
     },
   },
 };

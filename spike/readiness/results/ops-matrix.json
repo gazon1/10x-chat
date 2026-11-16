@@ -42,7 +42,7 @@
   "install": {
     "camoufoxMissingBuild": "ERROR ENOENT: no such file or directory, open '/nonexistent/application.ini'",
     "camoufoxList": "Installed versions: |  | official/ |     └── v158.0.1-beta.41 (stable) (Oct 30) (active) |  | geoip/",
-    "downloadSamples": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 0 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401"
+    "downloadSamples": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 3 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401"
   },
   "license": "{\"cloakbrowserPackage\":{\"version\":\"0.4.10\",\"license\":\"MIT\"},\"camoufoxPackage\":{\"version\":\"0.5.9\",\"license\":\"MIT\"},\"cloakbrowserBinaryLicense\":\"not shipped in the npm package (downloaded with the binary)\",\"costModel\":{\"camoufox\":\"MPL-2.0 browser build + MIT tooling: no licence fee, redistribution allowed\",\"cloakbrowser\":\"MIT wrapper + separate binary licence: free tier = 1 concurrent session, no redistribution; paid tiers for 5/20/200/2000+ concurrent sessions\"}}",
   "perEngine": {
@@ -56,20 +56,20 @@
         "cold": {
           "name": "camoufox: cold start (first launch)",
           "ok": true,
-          "detail": "launch=1089ms first-paint=4766ms rss=1065MB procs=7",
-          "ms": 5158
+          "detail": "launch=1240ms first-paint=4628ms rss=1100MB procs=7",
+          "ms": 5054
         },
         "warm": {
           "name": "camoufox: warm start (second launch)",
           "ok": true,
-          "detail": "launch=597ms first-paint=3476ms rss=1105MB procs=7",
-          "ms": 3896
+          "detail": "launch=753ms first-paint=2484ms rss=928MB procs=7",
+          "ms": 3022
         },
         "cleanup": {
           "name": "camoufox: no leftover processes",
           "ok": true,
-          "detail": "spawned=7 leftover=0 (machine-wide before=19)",
-          "ms": 7496
+          "detail": "spawned=7 leftover=0 (machine-wide before=15)",
+          "ms": 6939
         }
       }
     },
@@ -83,20 +83,20 @@
         "cold": {
           "name": "cloakbrowser: cold start (first launch)",
           "ok": true,
-          "detail": "launch=423ms first-paint=769ms rss=784MB procs=10",
-          "ms": 976
+          "detail": "launch=508ms first-paint=857ms rss=784MB procs=10",
+          "ms": 1095
         },
         "warm": {
           "name": "cloakbrowser: warm start (second launch)",
           "ok": true,
-          "detail": "launch=134ms first-paint=445ms rss=782MB procs=10",
-          "ms": 651
+          "detail": "launch=129ms first-paint=476ms rss=784MB procs=10",
+          "ms": 743
         },
         "cleanup": {
           "name": "cloakbrowser: no leftover processes",
           "ok": true,
           "detail": "spawned=10 leftover=0 (machine-wide before=0)",
-          "ms": 2640
+          "ms": 2820
         }
       }
     }
@@ -111,56 +111,56 @@
     {
       "name": "camoufox: cold start (first launch)",
       "ok": true,
-      "detail": "launch=1089ms first-paint=4766ms rss=1065MB procs=7",
-      "ms": 5158
+      "detail": "launch=1240ms first-paint=4628ms rss=1100MB procs=7",
+      "ms": 5054
     },
     {
       "name": "camoufox: warm start (second launch)",
       "ok": true,
-      "detail": "launch=597ms first-paint=3476ms rss=1105MB procs=7",
-      "ms": 3896
+      "detail": "launch=753ms first-paint=2484ms rss=928MB procs=7",
+      "ms": 3022
     },
     {
       "name": "camoufox: no leftover processes",
       "ok": true,
-      "detail": "spawned=7 leftover=0 (machine-wide before=19)",
-      "ms": 7496
+      "detail": "spawned=7 leftover=0 (machine-wide before=15)",
+      "ms": 6939
     },
     {
       "name": "cloakbrowser: cold start (first launch)",
       "ok": true,
-      "detail": "launch=423ms first-paint=769ms rss=784MB procs=10",
-      "ms": 976
+      "detail": "launch=508ms first-paint=857ms rss=784MB procs=10",
+      "ms": 1095
     },
     {
       "name": "cloakbrowser: warm start (second launch)",
       "ok": true,
-      "detail": "launch=134ms first-paint=445ms rss=782MB procs=10",
-      "ms": 651
+      "detail": "launch=129ms first-paint=476ms rss=784MB procs=10",
+      "ms": 743
     },
     {
       "name": "cloakbrowser: no leftover processes",
       "ok": true,
       "detail": "spawned=10 leftover=0 (machine-wide before=0)",
-      "ms": 2640
+      "ms": 2820
     },
     {
       "name": "camoufox: missing browser build fails with a clear error",
       "ok": true,
       "detail": "ERROR ENOENT: no such file or directory, open '/nonexistent/application.ini'",
-      "ms": 638
+      "ms": 868
     },
     {
       "name": "camoufox: supported install command lists the build",
       "ok": true,
       "detail": "Installed versions: |  | official/ |     └── v158.0.1-beta.41 (stable) (Oct 30) (active) |  | geoip/",
-      "ms": 747
+      "ms": 905
     },
     {
       "name": "download throughput for the browser builds",
       "ok": true,
-      "detail": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 0 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401",
-      "ms": 13309
+      "detail": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 3 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401",
+      "ms": 13365
     },
     {
       "name": "licensing facts collected",

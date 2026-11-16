@@ -15,7 +15,7 @@ adapter, so every scenario runs identically on both.
 | `probe.mjs` | Pure helpers: outcome classification (URL vs DOM) and the bookkeeping that proves a **new** answer was received |
 | `answers.mjs` | Pure helpers: the answers of a page — one answer per DOM container, not per matched element |
 | `providers.mjs` | The provider table with the selectors (one DOM level per provider) |
-| `proxy-matrix.mjs` | HTTP(S)/SOCKS5 (no auth / RFC 1929 auth), bypass list, env vars, credential leakage |
+| `proxy-matrix.mjs` | HTTP(S)/SOCKS5 (no auth / RFC 1929 auth), bypass list, env vars, credential leakage (incl. the production launch path) |
 | `lifecycle-matrix.mjs` | Persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | Install footprint, cold/warm start, RSS, leftover processes, licensing facts |
 | `provider-matrix.mjs` | 3 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip (3 × 2 combinations, with a session-reuse check) |
@@ -36,6 +36,12 @@ cd ../.. && bun install                                   # cloakbrowser + playw
 
 TMPDIR=~/.cache/10x-chat-tmp node spike/readiness/run-all.mjs
 ```
+
+Node **≥ 22.18** is required: the harness imports the production TypeScript
+directly (`src/browser/proxy.ts`, `src/browser/engine.ts`) — the browser engine
+of the production code is what the proxy matrix has to measure. Older Node
+versions cannot strip the type annotations and the import fails with
+`ERR_UNKNOWN_FILE_EXTENSION`.
 
 Individual matrices:
 
@@ -151,3 +157,21 @@ repository owner). The production providers themselves are untouched in `src/pro
   overwriting it.
 - Synthetic proxy credentials are used on purpose: they prove whether
   credentials reach the page, the process table or the report.
+- **The proxy credentials stay out of the browser process.** CloakBrowser
+  inlines the credentials of a proxy into `--proxy-server=http://user:pass@host`
+  — the password then stands in the command line of every browser process
+  (`/proc/<pid>/cmdline`) and in the environment of the browser. The harness
+  therefore measures the **production launch path** (`src/browser/engine.ts` →
+  `src/browser/proxy.ts`): the credentials go to Playwright, Chromium only gets
+  `--proxy-server=http://host` and authenticates itself over CDP; the proxy
+  variables are also removed from the environment of the browser. The row
+  `production: proxy credentials stay out of the browser process` in the proxy
+  matrix is the one that covers this.
+- **A SOCKS proxy with credentials is not supported in production.** Chromium
+  can only authenticate a SOCKS proxy through the URL of the `--proxy-server`
+  flag — exactly the path that leaks the password into the command line — and
+  Playwright refuses SOCKS authentication outright. The safe launch path
+  therefore rejects SOCKS with credentials with an explicit error instead of
+  leaking them. The matrix keeps two experiment rows: one with a local relay
+  (Camoufox only, cost assessment) and one with inline credentials (shows how
+  many processes expose the password). Neither is a production path.

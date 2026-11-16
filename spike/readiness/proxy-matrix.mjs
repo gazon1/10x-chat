@@ -8,6 +8,7 @@
  * report.
  */
 import { readdir, readFile } from 'node:fs/promises';
+import { getChromium } from '../../src/browser/engine.ts';
 import { createFixtureServer, listen as listenFixture } from '../camoufox/fixtures.mjs';
 import { createHttpProxy, createSocks5Proxy, listen as listenProxy } from '../camoufox/proxies.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
@@ -108,12 +109,17 @@ async function main() {
           password: HTTP_PASS,
         });
         assert(res.status === 200, `expected HTTP 200, got ${res.status}`);
+        // The credentials are not part of the proxy URL: the browser answers
+        // the challenge of the proxy (407) and retries with the
+        // credentials. The last entry of the log is therefore the
+        // authenticated tunnel — a 407 as the last entry means the
+        // credentials never arrived.
+        const last = proxy.log.at(-1);
         assert(
-          proxy.log.some((e) => e.status === 200),
-          `no authenticated tunnel, proxy log=${JSON.stringify(proxy.log)}`,
+          last?.status === 200,
+          `the proxy did not accept the credentials, log=${JSON.stringify(proxy.log)}`,
         );
-        assert(!proxy.log.some((e) => e.status === 407), 'proxy rejected the credentials (407)');
-        return `status=${res.status} tunnelled=${proxy.log.length}`;
+        return `status=${res.status} tunnelled=${proxy.log.length} challenge=${proxy.log.filter((e) => e.status === 407).length}`;
       });
       results['http-basic-auth'] = r;
     }
@@ -132,6 +138,10 @@ async function main() {
     }
 
     // 4. SOCKS5 with RFC 1929 user/password -------------------------------
+    // The safe launch path does not support it: Playwright refuses SOCKS
+    // authentication, and Chromium can only authenticate a SOCKS proxy
+    // through the URL of the --proxy-server flag — which would put the
+    // password into the command line of every browser process.
     {
       const proxy = createSocks5Proxy({ username: SOCKS_USER, password: SOCKS_PASS });
       const port = await listenProxy(proxy.server);
@@ -287,7 +297,116 @@ async function main() {
       };
     }
 
+    // 9. EXPERIMENT: SOCKS5 auth with inline credentials (CloakBrowser) -----
+    // The engine can authenticate a SOCKS proxy — but only through the URL of
+    // the --proxy-server flag, which puts the password into the command line
+    // of every browser process. The row records what that costs, so the
+    // refusal of the safe launch path is a decision and not an accident.
+    if (engineName === 'cloakbrowser') {
+      const proxy = createSocks5Proxy({ username: SOCKS_USER, password: SOCKS_PASS });
+      const port = await listenProxy(proxy.server);
+      const r = await checker.check(
+        `${engineName}: EXPERIMENT socks5 auth with inline credentials`,
+        async () => {
+          const { launch } = await import('cloakbrowser');
+          let leaks = { cmdline: [], environ: [] };
+          let status = 0;
+          const browser = await launch({
+            headless: true,
+            proxy: {
+              server: `socks5://127.0.0.1:${port}`,
+              username: SOCKS_USER,
+              password: SOCKS_PASS,
+            },
+          });
+          try {
+            const page = await browser.newPage();
+            const response = await page
+              .goto(EGRESS_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+              .catch(() => null);
+            status = response?.status() ?? 0;
+            leaks = await procLeaks(SOCKS_PASS);
+          } finally {
+            await browser.close().catch(() => {});
+          }
+          assert(status === 200, `expected HTTP 200, got ${status}`);
+          return `works, but the password is in the argv of ${leaks.cmdline.length} processes — not usable in production`;
+        },
+      );
+      results['socks5-auth-inline-experiment'] = r;
+    } else {
+      results['socks5-auth-inline-experiment'] = {
+        name: `${engineName}: EXPERIMENT socks5 auth with inline credentials`,
+        ok: true,
+        ms: 0,
+        detail: 'not applicable: Firefox has no --proxy-server flag',
+      };
+    }
+
     perEngine[engineName] = results;
+  }
+
+  // 10. The production launch path ------------------------------------------
+  // The row that closes issue #15: the credentials of the proxy come from the
+  // environment (HTTPS_PROXY) exactly as in production, the browser is started
+  // by the production engine (`src/browser/engine.ts`), and neither the
+  // command line nor the environment of the browser may show them.
+  {
+    const proxy = createHttpProxy({ username: HTTP_USER, password: HTTP_PASS });
+    const port = await listenProxy(proxy.server);
+    await checker.check(
+      'production: proxy credentials stay out of the browser process',
+      async () => {
+        const previous = { https: process.env.HTTPS_PROXY, http: process.env.HTTP_PROXY };
+        process.env.HTTPS_PROXY = `http://${HTTP_USER}:${HTTP_PASS}@127.0.0.1:${port}`;
+        process.env.HTTP_PROXY = process.env.HTTPS_PROXY;
+        // The harness runs the free tier of CloakBrowser (the Pro build refuses
+        // to start in this environment) — the same rule as in engines.mjs.
+        const licenseKey =
+          process.env.CLOAKBROWSER_USE_PRO === '1'
+            ? process.env.CLOAKBROWSER_LICENSE_KEY
+            : undefined;
+        if (licenseKey === undefined) delete process.env.CLOAKBROWSER_LICENSE_KEY;
+        let leaks = { cmdline: [], environ: [] };
+        let status = 0;
+        try {
+          const chromium = await getChromium();
+          const browser = await chromium.launch({ headless: true });
+          try {
+            const page = await browser.newPage();
+            const response = await page
+              .goto(EGRESS_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+              .catch(() => null);
+            status = response?.status() ?? 0;
+            // The browser is still running: the credentials only live in the
+            // process table as long as the process does.
+            leaks = await procLeaks(HTTP_PASS);
+          } finally {
+            await browser.close().catch(() => {});
+          }
+        } finally {
+          if (licenseKey !== undefined) process.env.CLOAKBROWSER_LICENSE_KEY = licenseKey;
+          if (previous.https === undefined) delete process.env.HTTPS_PROXY;
+          else process.env.HTTPS_PROXY = previous.https;
+          if (previous.http === undefined) delete process.env.HTTP_PROXY;
+          else process.env.HTTP_PROXY = previous.http;
+        }
+        assert(status === 200, `egress through the proxy failed, status=${status}`);
+        assert(
+          proxy.log.some((e) => e.status === 200),
+          `the proxy did not accept the credentials, log=${JSON.stringify(proxy.log)}`,
+        );
+        assert(
+          leaks.cmdline.length === 0,
+          `password visible in argv of pids ${leaks.cmdline.map((l) => l.pid).join(',')}`,
+        );
+        assert(
+          leaks.environ.length === 0,
+          `password visible in environ of pids ${leaks.environ.map((l) => l.pid).join(',')}`,
+        );
+        return 'the production launch path authenticates the proxy without exposing the credentials';
+      },
+    );
   }
 
   fixture.server.close();

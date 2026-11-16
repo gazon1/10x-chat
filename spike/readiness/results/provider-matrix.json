@@ -127,7 +127,7 @@
           "answerChars": [5, 5],
           "answersBefore": [0, 0],
           "answersAfter": [1, 1],
-          "submitAttempts": [1, 2],
+          "submitAttempts": [2, 1],
           "markerEchoed": [false, false],
           "loginWall": false,
           "sessionReused": true,
@@ -1015,7 +1015,7 @@
           "name": "cloakbrowser: chatgpt reachable in 30 runs",
           "ok": true,
           "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
-          "ms": 1
+          "ms": 0
         }
       },
       "gemini": {
@@ -1268,6 +1268,24 @@
       "ms": 0
     },
     {
+      "name": "cloakbrowser: chatgpt reachable in 30 runs",
+      "ok": true,
+      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
+      "ms": 0
+    },
+    {
+      "name": "cloakbrowser: gemini reachable in 10 runs",
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
+    },
+    {
+      "name": "cloakbrowser: claude reachable in 10 runs",
+      "ok": true,
+      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
+      "ms": 0
+    },
+    {
       "name": "camoufox: chatgpt authorized round-trip + session reuse",
       "ok": true,
       "detail": {
@@ -1322,24 +1340,6 @@
       "skipped": false
     },
     {
-      "name": "cloakbrowser: chatgpt reachable in 30 runs",
-      "ok": true,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
-      "ms": 1
-    },
-    {
-      "name": "cloakbrowser: gemini reachable in 10 runs",
-      "ok": true,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-      "ms": 0
-    },
-    {
-      "name": "cloakbrowser: claude reachable in 10 runs",
-      "ok": true,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-      "ms": 0
-    },
-    {
       "name": "cloakbrowser: chatgpt authorized round-trip + session reuse",
       "ok": true,
       "detail": {
@@ -1364,7 +1364,7 @@
         "answerChars": [5, 5],
         "answersBefore": [0, 0],
         "answersAfter": [1, 1],
-        "submitAttempts": [1, 2],
+        "submitAttempts": [2, 1],
         "markerEchoed": [false, false],
         "loginWall": false,
         "sessionReused": true,
