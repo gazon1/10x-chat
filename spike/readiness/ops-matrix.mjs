@@ -16,6 +16,7 @@ import {
   createChecker,
   dirSizeKb,
   envInfo,
+  harnessSettings,
   pids,
   rssKb,
   sleep,
@@ -239,6 +240,7 @@ async function main() {
   const payload = {
     matrix: 'ops',
     env: envInfo(),
+    harness: harnessSettings('ops-matrix'),
     footprintsKb: footprints,
     install,
     license: license.detail,

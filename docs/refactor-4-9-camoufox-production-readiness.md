@@ -75,9 +75,11 @@ layer, no provider rewrite:
 | `proxy-matrix.mjs` | HTTP(S) / SOCKS5 (no auth, RFC 1929 auth), bypass list, env precedence, credential leakage |
 | `lifecycle-matrix.mjs` | persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | install footprint, cold/warm start, RSS, leftover processes, install path and failure modes, licensing |
-| `provider-matrix.mjs` | 5 providers × 10 runs (30 for Cloudflare-dependent) × 2 engines + authorized round-trip |
+| `provider-matrix.mjs` | 5 providers × 10 runs (30 for Cloudflare-dependent) × 2 engines + authorized round-trip (5 providers × 2 engines, with a session-reuse check) |
+| `round-trip.mjs` | state of the §4 criterion: which engine/provider combinations passed the authorized round-trip |
+| `report-compat.mjs` | when a saved report may be reused (`SPIKE_REUSE=1`): versions, proxy, headless, partial/reduced |
 | `socks5-relay.mjs` | **experiment only**: local SOCKS5 adapter that authenticates upstream |
-| `run-all.mjs` | runs every matrix, writes `results/summary.json` |
+| `run-all.mjs` | runs every matrix, writes `results/summary.json`, sets the gate exit code |
 
 The proxy and fixture servers are reused from the 3/8 spike (`spike/camoufox/proxies.mjs`,
 `spike/camoufox/fixtures.mjs`) so both spikes measure with the same instruments. Synthetic proxy
@@ -92,7 +94,28 @@ TMPDIR=~/.cache/10x-chat-tmp node spike/readiness/run-all.mjs
 
 Knobs: `SPIKE_HEADLESS=1` (headless), `SPIKE_PROXY=<url>` (endpoint for both engines),
 `SPIKE_ENGINES=camoufox,cloakbrowser` (run one engine and merge it into the existing report),
-`SPIKE_REUSE=1` (`run-all.mjs` reuses finished reports).
+`SPIKE_PROVIDERS=<list>` + `SPIKE_MAX_RUNS=<n>` (smoke run of the harness itself; such a report is
+marked `reduced: true` and is never reused as a full result),
+`SPIKE_REUSE=1` (`run-all.mjs` reuses finished reports — but only when the saved report was produced
+with the same versions, the same proxy and the same headless setting; otherwise the matrix is
+re-run and the reasons are printed).
+
+### 3.1 The gate never looks successful when it is not
+
+`run-all.mjs` ends with an exit code that a CI job or an automated run can rely on:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | every matrix ran, every check passed, no criterion is unfinished |
+| `1` | a check failed, a matrix crashed, or a report is partial/incomplete |
+| `2` | no hard failure, but a criterion is unfinished (e.g. no credentials) |
+
+The authorized round-trip is a **matrix criterion**: it covers 5 providers × 2 engines = 10
+mandatory combinations, every combination keeps its own result, and the criterion is `done` only
+when all 10 passed. A single successful combination never reports the criterion as done — the
+status is `failed` / `partial` / `unfinished` otherwise. Each round-trip performs two exchanges:
+the second one runs in a **new browser** on the session state the first exchange returned and must
+not be redirected to a login page — that is the session-reuse check.
 
 Results: `spike/readiness/results/*.json` (checked in). No credentials, cookies, tokens or
 private answers are stored in the repository or in the ordinary logs.
@@ -255,13 +278,15 @@ Two operational facts measured here:
 - CloakBrowser passes the proxy credentials **on the command line**
   (`--proxy-server=http://user:pass@host:port`), so they are world-readable through
   `/proc/<pid>/cmdline` for as long as the browser runs. This is a finding about the current
-  production runtime, independent of the Camoufox decision.
+  production runtime, independent of the Camoufox decision. Tracked separately in
+  [#15](https://github.com/gazon1/10x-chat/issues/15) — production stays on CloakBrowser until that
+  issue is closed.
 
 ## 8. Not verified / unfinished criteria
 
 | Criterion | Status |
 |---|---|
-| Authorized prompt/response round-trip for the 5 providers | **UNFINISHED** — no credentials in this environment (`~/.10x-chat/` does not exist); the harness implements it and marks it unfinished, never a PASS |
+| Authorized prompt/response round-trip for the 5 providers | **UNFINISHED** — no credentials in this environment (`~/.10x-chat/` does not exist). The harness implements the criterion as a matrix of 5 providers × 2 engines = 10 mandatory combinations, each with its own result and a session-reuse check; the status is `unfinished`, never a PASS |
 | Login/session reuse with a real account | **UNFINISHED** — same reason |
 | Provider selectors under Firefox | **UNFINISHED** — needs an authenticated session; the provider matrix only measures reachability, the login wall and Cloudflare behaviour |
 | Provider matrix in **headed** (production-like) mode | **NOT RUN** — the recorded run was headless (`SPIKE_HEADLESS=1`), because the desktop must not be taken over by browser windows; no Xvfb is installed. Cloudflare behaviour differs between headed and headless, so the ChatGPT column is not directly transferable to production |
@@ -289,3 +314,9 @@ Two operational facts measured here:
    the licence situation of the exact build that would be shipped.
 
 Until then: **NO-GO, production stays on CloakBrowser, issue #5 (migration) does not start.**
+
+Follow-ups that do not change this verdict: [#15 — утечка proxy-credentials в CloakBrowser](https://github.com/gazon1/10x-chat/issues/15)
+(security, production runtime is affected today) and [#16 — заимствования из `alexandrutodor/10x-chat`](https://github.com/gazon1/10x-chat/issues/16)
+(роадмап: per-provider headed, детект Cloudflare, ручное прохождение challenge, persistent-профили,
+отказ от лишнего stealth, классификация ошибок). Both are separate stages and are not implemented in
+PR #14.

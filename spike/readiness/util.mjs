@@ -64,6 +64,19 @@ export function envInfo() {
   };
 }
 
+/**
+ * The settings a matrix depends on. `run-all.mjs` compares them before it
+ * reuses a saved report, so results from a different experiment are never
+ * reused silently.
+ */
+export function harnessSettings(matrix) {
+  return {
+    proxy:
+      matrix === 'provider-matrix' ? (process.env.SPIKE_PROXY ?? 'http://127.0.0.1:3128') : null,
+    headless: matrix === 'provider-matrix' ? process.env.SPIKE_HEADLESS === '1' : true,
+  };
+}
+
 /** A check runner that never aborts the matrix: failures are data. */
 export function createChecker() {
   const results = [];

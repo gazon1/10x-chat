@@ -13,9 +13,20 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ENGINE_NAMES, engines } from './engines.mjs';
-import { assert, createChecker, envInfo, readReport, sleep, writeReport } from './util.mjs';
+import { mergeRoundTrip, roundTripState } from './round-trip.mjs';
+import {
+  assert,
+  createChecker,
+  envInfo,
+  harnessSettings,
+  readReport,
+  sleep,
+  writeReport,
+} from './util.mjs';
 
 const PROBE_PROMPT = 'Reply with the single word: READY';
+// A page that means "the session is gone": the provider asked to log in again.
+const LOGIN_URL = /\/login|\/signin|\/auth\/login|accounts\.google\.com/i;
 // Same proxy endpoint and geography for both engines (the 3/8 spike used it).
 const PROXY = process.env.SPIKE_PROXY ?? 'http://127.0.0.1:3128';
 const HEADLESS = process.env.SPIKE_HEADLESS === '1';
@@ -83,6 +94,21 @@ const PROVIDERS = [
 const CF_TITLE = /just a moment|attention required|checking your browser|verify you are human/i;
 const CF_SELECTORS =
   '#challenge-running, #challenge-form, .cf-browser-verification, #cf-challenge-running';
+
+// Smoke mode: SPIKE_PROVIDERS=grok,gemini and SPIKE_MAX_RUNS=1 shrink the
+// matrix so the harness itself can be checked in minutes. A reduced run is
+// marked in the report (`reduced: true`) and is never reused as a full result.
+const PROVIDER_FILTER = (process.env.SPIKE_PROVIDERS ?? '')
+  .split(',')
+  .map((p) => p.trim())
+  .filter(Boolean);
+const RUNS_CAP = Number(process.env.SPIKE_MAX_RUNS ?? '') || null;
+const REDUCED = PROVIDER_FILTER.length > 0 || RUNS_CAP !== null;
+const SELECTED_PROVIDERS = PROVIDER_FILTER.length
+  ? PROVIDERS.filter((p) => PROVIDER_FILTER.includes(p.name))
+  : PROVIDERS;
+// The criterion always covers the full matrix, even in a reduced run.
+const MANDATORY_COMBOS = PROVIDERS.length * ENGINE_NAMES.length;
 
 function classify({ status, title, cfVisible, loginVisible, composerVisible }) {
   if (status === 0) return 'infra-error';
@@ -192,26 +218,69 @@ async function classifyRun(engine, provider, storageState) {
   }
 }
 
-/** The §4 criterion: an authorized prompt/response round-trip. */
-async function roundTrip(engine, provider, storageState) {
+/**
+ * One authorized exchange: open the provider with a stored session, send the
+ * probe prompt and require a non-empty answer.
+ */
+async function exchange(engine, provider, storageState) {
   const browser = await engine.launch({ headless: HEADLESS, proxy: { server: PROXY } });
   try {
     const context = await browser.newContext({ storageState });
     const page = await context.newPage();
     await page.goto(provider.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    const url = page.url();
+    // A session that is not authorized ends up on a login page: that is the
+    // proof that the stored state was not reused.
+    assert(!LOGIN_URL.test(url), `the session was not authorized, landed on ${url}`);
     const composer = page.locator(provider.composer).first();
     await composer.waitFor({ state: 'visible', timeout: 20_000 });
+    // Diagnostic only: some providers keep a login button in the header even
+    // for an authorized session, so this is recorded but never asserted.
+    const loginWall = await page
+      .locator(provider.login)
+      .first()
+      .isVisible()
+      .catch(() => false);
     await composer.fill(PROBE_PROMPT);
     await page.locator(provider.send).first().click({ force: true });
     const answer = page.locator(provider.response).first();
     await answer.waitFor({ state: 'visible', timeout: 45_000 });
     const text = (await answer.textContent().catch(() => '')) ?? '';
     assert(text.trim().length > 0, 'the provider answered with an empty bubble');
-    return { ok: true, answerChars: text.trim().length };
+    return {
+      answerChars: text.trim().length,
+      loginWall,
+      // The session as it looks after the exchange — the second run reuses it.
+      storageState: await context.storageState(),
+    };
   } finally {
     await browser.close().catch(() => {});
   }
 }
+
+/**
+ * The §4 criterion for one engine/provider pair: an authorized round-trip and
+ * a repeated exchange on the same session after a browser restart, without a
+ * re-login.
+ */
+async function roundTrip(engine, provider, storageState) {
+  const first = await exchange(engine, provider, storageState);
+  // Restart the browser and continue with the session the first exchange left
+  // behind: the provider must answer again without a new authorization.
+  const second = await exchange(engine, provider, first.storageState);
+  return {
+    answerChars: [first.answerChars, second.answerChars],
+    loginWall: first.loginWall || second.loginWall,
+    // The second exchange ran in a fresh browser on the session state the
+    // first exchange returned and was not redirected to a login page.
+    sessionReused: true,
+  };
+}
+
+/**
+ * Merge the authorized round-trip state of two runs and derive the status of
+ * the §4 criterion: only a full set of passing combinations is "done".
+ */
 
 async function main() {
   const checker = createChecker();
@@ -226,6 +295,8 @@ async function main() {
 
   const perEngine = {};
   const egress = {};
+  // The authorized round-trip state; merged into the report on every write.
+  let authorizedRoundTrip = { status: 'unfinished', reason: 'no storage state found' };
   // The matrix runs for hours: persist after every provider so an interruption
   // never costs more than one provider block.
   const persist = async (partial) => {
@@ -249,6 +320,13 @@ async function main() {
       headless: HEADLESS,
       egressIp: mergedEgress,
       storageStatePath,
+      harness: harnessSettings('provider-matrix'),
+      authorizedRoundTrip: mergeRoundTrip(
+        existing.authorizedRoundTrip,
+        authorizedRoundTrip,
+        MANDATORY_COMBOS,
+      ),
+      reduced: REDUCED,
       partial,
       perEngine: mergedPerEngine,
       results: mergedResults,
@@ -265,9 +343,10 @@ async function main() {
     console.log(`\n=== provider matrix: ${engineName} ===`);
     const engineResults = {};
     perEngine[engineName] = engineResults;
-    for (const provider of PROVIDERS) {
+    for (const provider of SELECTED_PROVIDERS) {
+      const runCount = RUNS_CAP ? Math.min(provider.runs, RUNS_CAP) : provider.runs;
       const runs = [];
-      for (let i = 0; i < provider.runs; i++) {
+      for (let i = 0; i < runCount; i++) {
         let result;
         try {
           result = await classifyRun(engine, provider, storageState);
@@ -286,15 +365,15 @@ async function main() {
       }
       const counts = {};
       for (const run of runs) counts[run.outcome] = (counts[run.outcome] ?? 0) + 1;
-      engineResults[provider.name] = { runs: provider.runs, counts, records: runs };
+      engineResults[provider.name] = { runs: runCount, counts, records: runs };
 
       const reachable = counts['composer-visible'] ?? 0;
       const r = await checker.check(
-        `${engineName}: ${provider.name} reachable in ${provider.runs} runs`,
+        `${engineName}: ${provider.name} reachable in ${runCount} runs`,
         async () => {
           assert((counts['infra-error'] ?? 0) === 0, `${counts['infra-error']} infra errors`);
           assert(reachable > 0, `never reached the composer, outcomes=${JSON.stringify(counts)}`);
-          return `composer-visible ${reachable}/${provider.runs}, outcomes=${JSON.stringify(counts)}`;
+          return `composer-visible ${reachable}/${runCount}, outcomes=${JSON.stringify(counts)}`;
         },
       );
       engineResults[provider.name].summary = r;
@@ -303,14 +382,26 @@ async function main() {
     }
   }
 
-  // The authorized round-trip only exists when credentials exist.
-  let roundTripResult = { status: 'unfinished', reason: 'no storage state found' };
+  // The authorized round-trip only exists when credentials exist. The §4
+  // criterion covers every provider on every engine, so a single successful
+  // combination must never report the criterion as done.
+  const roundTripCombos = {};
+
   if (storageStatePath) {
-    const probe = { name: 'chatgpt', ...PROVIDERS[0] };
-    const r = await checker.check('camoufox: authorized prompt/response round-trip', async () =>
-      roundTrip(engines.camoufox, probe, storageState),
-    );
-    roundTripResult = { status: r.ok ? 'done' : 'failed', detail: r };
+    for (const engineName of ENGINE_LIST) {
+      for (const provider of SELECTED_PROVIDERS) {
+        const key = `${engineName}/${provider.name}`;
+        const r = await checker.check(
+          `${engineName}: ${provider.name} authorized round-trip + session reuse`,
+          async () => roundTrip(engines[engineName], provider, storageState),
+        );
+        roundTripCombos[key] = { ok: r.ok, detail: r.detail };
+        authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
+        await persist(true);
+        console.log(`[checkpoint] round-trip ${key}`);
+      }
+    }
+    authorizedRoundTrip = roundTripState(roundTripCombos, MANDATORY_COMBOS);
   } else {
     console.log(
       'SKIP  authorized prompt/response round-trip — UNFINISHED (no credentials in this environment)',
@@ -318,7 +409,6 @@ async function main() {
   }
 
   const payload = await persist(false);
-  payload.authorizedRoundTrip = roundTripResult;
   payload.partial = false;
   const file = await writeReport('provider-matrix', payload);
   console.log(`\nprovider matrix: ${payload.passed} passed, ${payload.failed} failed -> ${file}`);

@@ -12,7 +12,7 @@ import { createFixtureServer, listen as listenFixture } from '../camoufox/fixtur
 import { createHttpProxy, createSocks5Proxy, listen as listenProxy } from '../camoufox/proxies.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
 import { createSocks5Relay } from './socks5-relay.mjs';
-import { assert, createChecker, envInfo, writeReport } from './util.mjs';
+import { assert, createChecker, envInfo, harnessSettings, writeReport } from './util.mjs';
 
 const EGRESS_URL = 'https://api.ipify.org';
 const HTTP_USER = 'leakuser';
@@ -275,6 +275,7 @@ async function main() {
   const payload = {
     matrix: 'proxy',
     env: envInfo(),
+    harness: harnessSettings('proxy-matrix'),
     results: checker.results,
     perEngine,
     passed: checker.results.filter((r) => r.ok).length,

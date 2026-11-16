@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-16T14:32:25.706Z",
+  "generatedAt": "2026-11-16T14:50:16.646Z",
   "outcomes": [
     {
       "matrix": "proxy-matrix",
@@ -7,6 +7,7 @@
       "reused": true,
       "passed": 12,
       "failed": 3,
+      "partial": false,
       "failedChecks": [
         {
           "name": "camoufox: http proxy (basic auth)",
@@ -18,7 +19,7 @@
         },
         {
           "name": "cloakbrowser: proxy credentials do not leak",
-          "detail": "password visible in argv of pids 2945033,2945118,2945120"
+          "detail": "password visible in argv of pids 2984518,2984620,2984621"
         }
       ]
     },
@@ -28,6 +29,7 @@
       "reused": true,
       "passed": 14,
       "failed": 0,
+      "partial": false,
       "failedChecks": []
     },
     {
@@ -36,6 +38,7 @@
       "reused": true,
       "passed": 11,
       "failed": 0,
+      "partial": false,
       "failedChecks": []
     },
     {
@@ -44,6 +47,7 @@
       "reused": true,
       "passed": 2,
       "failed": 8,
+      "partial": false,
       "failedChecks": [
         {
           "name": "camoufox: chatgpt reachable in 30 runs",

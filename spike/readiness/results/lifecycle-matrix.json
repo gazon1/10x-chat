@@ -13,89 +13,93 @@
       "NO_PROXY": "localhost,127.0.0.1,::1"
     }
   },
+  "harness": {
+    "proxy": null,
+    "headless": true
+  },
   "results": [
     {
       "name": "camoufox: persistent profile reused across restarts",
       "ok": true,
-      "ms": 4470,
-      "detail": "cookie survived (abc123), localStorage survived (token-1794839506924-992961)"
+      "ms": 4996,
+      "detail": "cookie survived (abc123), localStorage survived (token-1794840256823-338496)"
     },
     {
       "name": "camoufox: contexts are isolated",
       "ok": true,
-      "ms": 2309,
+      "ms": 3872,
       "detail": "cookie stayed in context A"
     },
     {
       "name": "camoufox: storageState round-trip",
       "ok": true,
-      "ms": 6037,
+      "ms": 4059,
       "detail": "cookies=1 origins=1, both restored"
     },
     {
       "name": "camoufox: file upload through the composer input",
       "ok": true,
-      "ms": 2074,
+      "ms": 3088,
       "detail": "uploaded 22 bytes"
     },
     {
       "name": "camoufox: download completes",
       "ok": true,
-      "ms": 2466,
+      "ms": 1940,
       "detail": "suggested=spike-download.txt bytes=25"
     },
     {
       "name": "camoufox: one browser, several sequential contexts",
       "ok": true,
-      "ms": 4002,
+      "ms": 2400,
       "detail": "statuses=[200,200,200]"
     },
     {
       "name": "camoufox: no browser processes left after close",
       "ok": true,
-      "ms": 5401,
-      "detail": "before=1 during=7 after=1"
+      "ms": 3960,
+      "detail": "before=2 during=8 after=2"
     },
     {
       "name": "cloakbrowser: persistent profile reused across restarts",
       "ok": true,
-      "ms": 1837,
-      "detail": "cookie survived (abc123), localStorage survived (token-1794839533683-64357)"
+      "ms": 1442,
+      "detail": "cookie survived (abc123), localStorage survived (token-1794840281140-460889)"
     },
     {
       "name": "cloakbrowser: contexts are isolated",
       "ok": true,
-      "ms": 401,
+      "ms": 353,
       "detail": "cookie stayed in context A"
     },
     {
       "name": "cloakbrowser: storageState round-trip",
       "ok": true,
-      "ms": 857,
+      "ms": 645,
       "detail": "cookies=1 origins=1, both restored"
     },
     {
       "name": "cloakbrowser: file upload through the composer input",
       "ok": true,
-      "ms": 493,
+      "ms": 322,
       "detail": "uploaded 22 bytes"
     },
     {
       "name": "cloakbrowser: download completes",
       "ok": true,
-      "ms": 601,
+      "ms": 331,
       "detail": "suggested=spike-download.txt bytes=25"
     },
     {
       "name": "cloakbrowser: one browser, several sequential contexts",
       "ok": true,
-      "ms": 731,
+      "ms": 433,
       "detail": "statuses=[200,200,200]"
     },
     {
       "name": "cloakbrowser: no browser processes left after close",
       "ok": true,
-      "ms": 2585,
+      "ms": 2434,
       "detail": "before=0 during=10 after=0"
     }
   ],
@@ -104,87 +108,87 @@
       "persistent-profile-reuse": {
         "name": "camoufox: persistent profile reused across restarts",
         "ok": true,
-        "ms": 4470,
-        "detail": "cookie survived (abc123), localStorage survived (token-1794839506924-992961)"
+        "ms": 4996,
+        "detail": "cookie survived (abc123), localStorage survived (token-1794840256823-338496)"
       },
       "context-isolation": {
         "name": "camoufox: contexts are isolated",
         "ok": true,
-        "ms": 2309,
+        "ms": 3872,
         "detail": "cookie stayed in context A"
       },
       "storage-state-roundtrip": {
         "name": "camoufox: storageState round-trip",
         "ok": true,
-        "ms": 6037,
+        "ms": 4059,
         "detail": "cookies=1 origins=1, both restored"
       },
       "file-upload": {
         "name": "camoufox: file upload through the composer input",
         "ok": true,
-        "ms": 2074,
+        "ms": 3088,
         "detail": "uploaded 22 bytes"
       },
       "download": {
         "name": "camoufox: download completes",
         "ok": true,
-        "ms": 2466,
+        "ms": 1940,
         "detail": "suggested=spike-download.txt bytes=25"
       },
       "browser-reuse": {
         "name": "camoufox: one browser, several sequential contexts",
         "ok": true,
-        "ms": 4002,
+        "ms": 2400,
         "detail": "statuses=[200,200,200]"
       },
       "cleanup": {
         "name": "camoufox: no browser processes left after close",
         "ok": true,
-        "ms": 5401,
-        "detail": "before=1 during=7 after=1"
+        "ms": 3960,
+        "detail": "before=2 during=8 after=2"
       }
     },
     "cloakbrowser": {
       "persistent-profile-reuse": {
         "name": "cloakbrowser: persistent profile reused across restarts",
         "ok": true,
-        "ms": 1837,
-        "detail": "cookie survived (abc123), localStorage survived (token-1794839533683-64357)"
+        "ms": 1442,
+        "detail": "cookie survived (abc123), localStorage survived (token-1794840281140-460889)"
       },
       "context-isolation": {
         "name": "cloakbrowser: contexts are isolated",
         "ok": true,
-        "ms": 401,
+        "ms": 353,
         "detail": "cookie stayed in context A"
       },
       "storage-state-roundtrip": {
         "name": "cloakbrowser: storageState round-trip",
         "ok": true,
-        "ms": 857,
+        "ms": 645,
         "detail": "cookies=1 origins=1, both restored"
       },
       "file-upload": {
         "name": "cloakbrowser: file upload through the composer input",
         "ok": true,
-        "ms": 493,
+        "ms": 322,
         "detail": "uploaded 22 bytes"
       },
       "download": {
         "name": "cloakbrowser: download completes",
         "ok": true,
-        "ms": 601,
+        "ms": 331,
         "detail": "suggested=spike-download.txt bytes=25"
       },
       "browser-reuse": {
         "name": "cloakbrowser: one browser, several sequential contexts",
         "ok": true,
-        "ms": 731,
+        "ms": 433,
         "detail": "statuses=[200,200,200]"
       },
       "cleanup": {
         "name": "cloakbrowser: no browser processes left after close",
         "ok": true,
-        "ms": 2585,
+        "ms": 2434,
         "detail": "before=0 during=10 after=0"
       }
     }

@@ -14,7 +14,9 @@ adapter, so every scenario runs identically on both.
 | `proxy-matrix.mjs` | HTTP(S)/SOCKS5 (no auth / RFC 1929 auth), bypass list, env vars, credential leakage |
 | `lifecycle-matrix.mjs` | Persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | Install footprint, cold/warm start, RSS, leftover processes, licensing facts |
-| `provider-matrix.mjs` | 5 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip |
+| `provider-matrix.mjs` | 5 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip (5 × 2 combinations, with a session-reuse check) |
+| `round-trip.mjs` | state of the round-trip criterion (which combinations passed) |
+| `report-compat.mjs` | when a saved report may be reused (`SPIKE_REUSE=1`) |
 | `socks5-relay.mjs` | **Experiment only**: local SOCKS5 adapter that authenticates upstream (cost assessment, not a production path) |
 | `run-all.mjs` | Runs every matrix in sequence and writes `results/summary.json` |
 
@@ -47,9 +49,24 @@ Useful environment variables:
 | `SPIKE_HEADLESS=1` | headless mode (no window, no desktop focus) |
 | `SPIKE_PROXY=<url>` | proxy endpoint for both engines (default `http://127.0.0.1:3128`) |
 | `SPIKE_ENGINES=camoufox,cloakbrowser` | run a subset of engines; the result is merged into the existing report |
-| `SPIKE_REUSE=1` | `run-all.mjs` reuses finished reports instead of re-running the matrices |
+| `SPIKE_PROVIDERS=grok,gemini` | run a subset of providers (smoke run of the harness itself) |
+| `SPIKE_MAX_RUNS=1` | cap the runs per provider (smoke run); such a report is marked `reduced: true` and is never reused as a full result |
+| `SPIKE_REUSE=1` | `run-all.mjs` reuses finished reports instead of re-running the matrices — but only when the saved report has the same versions, proxy and headless setting, otherwise the matrix is re-run and the reasons are printed |
 
 Results are written to `spike/readiness/results/*.json`.
+
+## Gate exit codes
+
+`run-all.mjs` ends with an exit code a CI job can rely on:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | every matrix ran, every check passed, no criterion is unfinished |
+| `1` | a check failed, a matrix crashed, or a report is partial/incomplete |
+| `2` | no hard failure, but a criterion is unfinished (e.g. no credentials) |
+
+The authorized round-trip is a matrix criterion: 5 providers × 2 engines = 10 mandatory
+combinations, each with its own result; the criterion is `done` only when all 10 passed.
 
 ## Notes
 
@@ -62,6 +79,7 @@ Results are written to `spike/readiness/results/*.json`.
   (Cloudflare behaviour differs between the two).
 - The authorized round-trip needs an existing storage state in
   `~/.10x-chat/profiles/`. Without credentials the round-trip is recorded as
-  **unfinished**, never as a pass.
+  **unfinished**, never as a pass. Each round-trip sends the probe twice: the second exchange
+  runs in a new browser on the session state of the first one and must not land on a login page.
 - Synthetic proxy credentials are used on purpose: they prove whether
   credentials reach the page, the process table or the report.

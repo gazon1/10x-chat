@@ -10,7 +10,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFixtureServer, listen as listenFixture } from '../camoufox/fixtures.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
-import { assert, createChecker, envInfo, pids, sleep, writeReport } from './util.mjs';
+import {
+  assert,
+  createChecker,
+  envInfo,
+  harnessSettings,
+  pids,
+  sleep,
+  writeReport,
+} from './util.mjs';
 
 const WORK = path.join(tmpdir(), '10x-chat-readiness-lifecycle');
 
@@ -255,6 +263,7 @@ async function main() {
   const payload = {
     matrix: 'lifecycle',
     env: envInfo(),
+    harness: harnessSettings('lifecycle-matrix'),
     results: checker.results,
     perEngine,
     passed: checker.results.filter((r) => r.ok).length,
