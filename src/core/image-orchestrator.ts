@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { Page } from 'playwright';
+import { browserError } from '../browser/diagnostics.js';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
@@ -250,6 +251,13 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
   console.log(chalk.blue(`Provider: ${provider.config.displayName}`));
   console.log(chalk.dim(`Timeout: ${Math.round(timeoutMs / 1000)}s\n`));
 
+  const op = {
+    provider: providerName,
+    operation: 'image',
+    url: provider.config.url,
+    startedAt: Date.now(),
+  };
+  let stage = 'launch';
   let browser: Awaited<ReturnType<typeof launchBrowser>>;
   try {
     await updateSession(session.id, { status: 'running' });
@@ -258,16 +266,17 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       headless,
       url: provider.config.url,
       profileMode,
+      operation: 'image',
     });
   } catch (error) {
     await updateSession(session.id, { status: 'failed' });
-    throw error;
+    throw browserError('Failed to launch browser for image generation', { ...op, stage }, error);
   }
 
   const startTime = Date.now();
 
   try {
-    // Check login
+    stage = 'login-check';
     const loggedIn = await provider.actions.isLoggedIn(browser.page);
     if (!loggedIn) {
       throw new Error(
@@ -283,10 +292,8 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
     const filterNewImages = (candidates: GeneratedImage[]) =>
       candidates.filter((image) => !existingImageKeys.has(getImageKey(image)));
 
-    // Gemini's 2026 UI moved image generation behind Upload & tools → Create image.
-    // Plain image prompts now often produce text-only acknowledgements, so explicitly
-    // activate the image tool before submitting.
     if (providerName === 'gemini') {
+      stage = 'activate-tool';
       const { activateGeminiTool } = await import('../providers/gemini.js');
       const imageToolActivated = await activateGeminiTool(browser.page, 'Create image');
       if (!imageToolActivated) {
@@ -296,13 +303,11 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       }
     }
 
-    // Submit the image generation prompt
+    stage = 'submit-prompt';
     console.log(chalk.dim('Submitting image prompt...'));
     await provider.actions.submitPrompt(browser.page, options.prompt);
 
-    // Poll for image generation with progress updates. Some providers briefly report
-    // no visible spinner while the image tool is still booting, so do not exit early
-    // until either an image appears or a minimum grace period has elapsed.
+    stage = 'generate-images';
     console.log(chalk.dim('Generating image(s)...\n'));
     const pollInterval = 3_000;
     const minimumWaitMs = Math.min(60_000, Math.max(15_000, Math.floor(timeoutMs / 3)));
@@ -314,7 +319,6 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       const generating = await imageGenConfig.isGenerating(browser.page);
       images = filterNewImages(await imageGenConfig.extractImages(browser.page));
 
-      // Log periodic progress
       if (Date.now() - lastLogTime > 10_000) {
         const elapsed = Math.round(elapsedMs / 1000);
         console.log(chalk.dim(`  [${elapsed}s] Still generating...`));
@@ -322,7 +326,6 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       }
 
       if (images.length > 0 && !generating) {
-        // Double-check: wait one more interval to allow lazy-loaded image URLs to settle.
         await browser.page.waitForTimeout(pollInterval);
         images = filterNewImages(await imageGenConfig.extractImages(browser.page));
         const stillGenerating = await imageGenConfig.isGenerating(browser.page);
@@ -330,7 +333,6 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       }
 
       if (!generating && images.length === 0 && elapsedMs >= minimumWaitMs) {
-        // Double-check before accepting a text-only/no-image outcome.
         await browser.page.waitForTimeout(pollInterval);
         images = filterNewImages(await imageGenConfig.extractImages(browser.page));
         const stillGenerating = await imageGenConfig.isGenerating(browser.page);
@@ -340,16 +342,15 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       await browser.page.waitForTimeout(pollInterval);
     }
 
-    // Wait for images to fully load, then extract one final time.
     await browser.page.waitForTimeout(2_000);
     images = filterNewImages(await imageGenConfig.extractImages(browser.page));
     const text = await imageGenConfig.extractText(browser.page);
 
     console.log(chalk.green(`\n✓ Found ${images.length} image(s)`));
 
-    // Download images
     let savedImages = images;
     if (images.length > 0) {
+      stage = 'download-images';
       console.log(chalk.dim('Downloading images...'));
       savedImages = await downloadImages(browser.page, images, session.id, options.saveDir);
     }
@@ -357,6 +358,7 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
     const durationMs = Date.now() - startTime;
     const truncated = durationMs >= timeoutMs;
 
+    stage = 'save-response';
     await saveResponse(session.id, text);
     await updateSession(session.id, {
       status: truncated ? 'timeout' : 'completed',
@@ -378,7 +380,7 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
-    throw error;
+    throw browserError('Image generation failed', { ...op, stage }, error);
   } finally {
     await browser.close();
   }

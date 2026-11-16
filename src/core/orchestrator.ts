@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { browserError } from '../browser/diagnostics.js';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
@@ -59,6 +60,14 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
   // Determine profile mode: CLI flag overrides config
   const profileMode = options.profile || options.isolatedProfile ? 'isolated' : config.profileMode;
 
+  const op = {
+    provider: providerName,
+    operation: 'chat',
+    url: provider.config.url,
+    startedAt: Date.now(),
+  };
+  let stage = 'launch';
+
   // Launch browser — if this fails, mark session as failed
   let browser: Awaited<ReturnType<typeof launchBrowser>>;
   try {
@@ -69,16 +78,17 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       url: provider.config.url,
       profileMode,
       profile: options.profile,
+      operation: 'chat',
     });
   } catch (error) {
     await updateSession(session.id, { status: 'failed' });
-    throw error;
+    throw browserError('Failed to launch browser for chat', { ...op, stage }, error);
   }
 
   const startTime = Date.now();
 
   try {
-    // Check login
+    stage = 'login-check';
     const loggedIn = await provider.actions.isLoggedIn(browser.page);
     if (!loggedIn) {
       throw new Error(
@@ -86,18 +96,15 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       );
     }
 
-    // Select model if provider supports it
     const modelName = options.model ?? provider.config.defaultModel;
     if (modelName && provider.actions.selectModel) {
+      stage = 'select-model';
       console.log(chalk.dim(`Selecting model: ${modelName}`));
       await provider.actions.selectModel(browser.page, modelName);
     }
 
-    // Submit prompt
-    console.log(chalk.dim('Submitting prompt...'));
-
-    // Attach files if provided
     if (options.attach && options.attach.length > 0) {
+      stage = 'attach-files';
       if (!provider.actions.attachFiles) {
         console.warn(
           chalk.yellow(
@@ -113,9 +120,11 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       }
     }
 
+    stage = 'submit-prompt';
+    console.log(chalk.dim('Submitting prompt...'));
     await provider.actions.submitPrompt(browser.page, bundle);
 
-    // Capture response
+    stage = 'capture-response';
     console.log(chalk.dim('Waiting for response...'));
     const captured = await provider.actions.captureResponse(browser.page, {
       timeoutMs,
@@ -124,12 +133,12 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
 
     const durationMs = Date.now() - startTime;
 
-    // Save response
+    stage = 'save-response';
     await saveResponse(session.id, captured.text);
 
-    // Download generated images if any
     let savedImages: GeneratedImage[] | undefined;
     if (captured.images && captured.images.length > 0) {
+      stage = 'download-images';
       console.log(chalk.dim(`Found ${captured.images.length} generated image(s), downloading...`));
       savedImages = await downloadImages(
         browser.page,
@@ -154,13 +163,12 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
-    // Distinguish timeout from other failures
     const isTimeout = error instanceof Error && error.message.toLowerCase().includes('timeout');
     await updateSession(session.id, {
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
-    throw error;
+    throw browserError('Chat operation failed', { ...op, stage }, error);
   } finally {
     await browser.close();
   }

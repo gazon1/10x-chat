@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
 import type { Page } from 'playwright';
+import { browserError } from '../browser/diagnostics.js';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { waitForUrlPathPrefix } from '../browser/page-utils.js';
@@ -600,6 +601,14 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
   console.log(chalk.dim(`Timeout: ${Math.round(timeoutMs / 1000)}s`));
   console.log(chalk.dim(`Poll interval: ${Math.round(pollIntervalMs / 1000)}s\n`));
 
+  const op = {
+    provider: providerName,
+    operation: 'research',
+    url: provider.config.url,
+    startedAt: Date.now(),
+  };
+  let stage = 'launch';
+
   let browser: Awaited<ReturnType<typeof launchBrowser>>;
   try {
     await updateSession(session.id, { status: 'running' });
@@ -609,16 +618,17 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       url: provider.config.url,
       profileMode,
       profile: options.profile,
+      operation: 'research',
     });
   } catch (error) {
     await updateSession(session.id, { status: 'failed' });
-    throw error;
+    throw browserError('Failed to launch browser for research', { ...op, stage }, error);
   }
 
   const startTime = Date.now();
 
   try {
-    // Check login
+    stage = 'login-check';
     const loggedIn = await provider.actions.isLoggedIn(browser.page);
     if (!loggedIn) {
       throw new Error(
@@ -627,15 +637,17 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
     }
 
     if (options.model && provider.actions.selectModel) {
+      stage = 'select-model';
       console.log(chalk.dim(`Selecting model: ${options.model}`));
       await provider.actions.selectModel(browser.page, options.model);
     }
 
-    // Step 1: Activate deep research mode
+    stage = 'activate-research';
     console.log(chalk.dim('Activating deep research mode...'));
     await researchConfig.activateResearch(browser.page);
 
     if (options.attach?.length) {
+      stage = 'attach-files';
       if (!provider.actions.attachFiles) {
         throw new Error(`${provider.config.displayName} does not support file attachments`);
       }
@@ -643,11 +655,11 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       await provider.actions.attachFiles(browser.page, options.attach);
     }
 
-    // Step 2: Submit the research query
+    stage = 'submit-prompt';
     console.log(chalk.dim('Submitting research query...'));
     await provider.actions.submitPrompt(browser.page, options.prompt);
 
-    // Step 3: Wait for the initial response to appear
+    stage = 'wait-initial';
     console.log(chalk.dim('Waiting for response...'));
     const initialWaitMs = Math.min(timeoutMs / 2, 60_000);
     let hasInitialContent = false;
@@ -665,7 +677,7 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       console.log(chalk.yellow('  No response detected yet, continuing to poll...'));
     }
 
-    // Step 4: Poll for progress with non-blocking status updates
+    stage = 'poll-progress';
     console.log(chalk.dim('Research in progress...\n'));
     let lastProgress = '';
     let stableCount = 0;
@@ -674,7 +686,6 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       const researching = await researchConfig.isResearching(browser.page);
       const progress = await researchConfig.getProgress(browser.page);
 
-      // Show progress updates
       if (progress && progress !== lastProgress && progress !== 'Researching...') {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         const preview = progress.length > 120 ? `${progress.slice(0, 120)}...` : progress;
@@ -682,14 +693,12 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
         lastProgress = progress;
         stableCount = 0;
       } else if (!researching && progress.length > 0 && progress !== 'Researching...') {
-        // Content exists and no streaming indicators — may be done
         stableCount++;
         if (stableCount >= stableThreshold) {
           console.log(chalk.green('\n✓ Research complete'));
           break;
         }
       } else if (researching) {
-        // Still researching — log periodic heartbeat
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         if (elapsed % 30 < pollIntervalMs / 1000) {
           console.log(chalk.dim(`  [${elapsed}s] Still researching...`));
@@ -700,11 +709,9 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       await browser.page.waitForTimeout(pollIntervalMs);
     }
 
-    // Step 4: Extract the final report
+    stage = 'extract-report';
     let report = await researchConfig.getReport(browser.page);
 
-    // Fallback: if custom extractor got nothing, use provider captureResponse
-    // (handles provider-specific SPA/DOM edge cases).
     if (!report || report.trim().length < 10) {
       const remainingMs = Math.max(timeoutMs - (Date.now() - startTime), 15_000);
       const captured = await provider.actions
@@ -717,12 +724,12 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
 
     const truncated = Date.now() - startTime >= timeoutMs && stableCount < stableThreshold;
 
-    // Save response
+    stage = 'save-response';
     await saveResponse(session.id, report);
 
-    // Save report to file if requested
     let savedPath: string | undefined;
     if (options.saveDir || report.length > 0) {
+      stage = 'save-report-file';
       const saveDir =
         options.saveDir ?? path.join(os.homedir(), '.10x-chat', 'sessions', session.id);
       await mkdir(saveDir, { recursive: true });
@@ -752,7 +759,7 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
-    throw error;
+    throw browserError('Research operation failed', { ...op, stage }, error);
   } finally {
     await browser.close();
   }

@@ -122,6 +122,7 @@ export function createDelegateCommand(): Command {
           headless,
           url: provider.config.url,
           profileMode,
+          operation: 'delegate',
         });
 
         let closing = false;
