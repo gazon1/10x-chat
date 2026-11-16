@@ -8,7 +8,6 @@
  */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { HERE, RESULTS_DIR, readReport, writeReport } from './util.mjs';
 
 const MATRICES = [
@@ -32,7 +31,8 @@ for (const [name, script] of MATRICES) {
   // (the provider matrix takes hours).
   const existing = process.env.SPIKE_REUSE === '1' ? await readReport(name) : null;
   const code = existing ? 0 : await run(script);
-  if (existing) console.log(`reused existing ${name} report (partial=${existing.partial ?? false})`);
+  if (existing)
+    console.log(`reused existing ${name} report (partial=${existing.partial ?? false})`);
   const report = await readReport(name);
   outcomes.push({
     matrix: name,

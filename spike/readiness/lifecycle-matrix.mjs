@@ -36,31 +36,40 @@ async function main() {
     {
       const userDataDir = path.join(WORK, engineName, 'profile');
       const token = `token-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-      const r = await checker.check(`${engineName}: persistent profile reused across restarts`, async () => {
-        let context = await engine.launchPersistent({ headless: true, userDataDir });
-        try {
-          const page = await newPage(context);
-          await page.goto(`${base}/setcookie`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          await page.goto(`${base}/storage`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          await page.evaluate((value) => localStorage.setItem('spike_probe', value), token);
-        } finally {
-          await context.close().catch(() => {});
-        }
-        await sleep(500);
-        context = await engine.launchPersistent({ headless: true, userDataDir });
-        try {
-          const cookies = await context.cookies();
-          const hit = cookies.find((c) => c.name === 'spike_session');
-          assert(hit, `cookie missing after restart, cookies=${JSON.stringify(cookies.map((c) => c.name))}`);
-          const page = await newPage(context);
-          await page.goto(`${base}/storage`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          const stored = await page.evaluate(() => localStorage.getItem('spike_probe'));
-          assert(stored === token, `localStorage lost after restart, value=${stored}`);
-          return `cookie survived (${hit.value}), localStorage survived (${stored})`;
-        } finally {
-          await context.close().catch(() => {});
-        }
-      });
+      const r = await checker.check(
+        `${engineName}: persistent profile reused across restarts`,
+        async () => {
+          let context = await engine.launchPersistent({ headless: true, userDataDir });
+          try {
+            const page = await newPage(context);
+            await page.goto(`${base}/setcookie`, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30_000,
+            });
+            await page.goto(`${base}/storage`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            await page.evaluate((value) => localStorage.setItem('spike_probe', value), token);
+          } finally {
+            await context.close().catch(() => {});
+          }
+          await sleep(500);
+          context = await engine.launchPersistent({ headless: true, userDataDir });
+          try {
+            const cookies = await context.cookies();
+            const hit = cookies.find((c) => c.name === 'spike_session');
+            assert(
+              hit,
+              `cookie missing after restart, cookies=${JSON.stringify(cookies.map((c) => c.name))}`,
+            );
+            const page = await newPage(context);
+            await page.goto(`${base}/storage`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            const stored = await page.evaluate(() => localStorage.getItem('spike_probe'));
+            assert(stored === token, `localStorage lost after restart, value=${stored}`);
+            return `cookie survived (${hit.value}), localStorage survived (${stored})`;
+          } finally {
+            await context.close().catch(() => {});
+          }
+        },
+      );
       results['persistent-profile-reuse'] = r;
     }
 
@@ -129,34 +138,37 @@ async function main() {
 
     // 4. file upload ----------------------------------------------------------
     {
-      const r = await checker.check(`${engineName}: file upload through the composer input`, async () => {
-        const browser = await engine.launch({ headless: true });
-        try {
-          const page = await browser.newPage();
-          await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          await page.setInputFiles('#file', {
-            name: 'probe.txt',
-            mimeType: 'text/plain',
-            buffer: Buffer.from('readiness-upload-probe'),
-          });
-          const status = await page.textContent('#status');
-          assert(status.includes('probe.txt'), `input did not pick the file, status=${status}`);
-          const posted = await page.evaluate(async () => {
-            const input = document.getElementById('file');
-            const file = input.files[0];
-            const res = await fetch('/upload', { method: 'POST', body: await file.text() });
-            return res.json();
-          });
-          assert(posted.ok, 'upload endpoint failed');
-          assert(
-            fixture.uploads.some((body) => body.includes('readiness-upload-probe')),
-            'the fixture server never received the file',
-          );
-          return `uploaded ${posted.bytes} bytes`;
-        } finally {
-          await browser.close().catch(() => {});
-        }
-      });
+      const r = await checker.check(
+        `${engineName}: file upload through the composer input`,
+        async () => {
+          const browser = await engine.launch({ headless: true });
+          try {
+            const page = await browser.newPage();
+            await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            await page.setInputFiles('#file', {
+              name: 'probe.txt',
+              mimeType: 'text/plain',
+              buffer: Buffer.from('readiness-upload-probe'),
+            });
+            const status = await page.textContent('#status');
+            assert(status.includes('probe.txt'), `input did not pick the file, status=${status}`);
+            const posted = await page.evaluate(async () => {
+              const input = document.getElementById('file');
+              const file = input.files[0];
+              const res = await fetch('/upload', { method: 'POST', body: await file.text() });
+              return res.json();
+            });
+            assert(posted.ok, 'upload endpoint failed');
+            assert(
+              fixture.uploads.some((body) => body.includes('readiness-upload-probe')),
+              'the fixture server never received the file',
+            );
+            return `uploaded ${posted.bytes} bytes`;
+          } finally {
+            await browser.close().catch(() => {});
+          }
+        },
+      );
       results['file-upload'] = r;
     }
 
@@ -179,49 +191,61 @@ async function main() {
           await browser.close().catch(() => {});
         }
       });
-      results['download'] = r;
+      results.download = r;
     }
 
     // 6. browser reuse (what the daemon does) ---------------------------------
     {
-      const r = await checker.check(`${engineName}: one browser, several sequential contexts`, async () => {
-        const browser = await engine.launch({ headless: true });
-        try {
-          const seen = [];
-          for (let i = 0; i < 3; i++) {
-            const context = await browser.newContext();
-            const page = await context.newPage();
-            const response = await page.goto(`${base}/`, {
-              waitUntil: 'domcontentloaded',
-              timeout: 30_000,
-            });
-            seen.push(response?.status());
-            await context.close();
+      const r = await checker.check(
+        `${engineName}: one browser, several sequential contexts`,
+        async () => {
+          const browser = await engine.launch({ headless: true });
+          try {
+            const seen = [];
+            for (let i = 0; i < 3; i++) {
+              const context = await browser.newContext();
+              const page = await context.newPage();
+              const response = await page.goto(`${base}/`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30_000,
+              });
+              seen.push(response?.status());
+              await context.close();
+            }
+            assert(
+              seen.every((s) => s === 200),
+              `statuses=${JSON.stringify(seen)}`,
+            );
+            return `statuses=${JSON.stringify(seen)}`;
+          } finally {
+            await browser.close().catch(() => {});
           }
-          assert(seen.every((s) => s === 200), `statuses=${JSON.stringify(seen)}`);
-          return `statuses=${JSON.stringify(seen)}`;
-        } finally {
-          await browser.close().catch(() => {});
-        }
-      });
+        },
+      );
       results['browser-reuse'] = r;
     }
 
     // 7. cleanup after close ---------------------------------------------------
     {
-      const r = await checker.check(`${engineName}: no browser processes left after close`, async () => {
-        const before = pids(engine.processPattern).length;
-        const browser = await engine.launch({ headless: true });
-        const page = await browser.newPage();
-        await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-        const during = pids(engine.processPattern).length;
-        await browser.close().catch(() => {});
-        await sleep(2000);
-        const after = pids(engine.processPattern).length;
-        assert(after <= before, `processes left behind: before=${before} during=${during} after=${after}`);
-        return `before=${before} during=${during} after=${after}`;
-      });
-      results['cleanup'] = r;
+      const r = await checker.check(
+        `${engineName}: no browser processes left after close`,
+        async () => {
+          const before = pids(engine.processPattern).length;
+          const browser = await engine.launch({ headless: true });
+          const page = await browser.newPage();
+          await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          const during = pids(engine.processPattern).length;
+          await browser.close().catch(() => {});
+          await sleep(2000);
+          const after = pids(engine.processPattern).length;
+          assert(
+            after <= before,
+            `processes left behind: before=${before} during=${during} after=${after}`,
+          );
+          return `before=${before} during=${during} after=${after}`;
+        },
+      );
+      results.cleanup = r;
     }
 
     perEngine[engineName] = results;

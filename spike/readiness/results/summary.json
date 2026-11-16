@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-16T14:15:47.358Z",
+  "generatedAt": "2026-11-16T14:32:25.706Z",
   "outcomes": [
     {
       "matrix": "proxy-matrix",
@@ -18,7 +18,7 @@
         },
         {
           "name": "cloakbrowser: proxy credentials do not leak",
-          "detail": "password visible in argv of pids 2751660,2751748,2751750"
+          "detail": "password visible in argv of pids 2945033,2945118,2945120"
         }
       ]
     },

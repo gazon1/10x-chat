@@ -8,7 +8,10 @@
  * CloakBrowser wants `userDataDir`) so every matrix scenario is literally the
  * same code for both engines.
  */
-import { launch as cloakLaunch, launchPersistentContext as cloakLaunchPersistent } from 'cloakbrowser';
+import {
+  launch as cloakLaunch,
+  launchPersistentContext as cloakLaunchPersistent,
+} from 'cloakbrowser';
 import { Camoufox } from '../camoufox/node_modules/camoufox/dist/index.js';
 
 export const ENGINE_NAMES = ['camoufox', 'cloakbrowser'];
@@ -42,7 +45,6 @@ async function cloakLaunchPersistentFree(options) {
     if (key !== undefined) process.env.CLOAKBROWSER_LICENSE_KEY = key;
   }
 }
-
 
 export const engines = {
   camoufox: {

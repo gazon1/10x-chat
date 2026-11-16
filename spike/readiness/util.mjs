@@ -5,11 +5,12 @@
  * engines directly (Camoufox/Firefox and CloakBrowser/Chromium) through the
  * same adapter interface, so every scenario runs identically on both.
  */
+
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));

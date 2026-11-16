@@ -21,18 +21,24 @@ const SOCKS_USER = 'socksuser';
 const SOCKS_PASS = 'sockspass';
 
 /** Does the process table expose `needle` in argv or in the environment? */
-async function procLeaks(needle, pattern) {
+async function procLeaks(needle, _pattern) {
   const hits = { cmdline: [], environ: [] };
   const entries = await readdir('/proc').catch(() => []);
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
     const cmdline = await readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => null);
-    if (cmdline && cmdline.includes(needle)) {
-      hits.cmdline.push({ pid: Number(entry), snippet: cmdline.replaceAll('\0', ' ').slice(0, 200) });
+    if (cmdline?.includes(needle)) {
+      hits.cmdline.push({
+        pid: Number(entry),
+        snippet: cmdline.replaceAll('\0', ' ').slice(0, 200),
+      });
     }
     const environ = await readFile(`/proc/${entry}/environ`, 'utf8').catch(() => null);
-    if (environ && environ.includes(needle)) {
-      hits.environ.push({ pid: Number(entry), snippet: environ.replaceAll('\0', ' ').slice(0, 200) });
+    if (environ?.includes(needle)) {
+      hits.environ.push({
+        pid: Number(entry),
+        snippet: environ.replaceAll('\0', ' ').slice(0, 200),
+      });
     }
   }
   return hits;
@@ -91,10 +97,7 @@ async function main() {
           proxy.log.some((e) => e.status === 200),
           `no authenticated tunnel, proxy log=${JSON.stringify(proxy.log)}`,
         );
-        assert(
-          !proxy.log.some((e) => e.status === 407),
-          'proxy rejected the credentials (407)',
-        );
+        assert(!proxy.log.some((e) => e.status === 407), 'proxy rejected the credentials (407)');
         return `status=${res.status} tunnelled=${proxy.log.length}`;
       });
       results['http-basic-auth'] = r;
@@ -242,16 +245,19 @@ async function main() {
         password: SOCKS_PASS,
       });
       const relayPort = await listenProxy(relay.server);
-      const r = await checker.check(`${engineName}: EXPERIMENT socks5 via local relay adapter`, async () => {
-        const res = await visit(engine, { server: `socks5://127.0.0.1:${relayPort}` });
-        assert(res.status === 200, `expected HTTP 200, got ${res.status}`);
-        assert(upstream.log.length > 0, 'upstream proxy saw no request');
-        assert(
-          upstream.log.some((e) => e.auth === SOCKS_USER),
-          'relay did not authenticate upstream',
-        );
-        return 'works with an out-of-process adapter (workaround, not a supported path)';
-      });
+      const r = await checker.check(
+        `${engineName}: EXPERIMENT socks5 via local relay adapter`,
+        async () => {
+          const res = await visit(engine, { server: `socks5://127.0.0.1:${relayPort}` });
+          assert(res.status === 200, `expected HTTP 200, got ${res.status}`);
+          assert(upstream.log.length > 0, 'upstream proxy saw no request');
+          assert(
+            upstream.log.some((e) => e.auth === SOCKS_USER),
+            'relay did not authenticate upstream',
+          );
+          return 'works with an out-of-process adapter (workaround, not a supported path)';
+        },
+      );
       results['socks5-auth-via-relay-experiment'] = r;
     } else {
       results['socks5-auth-via-relay-experiment'] = {

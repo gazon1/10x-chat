@@ -32,7 +32,8 @@ const PROVIDERS = [
     url: 'https://chatgpt.com',
     runs: 30,
     cloudflare: true,
-    composer: '#prompt-textarea.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea',
+    composer:
+      '#prompt-textarea.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea',
     send: '#composer-submit-button, button[aria-label="Send prompt"], [data-testid="send-button"]',
     response: '[data-message-author-role="assistant"], .agent-turn',
     login: 'button:has-text("Log in"), button:has-text("Sign up")',
@@ -80,9 +81,10 @@ const PROVIDERS = [
 ];
 
 const CF_TITLE = /just a moment|attention required|checking your browser|verify you are human/i;
-const CF_SELECTORS = '#challenge-running, #challenge-form, .cf-browser-verification, #cf-challenge-running';
+const CF_SELECTORS =
+  '#challenge-running, #challenge-form, .cf-browser-verification, #cf-challenge-running';
 
-function classify({ status, title, url, cfVisible, loginVisible, composerVisible }) {
+function classify({ status, title, cfVisible, loginVisible, composerVisible }) {
   if (status === 0) return 'infra-error';
   if (cfVisible || CF_TITLE.test(title) || status === 403 || status === 503) return 'cloudflare';
   if (loginVisible && !composerVisible) return 'auth-wall';
@@ -117,7 +119,10 @@ async function egressIp(engine) {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
     });
-    return { status: response?.status() ?? 0, ip: (await page.textContent('body').catch(() => ''))?.trim() };
+    return {
+      status: response?.status() ?? 0,
+      ip: (await page.textContent('body').catch(() => ''))?.trim(),
+    };
   } finally {
     await browser.close().catch(() => {});
   }
@@ -287,14 +292,8 @@ async function main() {
       const r = await checker.check(
         `${engineName}: ${provider.name} reachable in ${provider.runs} runs`,
         async () => {
-          assert(
-            (counts['infra-error'] ?? 0) === 0,
-            `${counts['infra-error']} infra errors`,
-          );
-          assert(
-            reachable > 0,
-            `never reached the composer, outcomes=${JSON.stringify(counts)}`,
-          );
+          assert((counts['infra-error'] ?? 0) === 0, `${counts['infra-error']} infra errors`);
+          assert(reachable > 0, `never reached the composer, outcomes=${JSON.stringify(counts)}`);
           return `composer-visible ${reachable}/${provider.runs}, outcomes=${JSON.stringify(counts)}`;
         },
       );

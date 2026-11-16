@@ -5,12 +5,22 @@
  * processes and the licensing facts that the migration decision depends on.
  * Everything is measured, nothing is assumed.
  */
+
+import { execFileSync } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
-import { execFile, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { ENGINE_NAMES, engines } from './engines.mjs';
-import { assert, createChecker, dirSizeKb, envInfo, pids, rssKb, sleep, writeReport } from './util.mjs';
+import {
+  assert,
+  createChecker,
+  dirSizeKb,
+  envInfo,
+  pids,
+  rssKb,
+  sleep,
+  writeReport,
+} from './util.mjs';
 
 const TARGET = 'https://example.com';
 
@@ -52,7 +62,7 @@ async function main() {
       proBuild: dirSizeKb(path.join(home, '.cloakbrowser', 'chromium-156.0.8078.47.1-pro')),
     },
   };
-  const r0 = await checker.check('install footprint measured', async () => {
+  const _r0 = await checker.check('install footprint measured', async () => {
     assert(footprints.camoufox.total, 'camoufox install dir not found');
     assert(footprints.cloakbrowser.total, 'cloakbrowser install dir not found');
     return `camoufox=${Math.round(footprints.camoufox.total / 1024)}MB cloakbrowser=${Math.round(footprints.cloakbrowser.total / 1024)}MB`;
@@ -91,8 +101,10 @@ async function main() {
   // 4. Install path and failure modes ----------------------------------------
   const install = {};
   {
-    const r = await checker.check('camoufox: missing browser build fails with a clear error', async () => {
-      const script = `
+    const r = await checker.check(
+      'camoufox: missing browser build fails with a clear error',
+      async () => {
+        const script = `
         import { Camoufox } from './spike/camoufox/node_modules/camoufox/dist/index.js';
         try {
           await Camoufox({ headless: true });
@@ -102,29 +114,33 @@ async function main() {
         }
         process.exit(0);
       `;
-      const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
-        cwd: process.cwd(),
-        encoding: 'utf8',
-        env: { ...process.env, CAMOUFOX_EXECUTABLE_PATH: '/nonexistent/camoufox' },
-        timeout: 60_000,
-      });
-      assert(out.includes('ERROR'), `unexpected output: ${out.trim()}`);
-      install.camoufoxMissingBuild = out.trim().split('\n').pop();
-      return install.camoufoxMissingBuild;
-    });
+        const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          env: { ...process.env, CAMOUFOX_EXECUTABLE_PATH: '/nonexistent/camoufox' },
+          timeout: 60_000,
+        });
+        assert(out.includes('ERROR'), `unexpected output: ${out.trim()}`);
+        install.camoufoxMissingBuild = out.trim().split('\n').pop();
+        return install.camoufoxMissingBuild;
+      },
+    );
     install.camoufoxMissingBuild = r.detail;
   }
 
   {
-    const r = await checker.check('camoufox: supported install command lists the build', async () => {
-      const out = execFileSync('npx', ['camoufox', 'list'], {
-        cwd: path.join(process.cwd(), 'spike', 'camoufox'),
-        encoding: 'utf8',
-        timeout: 120_000,
-      });
-      install.camoufoxList = out.trim().split('\n').slice(0, 6).join(' | ');
-      return install.camoufoxList;
-    });
+    const r = await checker.check(
+      'camoufox: supported install command lists the build',
+      async () => {
+        const out = execFileSync('npx', ['camoufox', 'list'], {
+          cwd: path.join(process.cwd(), 'spike', 'camoufox'),
+          encoding: 'utf8',
+          timeout: 120_000,
+        });
+        install.camoufoxList = out.trim().split('\n').slice(0, 6).join(' | ');
+        return install.camoufoxList;
+      },
+    );
     install.camoufoxList = r.detail;
   }
 
@@ -170,7 +186,10 @@ async function main() {
       install.downloadSamples = samples;
       assert(samples.length > 0, 'no download sample collected');
       return samples
-        .map((s) => `${s.label}: ${s.error ?? `${Math.round((s.bytesPerSec ?? 0) / 1024 / 1024)} MB/s, http=${s.httpCode}`}`)
+        .map(
+          (s) =>
+            `${s.label}: ${s.error ?? `${Math.round((s.bytesPerSec ?? 0) / 1024 / 1024)} MB/s, http=${s.httpCode}`}`,
+        )
         .join(' | ');
     });
     install.downloadSamples = r.detail;
@@ -181,7 +200,10 @@ async function main() {
     const facts = {};
     try {
       const pkg = JSON.parse(
-        await readFile(path.join(process.cwd(), 'node_modules', 'cloakbrowser', 'package.json'), 'utf8'),
+        await readFile(
+          path.join(process.cwd(), 'node_modules', 'cloakbrowser', 'package.json'),
+          'utf8',
+        ),
       );
       facts.cloakbrowserPackage = { version: pkg.version, license: pkg.license };
     } catch (err) {
@@ -203,7 +225,8 @@ async function main() {
       const stat_ = await stat(file);
       facts.cloakbrowserBinaryLicense = `present (${stat_.size} bytes)`;
     } catch {
-      facts.cloakbrowserBinaryLicense = 'not shipped in the npm package (downloaded with the binary)';
+      facts.cloakbrowserBinaryLicense =
+        'not shipped in the npm package (downloaded with the binary)';
     }
     facts.costModel = {
       camoufox: 'MPL-2.0 browser build + MIT tooling: no licence fee, redistribution allowed',
