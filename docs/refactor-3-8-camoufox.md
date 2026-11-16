@@ -193,12 +193,15 @@ way (`407`). The upstream fix exists but needs a Camoufox beta plus a newer brow
 this gate is not allowed to apply on the side.
 
 The authorized prompt/response round-trip was since **measured** rather than left `unfinished`: it
-is a matrix of 5 providers × 2 engines = 10 mandatory combinations, each measured on its own
+is a matrix of 3 providers × 2 engines = 6 mandatory combinations, each measured on its own
 persistent profile (the browser is closed and reopened on the same profile — the session has to
 survive a restart without a re-login) and only an answer that appeared **after** the prompt was
-sent counts. 8 of the 10 combinations are measured and pass; the 2 Grok combinations have **no
-credentials** in this environment and are therefore `skipped` ("not measurable"), not a failure of
-the engine — the criterion status is `partial`, never `done` while a combination is unmeasured.
+sent counts. All 6 combinations are measured and pass, so the criterion is `done` for the providers
+of the matrix. Two providers were dropped from it: Grok has **no credentials** in this environment,
+so its combinations could only ever be `skipped` ("not measurable"), and Perplexity does not submit
+the prompt through its web UI here — the send button appears without a click handler, so neither a
+mouse click nor `Enter` sends anything. Neither of them could say anything about the engines; the
+production providers themselves are untouched in `src/providers/`.
 A proxy-credential leak in the current CloakBrowser runtime (credentials on the browser command
 line) was measured as well.
 

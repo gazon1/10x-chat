@@ -3,7 +3,6 @@
   "env": {
     "node": "v22.22.2",
     "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
-    "host": "192.168.1.107",
     "camoufoxPackage": "0.5.9",
     "playwrightCoreSpike": "1.62.0",
     "playwrightCoreRepo": "1.61.1",
@@ -11,11 +10,11 @@
     "camoufoxBrowser": "158.0.1-beta.41",
     "camoufoxBrowserSha256": "3f2eb1d0",
     "versionSources": {
-      "camoufoxPackage": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/camoufox/package.json",
-      "playwrightCoreSpike": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/playwright-core/package.json",
-      "playwrightCoreRepo": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/playwright-core/package.json",
-      "cloakbrowser": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/cloakbrowser/package.json",
-      "camoufoxBrowser": "/home/max/.cache/camoufox/config.json"
+      "camoufoxPackage": "spike/camoufox/node_modules/camoufox/package.json",
+      "playwrightCoreSpike": "spike/camoufox/node_modules/playwright-core/package.json",
+      "playwrightCoreRepo": "node_modules/playwright-core/package.json",
+      "cloakbrowser": "node_modules/cloakbrowser/package.json",
+      "camoufoxBrowser": "~/.cache/camoufox/config.json"
     },
     "display": ":99",
     "proxyEnv": {
@@ -57,20 +56,20 @@
         "cold": {
           "name": "camoufox: cold start (first launch)",
           "ok": true,
-          "detail": "launch=2834ms first-paint=6053ms rss=1088MB procs=7",
-          "ms": 6474
+          "detail": "launch=1089ms first-paint=4766ms rss=1065MB procs=7",
+          "ms": 5158
         },
         "warm": {
           "name": "camoufox: warm start (second launch)",
           "ok": true,
-          "detail": "launch=708ms first-paint=3892ms rss=1127MB procs=7",
-          "ms": 4318
+          "detail": "launch=597ms first-paint=3476ms rss=1105MB procs=7",
+          "ms": 3896
         },
         "cleanup": {
           "name": "camoufox: no leftover processes",
           "ok": true,
-          "detail": "spawned=7 leftover=0 (machine-wide before=1)",
-          "ms": 6157
+          "detail": "spawned=7 leftover=0 (machine-wide before=19)",
+          "ms": 7496
         }
       }
     },
@@ -84,20 +83,20 @@
         "cold": {
           "name": "cloakbrowser: cold start (first launch)",
           "ok": true,
-          "detail": "launch=476ms first-paint=838ms rss=789MB procs=10",
-          "ms": 1065
+          "detail": "launch=423ms first-paint=769ms rss=784MB procs=10",
+          "ms": 976
         },
         "warm": {
           "name": "cloakbrowser: warm start (second launch)",
           "ok": true,
-          "detail": "launch=135ms first-paint=466ms rss=790MB procs=10",
-          "ms": 727
+          "detail": "launch=134ms first-paint=445ms rss=782MB procs=10",
+          "ms": 651
         },
         "cleanup": {
           "name": "cloakbrowser: no leftover processes",
           "ok": true,
           "detail": "spawned=10 leftover=0 (machine-wide before=0)",
-          "ms": 2752
+          "ms": 2640
         }
       }
     }
@@ -112,50 +111,50 @@
     {
       "name": "camoufox: cold start (first launch)",
       "ok": true,
-      "detail": "launch=2834ms first-paint=6053ms rss=1088MB procs=7",
-      "ms": 6474
+      "detail": "launch=1089ms first-paint=4766ms rss=1065MB procs=7",
+      "ms": 5158
     },
     {
       "name": "camoufox: warm start (second launch)",
       "ok": true,
-      "detail": "launch=708ms first-paint=3892ms rss=1127MB procs=7",
-      "ms": 4318
+      "detail": "launch=597ms first-paint=3476ms rss=1105MB procs=7",
+      "ms": 3896
     },
     {
       "name": "camoufox: no leftover processes",
       "ok": true,
-      "detail": "spawned=7 leftover=0 (machine-wide before=1)",
-      "ms": 6157
+      "detail": "spawned=7 leftover=0 (machine-wide before=19)",
+      "ms": 7496
     },
     {
       "name": "cloakbrowser: cold start (first launch)",
       "ok": true,
-      "detail": "launch=476ms first-paint=838ms rss=789MB procs=10",
-      "ms": 1065
+      "detail": "launch=423ms first-paint=769ms rss=784MB procs=10",
+      "ms": 976
     },
     {
       "name": "cloakbrowser: warm start (second launch)",
       "ok": true,
-      "detail": "launch=135ms first-paint=466ms rss=790MB procs=10",
-      "ms": 727
+      "detail": "launch=134ms first-paint=445ms rss=782MB procs=10",
+      "ms": 651
     },
     {
       "name": "cloakbrowser: no leftover processes",
       "ok": true,
       "detail": "spawned=10 leftover=0 (machine-wide before=0)",
-      "ms": 2752
+      "ms": 2640
     },
     {
       "name": "camoufox: missing browser build fails with a clear error",
       "ok": true,
       "detail": "ERROR ENOENT: no such file or directory, open '/nonexistent/application.ini'",
-      "ms": 642
+      "ms": 638
     },
     {
       "name": "camoufox: supported install command lists the build",
       "ok": true,
       "detail": "Installed versions: |  | official/ |     └── v158.0.1-beta.41 (stable) (Oct 30) (active) |  | geoip/",
-      "ms": 760
+      "ms": 747
     },
     {
       "name": "download throughput for the browser builds",
@@ -167,7 +166,7 @@
       "name": "licensing facts collected",
       "ok": true,
       "detail": "{\"cloakbrowserPackage\":{\"version\":\"0.4.10\",\"license\":\"MIT\"},\"camoufoxPackage\":{\"version\":\"0.5.9\",\"license\":\"MIT\"},\"cloakbrowserBinaryLicense\":\"not shipped in the npm package (downloaded with the binary)\",\"costModel\":{\"camoufox\":\"MPL-2.0 browser build + MIT tooling: no licence fee, redistribution allowed\",\"cloakbrowser\":\"MIT wrapper + separate binary licence: free tier = 1 concurrent session, no redistribution; paid tiers for 5/20/200/2000+ concurrent sessions\"}}",
-      "ms": 4
+      "ms": 3
     }
   ],
   "passed": 11,

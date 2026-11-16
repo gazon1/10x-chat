@@ -5,7 +5,7 @@
  * same proxy and the same headless setting. Otherwise `run-all.mjs` re-runs
  * the matrix instead of quietly reporting another experiment's numbers.
  */
-import { envInfo, harnessSettings } from './util.mjs';
+import { envInfo, harnessSettings, sanitizeProxyUrl } from './util.mjs';
 
 /** The proxy/headless settings a report was produced with. */
 export function savedSettings(name, report) {
@@ -51,7 +51,7 @@ export function compatibilityIssues(name, report, now = envInfo()) {
     }
   }
   for (const key of ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY']) {
-    const saved = savedEnv.proxyEnv?.[key] ?? null;
+    const saved = sanitizeProxyUrl(savedEnv.proxyEnv?.[key] ?? null);
     const current = now.proxyEnv?.[key] ?? null;
     if (saved !== current) issues.push(`${key}: report=${saved}, now=${current}`);
   }
@@ -60,8 +60,12 @@ export function compatibilityIssues(name, report, now = envInfo()) {
   if (!saved) {
     issues.push('the saved report has no harness settings to compare');
   } else {
-    if ((saved.proxy ?? null) !== (expected.proxy ?? null)) {
-      issues.push(`proxy: report=${saved.proxy ?? null}, now=${expected.proxy ?? null}`);
+    // Both sides are sanitized: the credentials of a proxy are never part of
+    // the comparison (and never part of the report).
+    const savedProxy = sanitizeProxyUrl(saved.proxy ?? null);
+    const expectedProxy = sanitizeProxyUrl(expected.proxy ?? null);
+    if (savedProxy !== expectedProxy) {
+      issues.push(`proxy: report=${savedProxy ?? null}, now=${expectedProxy ?? null}`);
     }
     if ((saved.headless ?? null) !== (expected.headless ?? null)) {
       issues.push(`headless: report=${saved.headless ?? null}, now=${expected.headless ?? null}`);

@@ -86,6 +86,58 @@ function camoufoxBrowserBuild() {
   }
 }
 
+/**
+ * Mask the credentials of a proxy URL.
+ *
+ * A proxy URL may carry `user:password@host`. The reports are committed to
+ * Git, so the userinfo is replaced before anything is written — the reports
+ * must never contain a credential.
+ *
+ * @param {string|null|undefined} value the raw proxy URL
+ * @returns {string|null} the URL without its userinfo
+ */
+export function sanitizeProxyUrl(value) {
+  if (typeof value !== 'string') return value === undefined ? null : value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  // `scheme://user:password@host:port` as well as `user:password@host:port`.
+  const match = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)?([^/@\s]+)@(.*)$/);
+  if (!match) return trimmed;
+  const [, scheme = '', , rest] = match;
+  return `${scheme}***@${rest}`;
+}
+
+/** The NO_PROXY list: every entry is a host, but the list is sanitized as well. */
+export function sanitizeNoProxy(value) {
+  if (typeof value !== 'string') return value === undefined ? null : value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  return trimmed
+    .split(',')
+    .map((entry) => sanitizeProxyUrl(entry))
+    .join(',');
+}
+
+/**
+ * A path that is safe to publish.
+ *
+ * The reports are public, so they must not reveal the name of the user or
+ * the absolute layout of the machine. Paths inside the repository become
+ * relative to it, paths in the home directory keep only their tail.
+ *
+ * @param {string|null|undefined} value the absolute path
+ * @returns {string|null} the publishable path
+ */
+export function publicPath(value) {
+  if (typeof value !== 'string' || !value) return value === undefined ? null : value;
+  const home = os.homedir();
+  const inside = (root) =>
+    Boolean(root) && (value === root || value.startsWith(`${root}${path.sep}`));
+  if (inside(REPO_ROOT)) return path.relative(REPO_ROOT, value);
+  if (inside(home)) return `~${value.slice(home.length)}`;
+  return value;
+}
+
 /** Versions + host facts every matrix report repeats. */
 export function envInfo() {
   const versions = {};
@@ -93,25 +145,27 @@ export function envInfo() {
   for (const [key, dir] of Object.entries(VERSION_SOURCES)) {
     const version = packageVersion(dir);
     versions[key] = version;
-    versionSources[key] = version ? path.join(dir, 'package.json') : null;
+    versionSources[key] = version ? publicPath(path.join(dir, 'package.json')) : null;
   }
   const build = camoufoxBrowserBuild();
   versions.camoufoxBrowser = build?.version ?? null;
   versions.camoufoxBrowserSha256 = build?.sha256 ?? null;
-  versionSources.camoufoxBrowser = build ? path.join(build.installPath, 'config.json') : null;
+  versionSources.camoufoxBrowser = build
+    ? publicPath(path.join(build.installPath, 'config.json'))
+    : null;
   return {
     node: process.version,
     platform: `${os.type()} ${os.release()} ${os.arch()}`,
-    host: os.hostname(),
+    // No hostname, no absolute paths: the report is public.
     ...versions,
     versionSources,
     // The display the browsers were opened on: a headed browser on the
     // desktop would steal the focus, so the harness only uses a virtual one.
     display: process.env.DISPLAY ?? null,
     proxyEnv: {
-      HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
-      HTTP_PROXY: process.env.HTTP_PROXY ?? null,
-      NO_PROXY: process.env.NO_PROXY ?? null,
+      HTTPS_PROXY: sanitizeProxyUrl(process.env.HTTPS_PROXY ?? null),
+      HTTP_PROXY: sanitizeProxyUrl(process.env.HTTP_PROXY ?? null),
+      NO_PROXY: sanitizeNoProxy(process.env.NO_PROXY ?? null),
     },
   };
 }
@@ -124,7 +178,9 @@ export function envInfo() {
 export function harnessSettings(matrix) {
   return {
     proxy:
-      matrix === 'provider-matrix' ? (process.env.SPIKE_PROXY ?? 'http://127.0.0.1:3128') : null,
+      matrix === 'provider-matrix'
+        ? sanitizeProxyUrl(process.env.SPIKE_PROXY ?? 'http://127.0.0.1:3128')
+        : null,
     headless: matrix === 'provider-matrix' ? process.env.SPIKE_HEADLESS === '1' : true,
   };
 }

@@ -22,6 +22,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { answerSnapshot } from './answers.mjs';
 import { ENGINE_NAMES, engines } from './engines.mjs';
 import {
   classifyOutcome,
@@ -32,13 +33,16 @@ import {
   probePrompt,
   SIGNUP_WALL,
 } from './probe.mjs';
+import { PROVIDERS as PROVIDER_TABLE } from './providers.mjs';
 import { mergeRoundTrip, roundTripState } from './round-trip.mjs';
 import {
   assert,
   createChecker,
   envInfo,
   harnessSettings,
+  publicPath,
   readReport,
+  sanitizeProxyUrl,
   sleep,
   writeReport,
 } from './util.mjs';
@@ -53,76 +57,12 @@ const ENGINE_LIST = (process.env.SPIKE_ENGINES ?? ENGINE_NAMES.join(','))
   .map((e) => e.trim())
   .filter(Boolean);
 
-const PROVIDERS = [
-  {
-    name: 'chatgpt',
-    url: 'https://chatgpt.com',
-    runs: 30,
-    cloudflare: true,
-    // The current ChatGPT UI has no #prompt-textarea: the composer is a
-    // ProseMirror textbox, the send button is aria-label="Send" and the
-    // assistant turn is marked with data-conversation-role="assistant".
-    composer: 'div.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea',
-    send: 'button[aria-label="Send"], #composer-submit-button, [data-testid="send-button"]',
-    response:
-      '[data-conversation-role="assistant"], [data-message-author-role="assistant"], .agent-turn',
-    login: 'button:has-text("Log in"), button:has-text("Sign up")',
-  },
-  {
-    name: 'gemini',
-    url: 'https://gemini.google.com/app',
-    runs: 10,
-    cloudflare: false,
-    composer: '.ql-editor[contenteditable="true"], div[role="textbox"][aria-label*="Enter"]',
-    send: 'button.send-button, button[aria-label="Send message"]',
-    response: 'model-response .model-response-text, model-response message-content',
-    login: 'a:has-text("Sign in")',
-  },
-  {
-    name: 'claude',
-    url: 'https://claude.ai/new',
-    runs: 10,
-    cloudflare: false,
-    // The composer is the ProseMirror textbox. The UI also keeps a hidden
-    // TEXTAREA (the same enterkeyhint) that comes first in the DOM under
-    // Firefox — filling that one silently loses the prompt, so the textbox
-    // is addressed explicitly.
-    composer:
-      'div.ProseMirror[contenteditable="true"][role="textbox"], div[contenteditable="true"][role="textbox"], div[enterkeyhint="enter"][role="textbox"]',
-    send: 'button[aria-label="Send message"], button[aria-label*="Send"], button[type="submit"]',
-    // The current Claude UI marks the assistant turn with
-    // data-testid="assistant-message"; the answer text itself lives in
-    // [data-perf-reply-text] inside it. The user turn is
-    // [data-testid="user-message"].
-    response: '[data-testid="assistant-message"], [data-cds="AssistantMessage"]',
-    login: 'button:has-text("Log in")',
-  },
-  {
-    name: 'grok',
-    url: 'https://grok.com',
-    runs: 10,
-    cloudflare: false,
-    composer: 'textarea, [contenteditable="true"], .chat-input textarea',
-    send: 'button[aria-label*="Send"], button[type="submit"]',
-    response: '.response-content, .message-content',
-    login: 'button:has-text("Log in"), a:has-text("Sign in")',
-  },
-  {
-    name: 'perplexity',
-    url: 'https://www.perplexity.ai',
-    runs: 30,
-    cloudflare: true,
-    composer: '#ask-input, textarea#ask-input, [contenteditable="true"]',
-    send: 'button[aria-label="Submit"], button[data-testid="submit-button"]',
-    response: '.prose, [data-testid="answer"]',
-    login: 'button:has-text("Log in"), button:has-text("Sign up")',
-  },
-];
+const PROVIDERS = PROVIDER_TABLE;
 
 const CF_SELECTORS =
   '#challenge-running, #challenge-form, .cf-browser-verification, #cf-challenge-running';
 
-// Smoke mode: SPIKE_PROVIDERS=grok,gemini and SPIKE_MAX_RUNS=1 shrink the
+// Smoke mode: SPIKE_PROVIDERS=gemini,claude and SPIKE_MAX_RUNS=1 shrink the
 // matrix so the harness itself can be checked in minutes. A reduced run is
 // marked in the report (`reduced: true`) and is never reused as a full result.
 const PROVIDER_FILTER = (process.env.SPIKE_PROVIDERS ?? '')
@@ -316,22 +256,34 @@ async function classifyRun(engine, provider, storageState) {
   }
 }
 
-/** The answers on the page right now: how many and what they say. */
+/**
+ * The answers on the page right now: how many and what they say.
+ *
+ * The selector of a provider may match the answer container *and* the text
+ * inside it. Every matched element is therefore reduced to the outermost one,
+ * so that one answer is counted once (see `answers.mjs`).
+ */
 async function snapshotAnswers(page, provider) {
-  const locator = page.locator(provider.response);
-  const count = await locator.count();
-  const texts = [];
-  for (let i = 0; i < count; i++) {
-    texts.push(
-      (
-        (await locator
-          .nth(i)
-          .textContent()
-          .catch(() => '')) ?? ''
-      ).trim(),
-    );
-  }
-  return { count, texts };
+  const entries = await page.evaluate((selector) => {
+    // The path of an element from the document root: it shows whether one
+    // matched element is inside another one.
+    const pathOf = (element) => {
+      const parts = [];
+      let node = element;
+      while (node && node !== document.documentElement) {
+        const parent = node.parentNode;
+        if (!parent) break;
+        parts.unshift(Array.prototype.indexOf.call(parent.children, node));
+        node = parent;
+      }
+      return parts.join('.');
+    };
+    return Array.from(document.querySelectorAll(selector)).map((element) => ({
+      path: pathOf(element),
+      text: element.textContent ?? '',
+    }));
+  }, provider.response);
+  return answerSnapshot(entries);
 }
 
 /**
@@ -339,6 +291,8 @@ async function snapshotAnswers(page, provider) {
  *
  * An answer counts only when it is new (the count grew), non-empty and not a
  * copy of an answer that was already there.
+ *
+ * @param {number} timeoutMs how long the answer may take
  */
 async function waitForNewAnswer(page, provider, before, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
@@ -422,6 +376,33 @@ async function fillComposer(page, provider, text) {
 }
 
 /**
+ * A send button that can be clicked.
+ *
+ * The first element that matches the selector is not necessarily usable: the
+ * page can hold a hidden copy of the button, and the button stays `disabled`
+ * while the framework processes the filled composer. A click on such a button
+ * is swallowed — the prompt stays in the composer and nothing is sent.
+ *
+ * @param {import('playwright-core').Page} page the page
+ * @param {object} provider the provider (its `send` selector)
+ * @param {number} timeoutMs how long to wait for a usable button
+ * @returns {Promise<import('playwright-core').Locator|null>} the button, if any
+ */
+async function usableSendButton(page, provider, timeoutMs = 8_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const buttons = await page.locator(provider.send).all();
+    for (const button of buttons) {
+      const visible = await button.isVisible().catch(() => false);
+      const enabled = await button.isEnabled().catch(() => false);
+      if (visible && enabled) return button;
+    }
+    await sleep(500);
+  }
+  return null;
+}
+
+/**
  * Send the probe prompt and make sure it was submitted.
  *
  * A click on the send button is not enough: the button can still be disabled
@@ -431,7 +412,6 @@ async function fillComposer(page, provider, text) {
  */
 async function submitPrompt(page, provider, marker) {
   const composer = page.locator(provider.composer).first();
-  const send = page.locator(provider.send).first();
   const methods = [];
   for (let attempt = 1; attempt <= 3; attempt++) {
     methods.push(await fillComposer(page, provider, probePrompt(marker)));
@@ -441,7 +421,15 @@ async function submitPrompt(page, provider, marker) {
       // Second attempt: send with the keyboard.
       await composer.press('Enter').catch(() => {});
     } else {
-      await send.click({ force: true }).catch(() => {});
+      // Only a button that is really usable is clicked: a disabled button
+      // swallows the click and the prompt is never sent.
+      const send = await usableSendButton(page, provider);
+      if (send) {
+        await send.click({ force: true }).catch(() => {});
+      } else {
+        // No usable button: the keyboard is the only way left.
+        await composer.press('Enter').catch(() => {});
+      }
     }
     for (let i = 0; i < 10; i++) {
       if (await promptSubmitted(page, provider, marker)) {
@@ -590,7 +578,7 @@ async function roundTrip(engine, provider, storageState, engineName) {
     // The second exchange ran in a new browser process on the same profile
     // and was not redirected to a login page.
     sessionReused: true,
-    profile: { userDataDir, reseeded: false },
+    profile: { userDataDir: publicPath(userDataDir), reseeded: false },
   };
 }
 
@@ -609,7 +597,7 @@ async function main() {
     sessions[provider.name] = found;
   }
   const sessionPaths = Object.fromEntries(
-    Object.entries(sessions).map(([name, found]) => [name, found?.path ?? null]),
+    Object.entries(sessions).map(([name, found]) => [name, publicPath(found?.path ?? null)]),
   );
 
   console.log(
@@ -644,7 +632,8 @@ async function main() {
     const payload = {
       matrix: 'provider',
       env: envInfo(),
-      proxy: PROXY,
+      // The proxy may carry credentials: the report must not.
+      proxy: sanitizeProxyUrl(PROXY),
       headless: HEADLESS,
       egressIp: mergedEgress,
       storageStatePaths: sessionPaths,

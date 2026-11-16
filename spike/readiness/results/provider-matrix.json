@@ -3,7 +3,6 @@
   "env": {
     "node": "v22.22.2",
     "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
-    "host": "192.168.1.107",
     "camoufoxPackage": "0.5.9",
     "playwrightCoreSpike": "1.62.0",
     "playwrightCoreRepo": "1.61.1",
@@ -11,11 +10,11 @@
     "camoufoxBrowser": "158.0.1-beta.41",
     "camoufoxBrowserSha256": "3f2eb1d0",
     "versionSources": {
-      "camoufoxPackage": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/camoufox/package.json",
-      "playwrightCoreSpike": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/playwright-core/package.json",
-      "playwrightCoreRepo": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/playwright-core/package.json",
-      "cloakbrowser": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/cloakbrowser/package.json",
-      "camoufoxBrowser": "/home/max/.cache/camoufox/config.json"
+      "camoufoxPackage": "spike/camoufox/node_modules/camoufox/package.json",
+      "playwrightCoreSpike": "spike/camoufox/node_modules/playwright-core/package.json",
+      "playwrightCoreRepo": "node_modules/playwright-core/package.json",
+      "cloakbrowser": "node_modules/cloakbrowser/package.json",
+      "camoufoxBrowser": "~/.cache/camoufox/config.json"
     },
     "display": ":99",
     "proxyEnv": {
@@ -37,23 +36,21 @@
     }
   },
   "storageStatePaths": {
-    "chatgpt": "/home/max/.10x-chat/profiles/default/storage-state-chatgpt.json",
-    "gemini": "/home/max/.10x-chat/profiles/default/storage-state-gemini.json",
-    "claude": "/home/max/.10x-chat/profiles/default/storage-state-claude.json",
-    "grok": null,
-    "perplexity": "/home/max/.10x-chat/profiles/default/storage-state-perplexity.json"
+    "chatgpt": "~/.10x-chat/profiles/default/storage-state-chatgpt.json",
+    "gemini": "~/.10x-chat/profiles/default/storage-state-gemini.json",
+    "claude": "~/.10x-chat/profiles/default/storage-state-claude.json"
   },
   "harness": {
     "proxy": "http://127.0.0.1:3128",
     "headless": false
   },
   "authorizedRoundTrip": {
-    "status": "partial",
-    "mandatory": 10,
-    "attempted": 8,
-    "passed": 8,
+    "status": "done",
+    "mandatory": 6,
+    "attempted": 6,
+    "passed": 6,
     "failed": 0,
-    "skipped": 2,
+    "skipped": 0,
     "combinations": {
       "camoufox/chatgpt": {
         "ok": true,
@@ -67,7 +64,7 @@
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-chatgpt",
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-chatgpt",
             "reseeded": false
           }
         }
@@ -76,15 +73,15 @@
         "ok": true,
         "skipped": false,
         "detail": {
-          "answerChars": [6, 6],
+          "answerChars": [5, 5],
           "answersBefore": [0, 0],
-          "answersAfter": [2, 2],
-          "submitAttempts": [2, 2],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
           "markerEchoed": [false, false],
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-gemini",
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-gemini",
             "reseeded": false
           }
         }
@@ -101,29 +98,7 @@
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-claude",
-            "reseeded": false
-          }
-        }
-      },
-      "camoufox/grok": {
-        "ok": false,
-        "skipped": true,
-        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
-      },
-      "camoufox/perplexity": {
-        "ok": true,
-        "skipped": false,
-        "detail": {
-          "answerChars": [5, 5],
-          "answersBefore": [0, 0],
-          "answersAfter": [1, 1],
-          "submitAttempts": [1, 1],
-          "markerEchoed": [false, false],
-          "loginWall": false,
-          "sessionReused": true,
-          "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-perplexity",
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-claude",
             "reseeded": false
           }
         }
@@ -135,12 +110,12 @@
           "answerChars": [20, 20],
           "answersBefore": [0, 0],
           "answersAfter": [1, 1],
-          "submitAttempts": [2, 1],
+          "submitAttempts": [1, 1],
           "markerEchoed": [false, false],
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
             "reseeded": false
           }
         }
@@ -149,15 +124,15 @@
         "ok": true,
         "skipped": false,
         "detail": {
-          "answerChars": [6, 70],
+          "answerChars": [5, 5],
           "answersBefore": [0, 0],
-          "answersAfter": [2, 2],
-          "submitAttempts": [2, 2],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 2],
           "markerEchoed": [false, false],
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-gemini",
             "reseeded": false
           }
         }
@@ -166,7 +141,7 @@
         "ok": true,
         "skipped": false,
         "detail": {
-          "answerChars": [41, 5],
+          "answerChars": [41, 41],
           "answersBefore": [0, 0],
           "answersAfter": [1, 1],
           "submitAttempts": [1, 1],
@@ -174,29 +149,7 @@
           "loginWall": false,
           "sessionReused": true,
           "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-claude",
-            "reseeded": false
-          }
-        }
-      },
-      "cloakbrowser/grok": {
-        "ok": false,
-        "skipped": true,
-        "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))"
-      },
-      "cloakbrowser/perplexity": {
-        "ok": true,
-        "skipped": false,
-        "detail": {
-          "answerChars": [5, 5],
-          "answersBefore": [0, 0],
-          "answersAfter": [1, 1],
-          "submitAttempts": [1, 1],
-          "markerEchoed": [false, false],
-          "loginWall": false,
-          "sessionReused": true,
-          "profile": {
-            "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-perplexity",
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-claude",
             "reseeded": false
           }
         }
@@ -529,16 +482,6 @@
         "records": [
           {
             "status": 200,
-            "title": "Google Gemini",
-            "url": "https://gemini.google.com/app",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
             "title": "‎Google Gemini",
             "url": "https://gemini.google.com/app",
             "cfVisible": false,
@@ -609,7 +552,17 @@
           },
           {
             "status": 200,
-            "title": "Google Gemini",
+            "title": "‎Google Gemini",
+            "url": "https://gemini.google.com/app",
+            "cfVisible": false,
+            "loginVisible": false,
+            "composerVisible": true,
+            "authRedirect": false,
+            "outcome": "composer-visible"
+          },
+          {
+            "status": 200,
+            "title": "‎Google Gemini",
             "url": "https://gemini.google.com/app",
             "cfVisible": false,
             "loginVisible": false,
@@ -748,122 +701,10 @@
           "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
           "ms": 0
         }
-      },
-      "grok": {
-        "runs": 10,
-        "counts": {
-          "composer-visible": 10
-        },
-        "records": [
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          }
-        ],
-        "summary": {
-          "name": "camoufox: grok reachable in 10 runs",
-          "ok": true,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-          "ms": 0
-        }
-      },
-      "perplexity": {
+      }
+    },
+    "cloakbrowser": {
+      "chatgpt": {
         "runs": 30,
         "counts": {
           "composer-visible": 30
@@ -871,323 +712,6 @@
         "records": [
           {
             "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          }
-        ],
-        "summary": {
-          "name": "camoufox: perplexity reachable in 30 runs",
-          "ok": true,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
-          "ms": 0
-        }
-      }
-    },
-    "cloakbrowser": {
-      "chatgpt": {
-        "runs": 30,
-        "counts": {
-          "composer-visible": 27,
-          "cloudflare": 3
-        },
-        "records": [
-          {
-            "status": 200,
             "title": "ChatGPT",
             "url": "https://chatgpt.com/",
             "cfVisible": false,
@@ -1197,14 +721,14 @@
             "outcome": "composer-visible"
           },
           {
-            "status": 403,
-            "title": "",
-            "url": "https://chatgpt.com/?__cf_chl_rt_tk=2W184xMXghwVp9.aeLfKXM1Ua97SYcLdWUPapQS0FzM-1794852053-1.0.1.1-lVsb9JsmUjScDtZyuixDA",
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
+            "composerVisible": true,
             "authRedirect": false,
-            "outcome": "cloudflare"
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
@@ -1287,14 +811,14 @@
             "outcome": "composer-visible"
           },
           {
-            "status": 403,
-            "title": "",
-            "url": "https://chatgpt.com/?__cf_chl_rt_tk=2eN2NOZ4VhGNveyL7_zySUyXiouuJCLPoNfauJ2ILzM-1794852146-1.0.1.1-2aWhkuwLQAFME5H_W5UXT",
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
+            "composerVisible": true,
             "authRedirect": false,
-            "outcome": "cloudflare"
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
@@ -1457,14 +981,14 @@
             "outcome": "composer-visible"
           },
           {
-            "status": 403,
-            "title": "",
-            "url": "https://chatgpt.com/?__cf_chl_rt_tk=UU1impgDsDbmvZLBEL0s2YyDqaP0tijIB9XWH.M18WU-1794852286-1.0.1.1-JY1mcNwVIDL4eoocTKIN9",
+            "status": 200,
+            "title": "ChatGPT",
+            "url": "https://chatgpt.com/",
             "cfVisible": false,
             "loginVisible": false,
-            "composerVisible": false,
+            "composerVisible": true,
             "authRedirect": false,
-            "outcome": "cloudflare"
+            "outcome": "composer-visible"
           },
           {
             "status": 200,
@@ -1490,7 +1014,7 @@
         "summary": {
           "name": "cloakbrowser: chatgpt reachable in 30 runs",
           "ok": true,
-          "detail": "composer-visible 27/30, outcomes={\"composer-visible\":27,\"cloudflare\":3}",
+          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
           "ms": 1
         }
       },
@@ -1719,434 +1243,6 @@
           "name": "cloakbrowser: claude reachable in 10 runs",
           "ok": true,
           "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-          "ms": 1
-        }
-      },
-      "grok": {
-        "runs": 10,
-        "counts": {
-          "composer-visible": 10
-        },
-        "records": [
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Grok",
-            "url": "https://grok.com/",
-            "cfVisible": false,
-            "loginVisible": true,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          }
-        ],
-        "summary": {
-          "name": "cloakbrowser: grok reachable in 10 runs",
-          "ok": true,
-          "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-          "ms": 0
-        }
-      },
-      "perplexity": {
-        "runs": 30,
-        "counts": {
-          "composer-visible": 30
-        },
-        "records": [
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          },
-          {
-            "status": 200,
-            "title": "Perplexity",
-            "url": "https://www.perplexity.ai/",
-            "cfVisible": false,
-            "loginVisible": false,
-            "composerVisible": true,
-            "authRedirect": false,
-            "outcome": "composer-visible"
-          }
-        ],
-        "summary": {
-          "name": "cloakbrowser: perplexity reachable in 30 runs",
-          "ok": true,
-          "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
           "ms": 0
         }
       }
@@ -2172,18 +1268,6 @@
       "ms": 0
     },
     {
-      "name": "camoufox: grok reachable in 10 runs",
-      "ok": true,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-      "ms": 0
-    },
-    {
-      "name": "camoufox: perplexity reachable in 30 runs",
-      "ok": true,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
-      "ms": 0
-    },
-    {
       "name": "camoufox: chatgpt authorized round-trip + session reuse",
       "ok": true,
       "detail": {
@@ -2195,7 +1279,7 @@
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-chatgpt",
+          "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-chatgpt",
           "reseeded": false
         }
       },
@@ -2205,15 +1289,15 @@
       "name": "camoufox: gemini authorized round-trip + session reuse",
       "ok": true,
       "detail": {
-        "answerChars": [6, 6],
+        "answerChars": [5, 5],
         "answersBefore": [0, 0],
-        "answersAfter": [2, 2],
-        "submitAttempts": [2, 2],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 1],
         "markerEchoed": [false, false],
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-gemini",
+          "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-gemini",
           "reseeded": false
         }
       },
@@ -2231,31 +1315,7 @@
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-claude",
-          "reseeded": false
-        }
-      },
-      "skipped": false
-    },
-    {
-      "name": "camoufox: grok authorized round-trip + session reuse",
-      "ok": false,
-      "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))",
-      "skipped": true
-    },
-    {
-      "name": "camoufox: perplexity authorized round-trip + session reuse",
-      "ok": true,
-      "detail": {
-        "answerChars": [5, 5],
-        "answersBefore": [0, 0],
-        "answersAfter": [1, 1],
-        "submitAttempts": [1, 1],
-        "markerEchoed": [false, false],
-        "loginWall": false,
-        "sessionReused": true,
-        "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/camoufox-perplexity",
+          "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-claude",
           "reseeded": false
         }
       },
@@ -2264,7 +1324,7 @@
     {
       "name": "cloakbrowser: chatgpt reachable in 30 runs",
       "ok": true,
-      "detail": "composer-visible 27/30, outcomes={\"composer-visible\":27,\"cloudflare\":3}",
+      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
       "ms": 1
     },
     {
@@ -2277,18 +1337,6 @@
       "name": "cloakbrowser: claude reachable in 10 runs",
       "ok": true,
       "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-      "ms": 1
-    },
-    {
-      "name": "cloakbrowser: grok reachable in 10 runs",
-      "ok": true,
-      "detail": "composer-visible 10/10, outcomes={\"composer-visible\":10}",
-      "ms": 0
-    },
-    {
-      "name": "cloakbrowser: perplexity reachable in 30 runs",
-      "ok": true,
-      "detail": "composer-visible 30/30, outcomes={\"composer-visible\":30}",
       "ms": 0
     },
     {
@@ -2298,12 +1346,12 @@
         "answerChars": [20, 20],
         "answersBefore": [0, 0],
         "answersAfter": [1, 1],
-        "submitAttempts": [2, 1],
+        "submitAttempts": [1, 1],
         "markerEchoed": [false, false],
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+          "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
           "reseeded": false
         }
       },
@@ -2313,15 +1361,15 @@
       "name": "cloakbrowser: gemini authorized round-trip + session reuse",
       "ok": true,
       "detail": {
-        "answerChars": [6, 70],
+        "answerChars": [5, 5],
         "answersBefore": [0, 0],
-        "answersAfter": [2, 2],
-        "submitAttempts": [2, 2],
+        "answersAfter": [1, 1],
+        "submitAttempts": [1, 2],
         "markerEchoed": [false, false],
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+          "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-gemini",
           "reseeded": false
         }
       },
@@ -2331,7 +1379,7 @@
       "name": "cloakbrowser: claude authorized round-trip + session reuse",
       "ok": true,
       "detail": {
-        "answerChars": [41, 5],
+        "answerChars": [41, 41],
         "answersBefore": [0, 0],
         "answersAfter": [1, 1],
         "submitAttempts": [1, 1],
@@ -2339,38 +1387,14 @@
         "loginWall": false,
         "sessionReused": true,
         "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-claude",
-          "reseeded": false
-        }
-      },
-      "skipped": false
-    },
-    {
-      "name": "cloakbrowser: grok authorized round-trip + session reuse",
-      "ok": false,
-      "detail": "not measurable: no authorized session for grok; the guest attempt did not answer (no new answer appeared within 45000ms (answers before=0, now=0))",
-      "skipped": true
-    },
-    {
-      "name": "cloakbrowser: perplexity authorized round-trip + session reuse",
-      "ok": true,
-      "detail": {
-        "answerChars": [5, 5],
-        "answersBefore": [0, 0],
-        "answersAfter": [1, 1],
-        "submitAttempts": [1, 1],
-        "markerEchoed": [false, false],
-        "loginWall": false,
-        "sessionReused": true,
-        "profile": {
-          "userDataDir": "/home/max/.10x-chat/profiles/readiness/cloakbrowser-perplexity",
+          "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-claude",
           "reseeded": false
         }
       },
       "skipped": false
     }
   ],
-  "passed": 18,
+  "passed": 12,
   "failed": 0,
-  "skipped": 2
+  "skipped": 0
 }

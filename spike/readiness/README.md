@@ -11,12 +11,14 @@ adapter, so every scenario runs identically on both.
 |------|--------------|
 | `engines.mjs` | Adapter for both engines (`launch`, `launchPersistent`) |
 | `display.mjs` | The virtual display the browsers are allowed to use (and the X11/Wayland cut) |
-| `util.mjs` | Check runner, report writer, process/RSS helpers, version capture |
+| `util.mjs` | Check runner, report writer, process/RSS helpers, version capture, sanitization of the published fields |
 | `probe.mjs` | Pure helpers: outcome classification (URL vs DOM) and the bookkeeping that proves a **new** answer was received |
+| `answers.mjs` | Pure helpers: the answers of a page — one answer per DOM container, not per matched element |
+| `providers.mjs` | The provider table with the selectors (one DOM level per provider) |
 | `proxy-matrix.mjs` | HTTP(S)/SOCKS5 (no auth / RFC 1929 auth), bypass list, env vars, credential leakage |
 | `lifecycle-matrix.mjs` | Persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | Install footprint, cold/warm start, RSS, leftover processes, licensing facts |
-| `provider-matrix.mjs` | 5 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip (5 × 2 combinations, with a session-reuse check) |
+| `provider-matrix.mjs` | 3 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip (3 × 2 combinations, with a session-reuse check) |
 | `round-trip.mjs` | state of the round-trip criterion (which combinations passed, skipped or failed) |
 | `report-compat.mjs` | when a saved report may be reused (`SPIKE_REUSE=1`) |
 | `socks5-relay.mjs` | **Experiment only**: local SOCKS5 adapter that authenticates upstream (cost assessment, not a production path) |
@@ -52,7 +54,7 @@ Useful environment variables:
 | `SPIKE_DISPLAY=:99` | the virtual display the browsers are opened on (default `:99`); a headed run refuses to start when it does not exist |
 | `SPIKE_PROXY=<url>` | proxy endpoint for both engines (default `http://127.0.0.1:3128`) |
 | `SPIKE_ENGINES=camoufox,cloakbrowser` | run a subset of engines; the result is merged into the existing report |
-| `SPIKE_PROVIDERS=grok,gemini` | run a subset of providers (smoke run of the harness itself) |
+| `SPIKE_PROVIDERS=gemini,claude` | run a subset of providers (smoke run of the harness itself) |
 | `SPIKE_MAX_RUNS=1` | cap the runs per provider (smoke run); such a report is marked `reduced: true` and is never reused as a full result |
 | `SPIKE_REUSE=1` | `run-all.mjs` reuses finished reports instead of re-running the matrices — but only when the saved report has the same versions, proxy and headless setting, otherwise the matrix is re-run and the reasons are printed |
 
@@ -74,8 +76,15 @@ over the whole repository:
 | `1` | a check failed, a matrix crashed, or a report is partial/incomplete |
 | `2` | no hard failure, but a criterion is unfinished (e.g. no credentials) |
 
-The authorized round-trip is a matrix criterion: 5 providers × 2 engines = 10 mandatory
-combinations, each with its own result; the criterion is `done` only when all 10 passed.
+The authorized round-trip is a matrix criterion: 3 providers × 2 engines = 6 mandatory
+combinations, each with its own result; the criterion is `done` only when all 6 passed.
+
+Two providers are **not** part of the matrix: Grok has no authorized session in this
+environment (its combinations could only ever be `skipped`), and Perplexity does not
+submit the prompt through its web UI here — the send button appears without a click
+handler, so neither a mouse click nor `Enter` sends anything. Neither of them says
+anything about the engines, so both were dropped from the matrix (a decision of the
+repository owner). The production providers themselves are untouched in `src/providers/`.
 
 ## Notes
 
@@ -88,7 +97,7 @@ combinations, each with its own result; the criterion is `done` only when all 10
 
   ```bash
   # Xvfb without root: unpack xorg-x11-server-Xvfb into a prefix and run it there
-  PREFIX=/home/max/.cache/xvfb-root
+  PREFIX=~/.cache/xvfb-root
   LD_LIBRARY_PATH="$PREFIX/usr/lib64" "$PREFIX/usr/bin/Xvfb" :99 -screen 0 1920x1080x24 -nolisten tcp &
   DISPLAY=:99 node spike/readiness/run-all.mjs
   ```
@@ -117,6 +126,17 @@ combinations, each with its own result; the criterion is `done` only when all 10
   sent (the number of answers is counted before, and the new answer must be
   non-empty and new). Every prompt carries a unique marker; the marker leaving
   the composer proves that the prompt was submitted.
+- **One answer is counted once.** A selector that matches two DOM levels of the
+  same answer (the container and the text inside it) counts every answer twice —
+  that is how Gemini reported `answersAfter: 2` for a single exchange. The
+  selector of a provider therefore addresses one DOM level
+  (`spike/readiness/providers.mjs`), and `answers.mjs` reduces the matched
+  elements to the outermost ones.
+- **The reports are public.** Every proxy URL (`HTTPS_PROXY`, `HTTP_PROXY`,
+  `NO_PROXY`, `SPIKE_PROXY`) is masked by `sanitizeProxyUrl()` — `user:password@host`
+  becomes `***@host` — and the report contains no hostname and no absolute path of
+  the machine: paths inside the repository are relative, paths outside keep only
+  their tail (`~/.10x-chat/profiles/…`).
 - A provider that answers a guest with "Sign up and repeat your request" is
   recorded as **skipped** (not measurable without credentials), not as a
   failure of the engine.

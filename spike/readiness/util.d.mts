@@ -1,7 +1,6 @@
 export type EnvInfo = {
   node: string;
   platform: string;
-  host: string;
   camoufoxPackage: string | null;
   camoufoxBrowser: string | null;
   camoufoxBrowserSha256: string | null;
@@ -15,6 +14,9 @@ export type EnvInfo = {
 export const REPO_ROOT: string;
 
 export function envInfo(): EnvInfo;
+export function sanitizeProxyUrl(value: string | null | undefined): string | null;
+export function sanitizeNoProxy(value: string | null | undefined): string | null;
+export function publicPath(value: string | null | undefined): string | null;
 export function pids(pattern: string): number[];
 export function newPids(pattern: string, before?: number[]): number[];
 export function alivePids(pidList: number[]): number[];

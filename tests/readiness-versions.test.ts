@@ -51,8 +51,11 @@ describe('envInfo', () => {
       if (env[key] === null) {
         expect(source).toBeNull();
       } else {
+        // The source is relative to the repository: the report is public and
+        // must not contain an absolute path of the machine.
         expect(source).toBeTruthy();
-        expect(existsSync(source as string)).toBe(true);
+        expect(source?.startsWith('/')).toBe(false);
+        expect(existsSync(path.join(REPO_ROOT, source as string))).toBe(true);
       }
     }
   });
@@ -64,6 +67,7 @@ describe('envInfo', () => {
       return;
     }
     expect(env.camoufoxBrowser).toMatch(/^\d+\.\d+\.\d+/);
-    expect(env.versionSources.camoufoxBrowser).toBe(config);
+    // The path outside the repository keeps only the tail: no user name.
+    expect(env.versionSources.camoufoxBrowser).toBe('~/.cache/camoufox/config.json');
   });
 });

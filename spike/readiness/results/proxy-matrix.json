@@ -3,7 +3,6 @@
   "env": {
     "node": "v22.22.2",
     "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
-    "host": "192.168.1.107",
     "camoufoxPackage": "0.5.9",
     "playwrightCoreSpike": "1.62.0",
     "playwrightCoreRepo": "1.61.1",
@@ -11,11 +10,11 @@
     "camoufoxBrowser": "158.0.1-beta.41",
     "camoufoxBrowserSha256": "3f2eb1d0",
     "versionSources": {
-      "camoufoxPackage": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/camoufox/package.json",
-      "playwrightCoreSpike": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/spike/camoufox/node_modules/playwright-core/package.json",
-      "playwrightCoreRepo": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/playwright-core/package.json",
-      "cloakbrowser": "/home/max/orca/workspaces/10x-chat/refactor-4-9-production-readiness-camoufox/node_modules/cloakbrowser/package.json",
-      "camoufoxBrowser": "/home/max/.cache/camoufox/config.json"
+      "camoufoxPackage": "spike/camoufox/node_modules/camoufox/package.json",
+      "playwrightCoreSpike": "spike/camoufox/node_modules/playwright-core/package.json",
+      "playwrightCoreRepo": "node_modules/playwright-core/package.json",
+      "cloakbrowser": "node_modules/cloakbrowser/package.json",
+      "camoufoxBrowser": "~/.cache/camoufox/config.json"
     },
     "display": ":99",
     "proxyEnv": {
@@ -33,31 +32,31 @@
       "name": "camoufox: http proxy (no auth)",
       "ok": true,
       "detail": "status=200 egress=46.138.35.132 tunnelled=1",
-      "ms": 2368
+      "ms": 3032
     },
     {
       "name": "camoufox: http proxy (basic auth)",
       "ok": false,
       "detail": "proxy rejected the credentials (407)",
-      "ms": 1802
+      "ms": 3501
     },
     {
       "name": "camoufox: socks5 proxy (no auth)",
       "ok": true,
       "detail": "status=200 tunnelled=1",
-      "ms": 1855
+      "ms": 1878
     },
     {
       "name": "camoufox: socks5 proxy (rfc1929 auth)",
       "ok": false,
       "detail": "browserType.launch: Browser does not support socks5 proxy authentication",
-      "ms": 46
+      "ms": 54
     },
     {
       "name": "camoufox: proxy bypass list honoured",
       "ok": true,
       "detail": "local target bypassed the proxy",
-      "ms": 1987
+      "ms": 1693
     },
     {
       "name": "camoufox: HTTPS_PROXY env behaviour (informational)",
@@ -69,55 +68,55 @@
       "name": "camoufox: proxy credentials do not leak",
       "ok": true,
       "detail": "no credential in page content, argv or environ",
-      "ms": 2163
+      "ms": 2043
     },
     {
       "name": "camoufox: EXPERIMENT socks5 via local relay adapter",
       "ok": true,
       "detail": "works with an out-of-process adapter (workaround, not a supported path)",
-      "ms": 1991
+      "ms": 1851
     },
     {
       "name": "cloakbrowser: http proxy (no auth)",
       "ok": true,
       "detail": "status=200 egress=46.138.35.132 tunnelled=1",
-      "ms": 962
+      "ms": 955
     },
     {
       "name": "cloakbrowser: http proxy (basic auth)",
       "ok": true,
       "detail": "status=200 tunnelled=1",
-      "ms": 614
+      "ms": 660
     },
     {
       "name": "cloakbrowser: socks5 proxy (no auth)",
       "ok": true,
       "detail": "status=200 tunnelled=1",
-      "ms": 667
+      "ms": 647
     },
     {
       "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
       "ok": true,
       "detail": "status=200 authenticated=1",
-      "ms": 651
+      "ms": 664
     },
     {
       "name": "cloakbrowser: proxy bypass list honoured",
       "ok": true,
       "detail": "local target bypassed the proxy",
-      "ms": 311
+      "ms": 287
     },
     {
       "name": "cloakbrowser: HTTPS_PROXY env behaviour (informational)",
       "ok": true,
       "detail": "engine ignores env vars (repo proxyFromEnv() layer is mandatory)",
-      "ms": 0
+      "ms": 1
     },
     {
       "name": "cloakbrowser: proxy credentials do not leak",
       "ok": false,
-      "detail": "password visible in argv of pids 3774001,3774094,3774096",
-      "ms": 771
+      "detail": "password visible in argv of pids 4048624,4048743,4048744",
+      "ms": 811
     }
   ],
   "perEngine": {
@@ -126,31 +125,31 @@
         "name": "camoufox: http proxy (no auth)",
         "ok": true,
         "detail": "status=200 egress=46.138.35.132 tunnelled=1",
-        "ms": 2368
+        "ms": 3032
       },
       "http-basic-auth": {
         "name": "camoufox: http proxy (basic auth)",
         "ok": false,
         "detail": "proxy rejected the credentials (407)",
-        "ms": 1802
+        "ms": 3501
       },
       "socks5-noauth": {
         "name": "camoufox: socks5 proxy (no auth)",
         "ok": true,
         "detail": "status=200 tunnelled=1",
-        "ms": 1855
+        "ms": 1878
       },
       "socks5-auth": {
         "name": "camoufox: socks5 proxy (rfc1929 auth)",
         "ok": false,
         "detail": "browserType.launch: Browser does not support socks5 proxy authentication",
-        "ms": 46
+        "ms": 54
       },
       "no-proxy-bypass": {
         "name": "camoufox: proxy bypass list honoured",
         "ok": true,
         "detail": "local target bypassed the proxy",
-        "ms": 1987
+        "ms": 1693
       },
       "env-proxy": {
         "name": "camoufox: HTTPS_PROXY env behaviour (informational)",
@@ -162,13 +161,13 @@
         "name": "camoufox: proxy credentials do not leak",
         "ok": true,
         "detail": "no credential in page content, argv or environ",
-        "ms": 2163
+        "ms": 2043
       },
       "socks5-auth-via-relay-experiment": {
         "name": "camoufox: EXPERIMENT socks5 via local relay adapter",
         "ok": true,
         "detail": "works with an out-of-process adapter (workaround, not a supported path)",
-        "ms": 1991
+        "ms": 1851
       }
     },
     "cloakbrowser": {
@@ -176,43 +175,43 @@
         "name": "cloakbrowser: http proxy (no auth)",
         "ok": true,
         "detail": "status=200 egress=46.138.35.132 tunnelled=1",
-        "ms": 962
+        "ms": 955
       },
       "http-basic-auth": {
         "name": "cloakbrowser: http proxy (basic auth)",
         "ok": true,
         "detail": "status=200 tunnelled=1",
-        "ms": 614
+        "ms": 660
       },
       "socks5-noauth": {
         "name": "cloakbrowser: socks5 proxy (no auth)",
         "ok": true,
         "detail": "status=200 tunnelled=1",
-        "ms": 667
+        "ms": 647
       },
       "socks5-auth": {
         "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
         "ok": true,
         "detail": "status=200 authenticated=1",
-        "ms": 651
+        "ms": 664
       },
       "no-proxy-bypass": {
         "name": "cloakbrowser: proxy bypass list honoured",
         "ok": true,
         "detail": "local target bypassed the proxy",
-        "ms": 311
+        "ms": 287
       },
       "env-proxy": {
         "name": "cloakbrowser: HTTPS_PROXY env behaviour (informational)",
         "ok": true,
         "detail": "engine ignores env vars (repo proxyFromEnv() layer is mandatory)",
-        "ms": 0
+        "ms": 1
       },
       "credential-leak": {
         "name": "cloakbrowser: proxy credentials do not leak",
         "ok": false,
-        "detail": "password visible in argv of pids 3774001,3774094,3774096",
-        "ms": 771
+        "detail": "password visible in argv of pids 4048624,4048743,4048744",
+        "ms": 811
       },
       "socks5-auth-via-relay-experiment": {
         "name": "cloakbrowser: EXPERIMENT socks5 via local relay adapter",

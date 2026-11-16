@@ -27,29 +27,25 @@ workaround. The upstream fix exists (see [§5](#5-upstream-blocker-socks5--auth)
 a Camoufox beta + a newer browser build, i.e. an upgrade that this gate is explicitly not allowed
 to make "while we are at it".
 
-Two further gaps keep this from being CONDITIONAL GO:
+One further gap keeps this from being CONDITIONAL GO:
 
-1. **The authorized prompt/response round-trip is only partially verified.** With a real session
-   per provider (cookies → Playwright `storageState`) the criterion was executed for all 10
-   mandatory combinations (5 providers × 2 engines): **8 measured and passed** (`chatgpt`,
-   `gemini`, `claude`, `perplexity` on both engines — a new, non-empty answer plus a successful
-   session reuse after a browser restart on the same persistent profile) and **2 not measurable**
-   (`grok` on both engines — there are no credentials for Grok in this environment, so the browser
-   is sent to the login page; this is recorded as `skipped`, not as a failure of the engine).
-   The criterion status is therefore **`partial`**, not `done`: it cannot be closed without a
-   session for Grok ([§6](#6-provider-matrix-5-providers--2-engines)).
-2. **Firefox vs Chromium selector blast radius** is unmeasured for five providers (all provider
-   selectors in `src/providers/*` were written against Chromium) — 3/8 already flagged this. The
-   harness did find concrete instances: the current ChatGPT UI no longer has `#prompt-textarea`
-   and marks the assistant turn with `data-conversation-role="assistant"`, and the Claude answer
-   lives in `[data-testid="assistant-message"]` / `[data-cds="AssistantMessage"]`
-   ([§6](#6-provider-matrix-5-providers--2-engines)).
+1. **Firefox vs Chromium selector blast radius** is unmeasured for the providers in production
+   (all provider selectors in `src/providers/*` were written against Chromium) — 3/8 already
+   flagged this. The harness did find concrete instances: the current ChatGPT UI no longer has
+   `#prompt-textarea` and marks the assistant turn with `data-conversation-role="assistant"`, and
+   the Claude answer lives in `[data-testid="assistant-message"]` / `[data-cds="AssistantMessage"]`
+   ([§6](#6-provider-matrix-3-providers--2-engines)).
+
+The authorized prompt/response round-trip is **measured and closed** for the providers of the
+matrix: with a real session per provider (cookies → Playwright `storageState`) all 6 mandatory
+combinations (3 providers × 2 engines) produced a new, non-empty answer and a successful session
+reuse after a browser restart on the same persistent profile ([§6](#6-provider-matrix-3-providers--2-engines)).
 
 Everything else is neutral or positive: browser lifecycle, profile handling, `storageState`,
 upload/download and cleanup behave **identically** on both engines (14/14 checks), and the
 provider matrix shows **no engine-level advantage** worth acting on — in the headed run with a
-valid session per provider both engines reach the composer on the same **5 of 5** providers
-(90 runs each; one incidental Cloudflare interstitial on CloakBrowser, 3 of 30 ChatGPT runs).
+valid session per provider both engines reach the composer on the same **3 of 3** providers
+(50 runs each).
 
 **Correction of the earlier headless conclusion.** The first (headless, unauthenticated) run
 reported ChatGPT as `auth-wall 30/30` on Camoufox and `cloudflare 28/30` on CloakBrowser, which
@@ -86,6 +82,17 @@ session, not a Camoufox defect. The "Cloudflare is worse on Camoufox" claim is w
 > из версий (включая смену browser build) блокирует переиспользование старого отчёта — это
 > покрыто тестами (`tests/readiness-versions.test.ts`, `tests/readiness-report-compat.test.ts`).
 
+> **Отчёт публикуется — значит, в нём не должно быть секретов и сведений о машине.**
+> Все URL прокси (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `SPIKE_PROXY`) проходят через одну
+> функцию `sanitizeProxyUrl()` (`spike/readiness/util.mjs`): userinfo вида `user:password@host`
+> заменяется на `***@host`. Секретов в `results/*.json` и в обычных логах нет — это теперь
+> проверено тестом, который собирает JSON отчёта с URL, содержащим логин и пароль, и ищет в
+> нём эти строки (`tests/readiness-sanitize.test.ts`).
+> Имя хоста и абсолютные пути тоже не публикуются: `env.host` убран, пути внутри репозитория
+> записываются относительными (`spike/camoufox/node_modules/camoufox/package.json`), а пути
+> вне репозитория — только «хвостом» (`~/.10x-chat/profiles/default/storage-state-gemini.json`).
+> Версии и факт их источника при этом остаются в отчёте.
+
 The proxy's exit IP is identical to the host's direct exit IP, so this run cannot validate
 GeoIP coherence or a different exit geography. Camoufox runs with `geoip: false` (the upstream
 recommendation for proxied setups would be `geoip: true`; 3/8 noted that this flag changes the
@@ -100,12 +107,14 @@ layer, no provider rewrite:
 |---|---|
 | `engines.mjs` | one adapter for both engines (`launch`, `launchPersistent`) |
 | `display.mjs` | the virtual display the browsers are allowed to use + the X11/Wayland cut (no desktop focus) |
-| `util.mjs` | check runner, report writer, process/RSS helpers, version capture |
+| `util.mjs` | check runner, report writer, process/RSS helpers, version capture, sanitization of the published fields |
 | `probe.mjs` | pure helpers: outcome classification (URL vs DOM) and the bookkeeping that proves a **new** answer was received |
+| `answers.mjs` | pure helpers: the answers of a page — one answer per DOM container, not per matched element |
+| `providers.mjs` | the provider table with the selectors (one DOM level per provider) |
 | `proxy-matrix.mjs` | HTTP(S) / SOCKS5 (no auth, RFC 1929 auth), bypass list, env precedence, credential leakage |
 | `lifecycle-matrix.mjs` | persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
 | `ops-matrix.mjs` | install footprint, cold/warm start, RSS, leftover processes, install path and failure modes, licensing |
-| `provider-matrix.mjs` | 5 providers × 10 runs (30 for Cloudflare-dependent) × 2 engines + authorized round-trip (5 providers × 2 engines, with a session-reuse check) |
+| `provider-matrix.mjs` | 3 providers × 10 runs (30 for Cloudflare-dependent) × 2 engines + authorized round-trip (3 providers × 2 engines, with a session-reuse check) |
 | `round-trip.mjs` | state of the §4 criterion: which engine/provider combinations passed, were skipped or failed |
 | `report-compat.mjs` | when a saved report may be reused (`SPIKE_REUSE=1`): versions, proxy, headless, partial/reduced |
 | `socks5-relay.mjs` | **experiment only**: local SOCKS5 adapter that authenticates upstream |
@@ -152,9 +161,9 @@ fallback to the desktop. This is covered by `tests/readiness-display.test.ts`.
 | `1` | a check failed, a matrix crashed, or a report is partial/incomplete |
 | `2` | no hard failure, but a criterion is unfinished (e.g. no credentials) |
 
-The authorized round-trip is a **matrix criterion**: it covers 5 providers × 2 engines = 10
+The authorized round-trip is a **matrix criterion**: it covers 3 providers × 2 engines = 6
 mandatory combinations, every combination keeps its own result, and the criterion is `done` only
-when all 10 passed. A single successful combination never reports the criterion as done — the
+when all 6 passed. A single successful combination never reports the criterion as done — the
 status is `failed` / `partial` / `unfinished` otherwise. Each round-trip performs two exchanges:
 the first one seeds the **persistent profile** of that engine/provider pair (`userDataDir`,
 outside the repository), the browser is closed, and the second exchange runs in a **new browser
@@ -171,6 +180,37 @@ a unique marker; the marker leaving the composer proves that the prompt was subm
 
 Results: `spike/readiness/results/*.json` (checked in). No credentials, cookies, tokens or
 private answers are stored in the repository or in the ordinary logs.
+
+**Two providers are not part of the matrix.** Grok has no authorized session in this environment —
+its combinations could only ever be `skipped` and would say nothing about either engine. Perplexity
+does not submit the prompt through its web UI here: the send button appears in the DOM without a
+click handler, so neither a mouse click nor `Enter` sends anything (measured — see
+[§6.1](#61-authorized-round-trip-3-providers--2-engines--6-mandatory-combinations)). Both were
+dropped from the matrix by decision of the repository owner; the production providers in
+`src/providers/` are untouched.
+
+### 3.2 One answer is counted once
+
+The number of answers on the page is the metric the round-trip relies on, so it must not be
+inflated. A provider selector that spans **two DOM levels of the same answer** — the container
+of the answer and the text inside it — matches both and counts every answer twice. This was
+the case for Gemini (`model-response .model-response-text, model-response message-content`):
+one exchange produced `answersBefore: 0, answersAfter: 2`.
+
+Two things prevent it now:
+
+- **one DOM level per provider** — the answer selector of a provider lives in
+  `spike/readiness/providers.mjs` and must not contain two alternatives that share their
+  container (`tests/readiness-answers.test.ts` fails when it does). Gemini now addresses the
+  text of the answer: `model-response .model-response-text`;
+- **the outermost element wins** — `snapshotAnswers()` collects the path of every matched
+  element from the document root and `answers.mjs` reduces them to the outermost ones, so a
+  nested match is part of the same answer (`topLevelAnswers()`).
+
+Measured against the live Gemini UI: one answer → `model-response` 1, `model-response
+.model-response-text` 1, `model-response message-content` 1, the old combined selector 2. Two
+answers in one conversation → 2, 2, 2 and 4. The round-trip now reports
+`answersAfter [1, 1]` for Gemini instead of `[2, 2]`.
 
 ## 4. Results
 
@@ -219,19 +259,19 @@ file upload through the composer input, download, one browser with several seque
 > numbers were machine-wide (`pgrep -f`), so they mixed the test's processes with the ones of the
 > desktop session.
 
-### 4.4 Provider matrix — 18 passed, 0 failed, 2 skipped
+### 4.4 Provider matrix — 12 passed, 0 failed, 0 skipped
 
-Both engines ran the same 90-run scenario through the same proxy (exit IP `88.218.94.56` for
+Both engines ran the same 50-run scenario through the same proxy (exit IP `88.218.94.56` for
 both), **headed** under a virtual display (`Xvfb :99`) and with a real session per provider
-(Playwright `storageState` for chatgpt, gemini, claude and perplexity; Grok has none). The
-detailed table is in [§6](#6-provider-matrix-5-providers--2-engines); the raw runs are in
+(Playwright `storageState` for chatgpt, gemini and claude). The
+detailed table is in [§6](#6-provider-matrix-3-providers--2-engines); the raw runs are in
 `spike/readiness/results/provider-matrix.json`.
 
-Checks: 10 reachability checks (all passed) + 10 authorized round-trip combinations (8 passed,
-2 skipped) — **18 passed, 0 failed, 2 skipped**. The authorized round-trip criterion is
-`partial`, not `done`: it is only `done` when all 10 mandatory combinations are measured and pass.
+Checks: 6 reachability checks (all passed) + 6 authorized round-trip combinations (all passed) —
+**12 passed, 0 failed, 0 skipped**. The authorized round-trip criterion is `done`: all 6 mandatory
+combinations of the matrix are measured and pass.
 
-The report is marked `partial: false` — the matrix was measured completely (5 providers × full run
+The report is marked `partial: false` — the matrix was measured completely (3 providers × full run
 count on both engines). A run that covers only part of the matrix is marked `partial` and can
 never be read as the canonical result.
 
@@ -285,9 +325,9 @@ production, because of its operational cost:
 
 Per §2 of the issue, this is an experiment for the cost assessment, not a production workaround.
 
-## 6. Provider matrix (5 providers × 2 engines)
+## 6. Provider matrix (3 providers × 2 engines)
 
-`spike/readiness/results/provider-matrix.json` holds every run (90 runs per engine).
+`spike/readiness/results/provider-matrix.json` holds every run (50 runs per engine).
 Same scenario for both engines: open the provider through the **same** proxy
 (`http://127.0.0.1:3128`; the exit IP was `88.218.94.56` for **both** engines in this run —
 verified before the comparison), wait for the Cloudflare challenge to settle, then classify the
@@ -309,18 +349,17 @@ but neither a login wall nor the composer — a shell/consent page or a selector
 
 | Provider | Runs | Camoufox | CloakBrowser (current production runtime) |
 |---|---|---|---|
-| ChatGPT | 30 | **composer-visible 30/30** | composer-visible 27/30, cloudflare 3/30 |
+| ChatGPT | 30 | **composer-visible 30/30** | composer-visible 30/30 |
 | Gemini | 10 | composer-visible 10/10 | composer-visible 10/10 |
 | Claude | 10 | composer-visible 10/10 | composer-visible 10/10 |
-| Grok | 10 | composer-visible 10/10 | composer-visible 10/10 |
-| Perplexity | 30 | composer-visible 30/30 | composer-visible 30/30 |
 
-Reachability checks: 10 total — **10 passed, 0 failed**. The three Cloudflare interstitials on
-CloakBrowser/ChatGPT are an incidental observation of one run (27/30 vs 30/30 on Camoufox) and
-are **not** a verdict about the engines: the samples are far too small to rank them, and the
-earlier headless divergence disappeared as soon as the run was made comparable.
+Reachability checks: 6 total — **6 passed, 0 failed**. An earlier run of the same matrix saw three
+Cloudflare interstitials on CloakBrowser/ChatGPT (27/30); the canonical run has none. That is an
+incidental observation of a single run and **not** a verdict about the engines: the samples are far
+too small to rank them, and the earlier headless divergence disappeared as soon as the run was
+made comparable.
 
-### 6.1 Authorized round-trip (5 providers × 2 engines = 10 mandatory combinations)
+### 6.1 Authorized round-trip (3 providers × 2 engines = 6 mandatory combinations)
 
 Each combination sends a fixed probe prompt twice on the **same persistent profile**
 (`userDataDir` per engine/provider pair, outside the repository):
@@ -340,10 +379,12 @@ What counts as an answer (this was the weakest point of the first revision of th
   answer can never be read as "the response";
 - every prompt carries a **unique marker**; the marker leaving the composer proves that the prompt
   was submitted (`submitAttempts`, `markerEchoed`) — a click on a disabled send button is not a
-  submission;
+  submission, so the harness clicks only a button that is **visible and enabled** and falls back to
+  the keyboard (`Enter`) when no such button exists;
 - an answer that is a paywall/upsell text ("Sign up and repeat your request") is **not** an
   answer: such a combination is recorded as `skipped` (not measurable without credentials), not as
-  a failure of the engine.
+  a failure of the engine;
+- the waiting window is 45 s for every provider of the matrix.
 
 Only the **length** of the answer is recorded (`answerChars`); the answer itself is never stored.
 `markerEchoed` is a diagnostic, not an assertion: the model is asked to answer with the single
@@ -353,40 +394,43 @@ the composer and appeared in the conversation.
 | Combination | Result | Detail |
 |---|---|---|
 | camoufox / chatgpt | **PASS** | `answerChars [20, 20]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
-| cloakbrowser / chatgpt | **PASS** | `answerChars [20, 20]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [2, 1]`, `sessionReused true` |
-| camoufox / gemini | **PASS** | `answerChars [6, 6]`, `answersBefore [0, 0]` → `answersAfter [2, 2]`, `submitAttempts [2, 2]`, `sessionReused true` |
-| cloakbrowser / gemini | **PASS** | `answerChars [6, 70]`, `answersBefore [0, 0]` → `answersAfter [2, 2]`, `submitAttempts [2, 2]`, `sessionReused true` |
+| cloakbrowser / chatgpt | **PASS** | `answerChars [20, 20]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
+| camoufox / gemini | **PASS** | `answerChars [5, 5]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
+| cloakbrowser / gemini | **PASS** | `answerChars [5, 5]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 2]`, `sessionReused true` |
 | camoufox / claude | **PASS** | `answerChars [41, 41]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
-| cloakbrowser / claude | **PASS** | `answerChars [41, 5]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
-| camoufox / perplexity | **PASS** | `answerChars [5, 5]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
-| cloakbrowser / perplexity | **PASS** | `answerChars [5, 5]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
-| camoufox / grok | **SKIPPED** | not measurable — no authorized session for Grok; the guest attempt produced no new answer (45 s) |
-| cloakbrowser / grok | **SKIPPED** | same |
+| cloakbrowser / claude | **PASS** | `answerChars [41, 41]`, `answersBefore [0, 0]` → `answersAfter [1, 1]`, `submitAttempts [1, 1]`, `sessionReused true` |
 
-Criterion status: **partial** — 8 of 10 combinations measured, **8 passed, 0 failed, 2 skipped**
-(`mandatory: 10`). It is not `done`: a combination that could not be measured keeps the criterion
-open, and `skipped` is counted apart from failures.
+Criterion status: **done** — 6 of 6 combinations measured, **6 passed, 0 failed, 0 skipped**
+(`mandatory: 6`). The criterion is closed for the providers of the matrix; the two providers that
+are not in it (see below) never entered it, so no combination of the matrix is left open.
 
 What this does and does not show:
 
 - **The round-trip mechanism works end-to-end** on both engines: with a session, a *new* answer
   arrives and the session is reusable after a browser restart on the same profile. The criterion
   is a real measurement, not an `unfinished` placeholder.
-- **Every measured combination passed on both engines** — the engines are in parity here. The
+- **Every combination of the matrix passed on both engines** — the engines are in parity here. The
   matrix still cannot rank them: the sample is one run per combination.
-- **The 2 skipped combinations are not engine results.** Grok has no credentials in this
-  environment: the browser is sent to the login page and the guest attempt gets no answer. The
-  matrix cannot say anything about Grok on either engine.
+- **Two providers are outside the matrix and say nothing about the engines.** Grok has no
+  authorized session in this environment: the browser is sent to the login page and the guest
+  attempt gets no answer. Perplexity does not submit the prompt through its web UI here — the
+  send button (`button[aria-label="Submit"]`) appears in the DOM without a click handler, so a
+  mouse click, a forced click and `Enter` all leave the prompt in the composer and no request is
+  made. Both were dropped from the matrix by decision of the repository owner; the production
+  providers in `src/providers/` are untouched by that decision.
 - **The answer selectors had to be corrected against the live UI** — the earlier revision of this
-  report used selectors that either never matched (Claude: `[data-testid="chat-message"]`,
-  `.font-claude-response`) or matched something that is not an answer (Perplexity `.prose` — the
-  upsell banner "Sign up and repeat your request."). The working ones are:
+  report used selectors that never matched (Claude: `[data-testid="chat-message"]`,
+  `.font-claude-response`). The working ones are:
   ChatGPT `[data-conversation-role="assistant"]`, Claude
   `[data-testid="assistant-message"]` / `[data-cds="AssistantMessage"]` (text in
-  `[data-perf-reply-text]`), Gemini `model-response .model-response-text`, Perplexity — the answer
-  of an authorized session. The production selectors in `src/providers/*` were written against
-  Chromium and have to be re-checked before any migration
+  `[data-perf-reply-text]`), Gemini `model-response .model-response-text`. The production selectors
+  in `src/providers/*` were written against Chromium and have to be re-checked before any migration
   ([#16](https://github.com/gazon1/10x-chat/issues/16)).
+- **A selector that matches two DOM levels of one answer counts it twice.** The Gemini selector
+  `model-response .model-response-text, model-response message-content` matched the container of
+  the answer *and* the text inside it, so one exchange reported `answersAfter: 2`. The selector
+  now addresses one level (`model-response .model-response-text`), and the counting itself keeps
+  only the outermost matched element (see [§3.2](#32-one-answer-is-counted-once)).
 - **One concrete selector finding for the migration**: the current ChatGPT UI has no
   `#prompt-textarea`; the composer is `div.ProseMirror[contenteditable="true"][role="textbox"]`,
   the send button is `button[aria-label="Send"]` and the assistant turn is marked with
@@ -432,10 +476,10 @@ Two operational facts measured here:
 
 | Criterion | Status |
 |---|---|
-| Authorized prompt/response round-trip for the 5 providers | **PARTIAL** — the criterion was executed as a matrix of 5 providers × 2 engines = 10 mandatory combinations, each with its own result and a session-reuse check on a persistent profile: **8 measured and passed** (`chatgpt`, `gemini`, `claude`, `perplexity` on both engines), **2 not measurable** (`grok` on both engines — no credentials). Status is `partial`, never a PASS: a combination that could not be measured keeps the criterion open |
-| Login/session reuse with a real account | **DONE (for the providers with credentials)** — verified for ChatGPT, Gemini, Claude and Perplexity on both engines: a *new* answer (`answersBefore` → `answersAfter`) plus a successful session reuse in a freshly launched browser on the same profile (`sessionReused: true`). Not verified for Grok — no session exists for it |
-| Provider selectors under Firefox | **PARTIAL** — the harness selectors were found by probing the live UI and fixed: ChatGPT `[data-conversation-role="assistant"]`, Claude `[data-testid="assistant-message"]` / `[data-cds="AssistantMessage"]`, Gemini `model-response .model-response-text`; the current ChatGPT UI no longer has `#prompt-textarea`. The **production** selectors in `src/providers/*` are still written against Chromium and were not changed (production code is out of scope here) — they have to be re-validated before any migration ([#16](https://github.com/gazon1/10x-chat/issues/16)). Grok was not measured at all (no credentials) |
-| Provider matrix in **headed** (production-like) mode | **DONE** — the canonical run was executed headed under Xvfb `:99` with a real session per provider: 18 passed / 0 failed / 2 skipped, 90 runs per engine. Browser windows render on a virtual display and never take desktop focus (the harness cuts the Wayland connection and refuses to start without the virtual display) |
+| Authorized prompt/response round-trip for the providers of the matrix | **DONE** — the criterion was executed as a matrix of 3 providers × 2 engines = 6 mandatory combinations, each with its own result and a session-reuse check on a persistent profile: **6 measured and passed** (`chatgpt`, `gemini`, `claude` on both engines). Two providers are **outside** the matrix (Grok — no credentials; Perplexity — its web UI does not submit the prompt under automation here), so no combination of the matrix is left open |
+| Login/session reuse with a real account | **DONE** — verified for ChatGPT, Gemini and Claude on both engines: a *new* answer (`answersBefore` → `answersAfter`) plus a successful session reuse in a freshly launched browser on the same profile (`sessionReused: true`) |
+| Provider selectors under Firefox | **PARTIAL** — the harness selectors were found by probing the live UI and fixed: ChatGPT `[data-conversation-role="assistant"]`, Claude `[data-testid="assistant-message"]` / `[data-cds="AssistantMessage"]`, Gemini `model-response .model-response-text`; the current ChatGPT UI no longer has `#prompt-textarea`. The **production** selectors in `src/providers/*` are still written against Chromium and were not changed (production code is out of scope here) — they have to be re-validated before any migration ([#16](https://github.com/gazon1/10x-chat/issues/16)) |
+| Provider matrix in **headed** (production-like) mode | **DONE** — the canonical run was executed headed under Xvfb `:99` with a real session per provider: 12 passed / 0 failed / 0 skipped, 50 runs per engine. Browser windows render on a virtual display and never take desktop focus (the harness cuts the Wayland connection and refuses to start without the virtual display) |
 | GeoIP coherence / a different exit geography | **NOT TESTED** — the local proxy's exit IP is not stable (it was `46.138.35.132` during the proxy-matrix run and `88.218.94.56` during the provider run — for **both** engines, which is what the comparison needs), and no GeoIP coherence check was performed |
 | `launchServer()` / remote server with a persistent profile | **NOT APPLICABLE** — Camoufox cannot serve a persistent context remotely; the daemon is in-process (`src/browser/daemon.ts`), so the production shape does not need it |
 | HTTP-proxy Basic auth on Camoufox with another Playwright version | **NOT TESTED** — 1.63+ is out of scope per the issue |
@@ -448,12 +492,13 @@ Two operational facts measured here:
    re-run `spike/readiness/proxy-matrix.mjs`. Required outcome: the SOCKS5 scenario must show an
    authenticated tunnel in the proxy log (not only a 200), and the HTTP Basic-auth scenario must
    not answer `407`. No hand-written proxy-auth shim in production code.
-2. **Close the authorized round-trip for the remaining provider.** The criterion is already
-   implemented as 10 mandatory combinations; **8 of them are measured and pass**, the 2 Grok
-   combinations are `skipped` because there are no credentials for Grok in this environment. To
-   turn it into `done`, an authorized Grok session is needed — then the combination is measured
-   with the same shape: open → authorize → send a unique prompt → check a **new**, non-empty
-   answer → rerun on the same profile without re-login → close → restart. The probe prompt is a
+2. **Keep the round-trip criterion closed when the matrix changes.** It is a matrix of 6 mandatory
+   combinations (3 providers × 2 engines) and all of them are measured and pass. Every provider
+   that is added to the matrix has to be measured the same way: open → authorize → send a unique
+   prompt → check a **new**, non-empty answer → rerun on the same profile without re-login → close →
+   restart. A provider that cannot be measured this way (no authorized session, or a web UI that
+   does not submit the prompt under automation) does not belong in the matrix — it would keep the
+   criterion open with a combination that says nothing about the engines. The probe prompt is a
    fixed string and only emptiness/length of the answer is recorded.
 3. **Re-validate the provider selectors under Firefox**, separating selectors (DOM) from browser
    mechanics (network, downloads, clipboard) — and drop the Chromium-only stealth layer
