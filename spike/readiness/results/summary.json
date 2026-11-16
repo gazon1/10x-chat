@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-11-16T14:50:16.646Z",
+  "generatedAt": "2026-11-16T15:44:28.201Z",
   "outcomes": [
     {
       "matrix": "proxy-matrix",
       "exitCode": 0,
-      "reused": true,
+      "reused": false,
       "passed": 12,
       "failed": 3,
       "partial": false,
@@ -19,14 +19,14 @@
         },
         {
           "name": "cloakbrowser: proxy credentials do not leak",
-          "detail": "password visible in argv of pids 2984518,2984620,2984621"
+          "detail": "password visible in argv of pids 3098479,3098564,3098565"
         }
       ]
     },
     {
       "matrix": "lifecycle-matrix",
       "exitCode": 0,
-      "reused": true,
+      "reused": false,
       "passed": 14,
       "failed": 0,
       "partial": false,
@@ -35,7 +35,7 @@
     {
       "matrix": "ops-matrix",
       "exitCode": 0,
-      "reused": true,
+      "reused": false,
       "passed": 11,
       "failed": 0,
       "partial": false,
@@ -44,48 +44,110 @@
     {
       "matrix": "provider-matrix",
       "exitCode": 0,
-      "reused": true,
-      "passed": 2,
+      "reused": false,
+      "passed": 12,
       "failed": 8,
       "partial": false,
       "failedChecks": [
         {
-          "name": "camoufox: chatgpt reachable in 30 runs",
-          "detail": "never reached the composer, outcomes={\"auth-wall\":30}"
-        },
-        {
-          "name": "camoufox: gemini reachable in 10 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
-        },
-        {
           "name": "camoufox: claude reachable in 10 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
-        },
-        {
-          "name": "camoufox: perplexity reachable in 30 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":30}"
-        },
-        {
-          "name": "cloakbrowser: chatgpt reachable in 30 runs",
-          "detail": "never reached the composer, outcomes={\"cloudflare\":28,\"auth-wall\":2}"
-        },
-        {
-          "name": "cloakbrowser: gemini reachable in 10 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
+          "detail": "2 infra errors"
         },
         {
           "name": "cloakbrowser: claude reachable in 10 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":9,\"cloudflare\":1}"
+          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
         },
         {
-          "name": "cloakbrowser: perplexity reachable in 30 runs",
-          "detail": "never reached the composer, outcomes={\"provider-error\":30}"
+          "name": "camoufox: gemini authorized round-trip + session reuse",
+          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        },
+        {
+          "name": "camoufox: claude authorized round-trip + session reuse",
+          "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
+        },
+        {
+          "name": "camoufox: grok authorized round-trip + session reuse",
+          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+        },
+        {
+          "name": "cloakbrowser: gemini authorized round-trip + session reuse",
+          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+        },
+        {
+          "name": "cloakbrowser: claude authorized round-trip + session reuse",
+          "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+        },
+        {
+          "name": "cloakbrowser: grok authorized round-trip + session reuse",
+          "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
         }
       ]
     }
   ],
   "authorizedRoundTrip": {
-    "status": "unfinished",
+    "status": "failed",
+    "mandatory": 10,
+    "attempted": 10,
+    "passed": 4,
+    "failed": 6,
+    "combinations": {
+      "camoufox/chatgpt": {
+        "ok": true,
+        "detail": {
+          "answerChars": [20, 20],
+          "loginWall": false,
+          "sessionReused": true
+        }
+      },
+      "camoufox/gemini": {
+        "ok": false,
+        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+      },
+      "camoufox/claude": {
+        "ok": false,
+        "detail": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[contenteditable=\"true\"].ProseMirror, div[enterkeyhint=\"enter\"]').first() to be visible\u001b[22m\n\u001b[2m    - waiting for navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F\"\u001b[22m\n"
+      },
+      "camoufox/grok": {
+        "ok": false,
+        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+      },
+      "camoufox/perplexity": {
+        "ok": true,
+        "detail": {
+          "answerChars": [32, 32],
+          "loginWall": false,
+          "sessionReused": true
+        }
+      },
+      "cloakbrowser/chatgpt": {
+        "ok": true,
+        "detail": {
+          "answerChars": [20, 20],
+          "loginWall": false,
+          "sessionReused": true
+        }
+      },
+      "cloakbrowser/gemini": {
+        "ok": false,
+        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('model-response .model-response-text, model-response message-content').first() to be visible\u001b[22m\n"
+      },
+      "cloakbrowser/claude": {
+        "ok": false,
+        "detail": "the session was not authorized, landed on https://claude.ai/login?from=logout&reauth=1&returnTo=%2Fnew%3F&__cf_chl_rt_tk=gDHWxuNaCZ0SoDBfjAmqN7KWtpPeOycNz4ds7TEgiJY-1794843800-1.0.1.1-sq5OU7NCDT9AcrF7qnTm7rfhEDi0k4wpxm6wS_JmOeQ"
+      },
+      "cloakbrowser/grok": {
+        "ok": false,
+        "detail": "locator.waitFor: Timeout 45000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('.response-content, .message-content').first() to be visible\u001b[22m\n"
+      },
+      "cloakbrowser/perplexity": {
+        "ok": true,
+        "detail": {
+          "answerChars": [32, 32],
+          "loginWall": false,
+          "sessionReused": true
+        }
+      }
+    },
     "reason": "no storage state found"
   }
 }

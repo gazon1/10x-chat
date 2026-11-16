@@ -87,7 +87,9 @@ export function createChecker() {
       try {
         const detail = await fn();
         results.push({ name, ok: true, ms: Date.now() - started, detail: detail ?? null });
-        console.log(`PASS  ${name} (${Date.now() - started}ms) ${detail ? `- ${detail}` : ''}`);
+        const shown =
+          typeof detail === 'object' && detail !== null ? JSON.stringify(detail) : (detail ?? '');
+        console.log(`PASS  ${name} (${Date.now() - started}ms) ${shown ? `- ${shown}` : ''}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         results.push({ name, ok: false, ms: Date.now() - started, detail: message });

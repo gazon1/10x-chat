@@ -31,6 +31,12 @@ describe('roundTripState', () => {
     expect(state.status).toBe('done');
     expect(state.passed).toBe(10);
   });
+
+  it('drops a stale reason once something was attempted', () => {
+    const state = roundTripState({ 'camoufox/chatgpt': ok }, 10, 'no storage state found');
+    expect(state.reason).toBeUndefined();
+    expect(state.status).toBe('partial');
+  });
 });
 
 describe('mergeRoundTrip', () => {

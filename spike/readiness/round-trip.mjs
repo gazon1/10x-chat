@@ -35,7 +35,9 @@ export function roundTripState(combos, mandatory, reason = null) {
     passed,
     failed,
     combinations: combos ?? {},
-    ...(reason ? { reason } : {}),
+    // The reason belongs to an attempt that could not be made; once something
+    // was attempted it would be misleading (e.g. a stale "no credentials").
+    ...(reason && attempted === 0 ? { reason } : {}),
   };
 }
 

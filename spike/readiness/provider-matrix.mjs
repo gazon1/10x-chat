@@ -43,10 +43,13 @@ const PROVIDERS = [
     url: 'https://chatgpt.com',
     runs: 30,
     cloudflare: true,
-    composer:
-      '#prompt-textarea.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea',
-    send: '#composer-submit-button, button[aria-label="Send prompt"], [data-testid="send-button"]',
-    response: '[data-message-author-role="assistant"], .agent-turn',
+    // The current ChatGPT UI has no #prompt-textarea: the composer is a
+    // ProseMirror textbox, the send button is aria-label="Send" and the
+    // assistant turn is marked with data-conversation-role="assistant".
+    composer: 'div.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea',
+    send: 'button[aria-label="Send"], #composer-submit-button, [data-testid="send-button"]',
+    response:
+      '[data-conversation-role="assistant"], [data-message-author-role="assistant"], .agent-turn',
     login: 'button:has-text("Log in"), button:has-text("Sign up")',
   },
   {
@@ -189,21 +192,30 @@ async function classifyRun(engine, provider, storageState) {
     }
     url = page.url();
     title = await page.title().catch(() => '');
-    const cfVisible = await page
-      .locator(CF_SELECTORS)
-      .first()
-      .isVisible()
-      .catch(() => false);
-    const loginVisible = await page
-      .locator(provider.login)
-      .first()
-      .isVisible()
-      .catch(() => false);
-    const composerVisible = await page
-      .locator(provider.composer)
-      .first()
-      .isVisible()
-      .catch(() => false);
+    // The SPA needs a moment to render the composer or the login wall: the
+    // state is read as soon as one of them shows up.
+    let cfVisible = false;
+    let loginVisible = false;
+    let composerVisible = false;
+    for (let i = 0; i < 15; i++) {
+      cfVisible = await page
+        .locator(CF_SELECTORS)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      loginVisible = await page
+        .locator(provider.login)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      composerVisible = await page
+        .locator(provider.composer)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (cfVisible || loginVisible || composerVisible) break;
+      await sleep(1000);
+    }
     return {
       status,
       title: title.slice(0, 80),
@@ -245,7 +257,13 @@ async function exchange(engine, provider, storageState) {
     await page.locator(provider.send).first().click({ force: true });
     const answer = page.locator(provider.response).first();
     await answer.waitFor({ state: 'visible', timeout: 45_000 });
-    const text = (await answer.textContent().catch(() => '')) ?? '';
+    // The turn container appears before the answer is written into it.
+    let text = '';
+    for (let i = 0; i < 20; i++) {
+      text = (await answer.textContent().catch(() => '')) ?? '';
+      if (text.trim().length > 0) break;
+      await sleep(1000);
+    }
     assert(text.trim().length > 0, 'the provider answered with an empty bubble');
     return {
       answerChars: text.trim().length,

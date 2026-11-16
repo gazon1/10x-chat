@@ -53,7 +53,13 @@ Useful environment variables:
 | `SPIKE_MAX_RUNS=1` | cap the runs per provider (smoke run); such a report is marked `reduced: true` and is never reused as a full result |
 | `SPIKE_REUSE=1` | `run-all.mjs` reuses finished reports instead of re-running the matrices — but only when the saved report has the same versions, proxy and headless setting, otherwise the matrix is re-run and the reasons are printed |
 
-Results are written to `spike/readiness/results/*.json`.
+Results are written to `spike/readiness/results/*.json`. The harness writes them with
+`JSON.stringify`, so re-format them before committing — CI runs `biome check .`
+over the whole repository:
+
+```bash
+./node_modules/.bin/biome format --write spike/readiness/results/
+```
 
 ## Gate exit codes
 
@@ -73,13 +79,26 @@ combinations, each with its own result; the criterion is `done` only when all 10
 - CloakBrowser runs on the **free** build (146.0.7680.177.5) by default: the
   Pro build installed in this environment (156.0.8078.47.1) refuses to start.
   Set `CLOAKBROWSER_USE_PRO=1` to try the Pro build instead.
-- The provider matrix can run headless (`SPIKE_HEADLESS=1`), which is what the
-  recorded run used — a headed run needs a display and steals desktop focus.
+- The provider matrix can run headless (`SPIKE_HEADLESS=1`). The canonical
+  recorded run was **headed** under a virtual display, because a headed run
+  steals desktop focus otherwise — run Xvfb and point `DISPLAY` at it:
+
+  ```bash
+  # Xvfb without root: unpack xorg-x11-server-Xvfb into a prefix and run it there
+  PREFIX=/home/max/.cache/xvfb-root
+  LD_LIBRARY_PATH="$PREFIX/usr/lib64" "$PREFIX/usr/bin/Xvfb" :99 -screen 0 1920x1080x24 -nolisten tcp &
+  DISPLAY=:99 node spike/readiness/run-all.mjs
+  ```
+
   Headless results are **not** directly comparable with a headed production run
-  (Cloudflare behaviour differs between the two).
+  (Cloudflare behaviour differs between the two), and the report records the
+  `harness.headless` setting so a run can never be silently reused for another.
 - The authorized round-trip needs an existing storage state in
-  `~/.10x-chat/profiles/`. Without credentials the round-trip is recorded as
-  **unfinished**, never as a pass. Each round-trip sends the probe twice: the second exchange
+  `~/.10x-chat/profiles/default/storage-state.json` (Playwright format). Without
+  credentials the round-trip is recorded as **unfinished**, never as a pass.
+  The file stays outside the repository and only its path is recorded in the
+  report — cookie values are never written to the results or to the logs.
+  Each round-trip sends the probe twice: the second exchange
   runs in a new browser on the session state of the first one and must not land on a login page.
 - Synthetic proxy credentials are used on purpose: they prove whether
   credentials reach the page, the process table or the report.
