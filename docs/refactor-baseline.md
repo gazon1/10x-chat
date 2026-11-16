@@ -23,7 +23,7 @@ installed and no browser/E2E flow was exercised.
 |---|---------|--------|-------|
 | 1 | `bun install --frozen-lockfile` | not run | `bun` unavailable; npm substitute succeeded |
 | 2 | `bun run typecheck` → `npm run typecheck` | **PASS** (exit 0) | `tsc --noEmit` |
-| 3 | `bun run lint` → `npm run lint` | **PASS** with locked Biome (exit 0) | see version caveat below |
+| 3 | `bun run lint` → `npm run lint` | **PASS** locally with locked Biome (exit 0) | CI verification pending; see version caveat below |
 | 4 | `bun run test` → `npm run test` | **PASS** (exit 0) | 18 files, **153 tests**, ~2.7 s |
 | 5 | `bun run build` → `npm run build` | **PASS** (exit 0) | `tsc -p tsconfig.build.json`, `dist/` is gitignored |
 | 6 | `bun run dev` | not run | needs `bun` |
@@ -44,7 +44,9 @@ npx -y @biomejs/biome@2.4.4 check .
 → Checked 99 files. No fixes applied. Found 3 infos. exit=0
 ```
 
-So **CI (frozen lockfile) is green**, but local npm installs can see a false lint failure.
+The lockfile pins Biome 2.4.4, and that version passes the local lint check.
+CI verification is pending. Local npm installs can see a false lint failure when they resolve
+the newer 2.6.8.
 Warnings and infos under 2.4.4 never fail the build. (The newer 2.6.8 additionally reports
 `lint/performance/useDomNodeTextContent` 23× and `lint/suspicious/noDuplicateEnumValues` 2×
 in `src/notebooklm/rpc/types.ts`; those are version-specific, not baseline state.)
@@ -232,16 +234,31 @@ Dreamina (Seedance) must keep:
 
 ## 11. Verification for the next refactor step
 
-Run with Bun + the frozen lockfile to match CI:
+### Actually performed in this audit (npm, no Bun)
 
 ```bash
-bun install --frozen-lockfile
-bun run typecheck
-bun run lint
-bun run test
-bun run build
+npm install --include=dev --no-package-lock --ignore-scripts   # install substitute
+npm run typecheck   # PASS
+npx -y @biomejs/biome@2.4.4 check .   # lint baseline, PASS (exit 0, 3 infos)
+npm run test        # PASS, 18 files / 153 tests
+npm run build       # PASS
 ```
 
-Expected baseline: all five green; `153` tests passing. Browser behavior is not covered by this
-baseline — validate Flow and Dreamina manually (§9) before and after touching their providers or
-the browser lifecycle.
+`npm run lint` itself was not used for the final baseline because an unlocked npm install resolved
+Biome 2.6.8 (see §1); the lockfile-pinned 2.4.4 was invoked directly.
+
+### Not performed
+
+- `bun install --frozen-lockfile` and all `bun run …` commands — Bun is not installed here.
+- `bun run dev`, `npm start`, and the `postinstall` CloakBrowser download.
+- Any browser/E2E execution (Flow, Dreamina, login, chat against live providers).
+- GitHub CI/PR checks — at the time of writing the PR has no check runs or commit statuses.
+
+### Expected after CI runs
+
+`ci.yml` (Bun + frozen lockfile) should report: install PASS, typecheck PASS, lint PASS with
+Biome 2.4.4, test PASS with `153` tests. `build` is not part of `ci.yml` (only `release.yml`);
+it passed locally. This expectation is unconfirmed until the check runs appear on the PR.
+
+Browser behavior is not covered by this baseline — validate Flow and Dreamina manually (§9)
+before and after touching their providers or the browser lifecycle.
