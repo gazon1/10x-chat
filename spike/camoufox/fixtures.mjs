@@ -53,8 +53,11 @@ export function createFixtureServer() {
       return;
     }
     if (url.pathname === '/storage') {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('storage');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<!doctype html><html><body>
+        <p id="storage">storage</p>
+        <script>if (!localStorage.getItem('spike_probe')) localStorage.setItem('spike_probe', 'seeded');</script>
+      </body></html>`);
       return;
     }
     res.writeHead(404);

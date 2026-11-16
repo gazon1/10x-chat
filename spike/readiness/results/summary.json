@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-11-16T14:15:47.358Z",
+  "outcomes": [
+    {
+      "matrix": "proxy-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 12,
+      "failed": 3,
+      "failedChecks": [
+        {
+          "name": "camoufox: http proxy (basic auth)",
+          "detail": "proxy rejected the credentials (407)"
+        },
+        {
+          "name": "camoufox: socks5 proxy (rfc1929 auth)",
+          "detail": "browserType.launch: Browser does not support socks5 proxy authentication"
+        },
+        {
+          "name": "cloakbrowser: proxy credentials do not leak",
+          "detail": "password visible in argv of pids 2751660,2751748,2751750"
+        }
+      ]
+    },
+    {
+      "matrix": "lifecycle-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 14,
+      "failed": 0,
+      "failedChecks": []
+    },
+    {
+      "matrix": "ops-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 11,
+      "failed": 0,
+      "failedChecks": []
+    },
+    {
+      "matrix": "provider-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 2,
+      "failed": 8,
+      "failedChecks": [
+        {
+          "name": "camoufox: chatgpt reachable in 30 runs",
+          "detail": "never reached the composer, outcomes={\"auth-wall\":30}"
+        },
+        {
+          "name": "camoufox: gemini reachable in 10 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
+        },
+        {
+          "name": "camoufox: claude reachable in 10 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
+        },
+        {
+          "name": "camoufox: perplexity reachable in 30 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":30}"
+        },
+        {
+          "name": "cloakbrowser: chatgpt reachable in 30 runs",
+          "detail": "never reached the composer, outcomes={\"cloudflare\":28,\"auth-wall\":2}"
+        },
+        {
+          "name": "cloakbrowser: gemini reachable in 10 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":10}"
+        },
+        {
+          "name": "cloakbrowser: claude reachable in 10 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":9,\"cloudflare\":1}"
+        },
+        {
+          "name": "cloakbrowser: perplexity reachable in 30 runs",
+          "detail": "never reached the composer, outcomes={\"provider-error\":30}"
+        }
+      ]
+    }
+  ],
+  "authorizedRoundTrip": {
+    "status": "unfinished",
+    "reason": "no storage state found"
+  }
+}

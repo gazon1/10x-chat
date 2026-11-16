@@ -1,0 +1,67 @@
+# Production-readiness harness (issue #13)
+
+Isolated harness that compares the current production browser runtime
+(CloakBrowser / Chromium) with Camoufox (Firefox) **before** any migration.
+It does not touch production code: it talks to both engines through the same
+adapter, so every scenario runs identically on both.
+
+## Layout
+
+| File | What it does |
+|------|--------------|
+| `engines.mjs` | Adapter for both engines (`launch`, `launchPersistent`) |
+| `util.mjs` | Check runner, report writer, process/RSS helpers, version capture |
+| `proxy-matrix.mjs` | HTTP(S)/SOCKS5 (no auth / RFC 1929 auth), bypass list, env vars, credential leakage |
+| `lifecycle-matrix.mjs` | Persistent profile reuse, context isolation, `storageState`, upload/download, browser reuse, cleanup |
+| `ops-matrix.mjs` | Install footprint, cold/warm start, RSS, leftover processes, licensing facts |
+| `provider-matrix.mjs` | 5 providers × (10 runs, 30 for Cloudflare-dependent) × 2 engines + authorized round-trip |
+| `socks5-relay.mjs` | **Experiment only**: local SOCKS5 adapter that authenticates upstream (cost assessment, not a production path) |
+| `run-all.mjs` | Runs every matrix in sequence and writes `results/summary.json` |
+
+The proxy and fixture servers are reused from the 3/8 spike
+(`spike/camoufox/proxies.mjs`, `spike/camoufox/fixtures.mjs`) so both spikes
+measure the same things with the same instruments.
+
+## Running
+
+```bash
+cd spike/camoufox && npm install --no-audit --no-fund   # camoufox 0.5.9
+cd ../.. && bun install                                   # cloakbrowser + playwright-core
+
+TMPDIR=~/.cache/10x-chat-tmp node spike/readiness/run-all.mjs
+```
+
+Individual matrices:
+
+```bash
+node spike/readiness/proxy-matrix.mjs
+node spike/readiness/lifecycle-matrix.mjs
+node spike/readiness/ops-matrix.mjs
+node spike/readiness/provider-matrix.mjs
+```
+
+Useful environment variables:
+
+| Variable | Effect |
+|---|---|
+| `SPIKE_HEADLESS=1` | headless mode (no window, no desktop focus) |
+| `SPIKE_PROXY=<url>` | proxy endpoint for both engines (default `http://127.0.0.1:3128`) |
+| `SPIKE_ENGINES=camoufox,cloakbrowser` | run a subset of engines; the result is merged into the existing report |
+| `SPIKE_REUSE=1` | `run-all.mjs` reuses finished reports instead of re-running the matrices |
+
+Results are written to `spike/readiness/results/*.json`.
+
+## Notes
+
+- CloakBrowser runs on the **free** build (146.0.7680.177.5) by default: the
+  Pro build installed in this environment (156.0.8078.47.1) refuses to start.
+  Set `CLOAKBROWSER_USE_PRO=1` to try the Pro build instead.
+- The provider matrix can run headless (`SPIKE_HEADLESS=1`), which is what the
+  recorded run used — a headed run needs a display and steals desktop focus.
+  Headless results are **not** directly comparable with a headed production run
+  (Cloudflare behaviour differs between the two).
+- The authorized round-trip needs an existing storage state in
+  `~/.10x-chat/profiles/`. Without credentials the round-trip is recorded as
+  **unfinished**, never as a pass.
+- Synthetic proxy credentials are used on purpose: they prove whether
+  credentials reach the page, the process table or the report.

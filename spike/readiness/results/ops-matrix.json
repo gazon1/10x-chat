@@ -1,0 +1,160 @@
+{
+  "matrix": "ops",
+  "env": {
+    "node": "v22.22.2",
+    "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
+    "host": "192.168.1.107",
+    "camoufoxPackage": null,
+    "playwrightCoreSpike": "1.61.1",
+    "cloakbrowser": null,
+    "proxyEnv": {
+      "HTTPS_PROXY": "http://127.0.0.1:3128",
+      "HTTP_PROXY": "http://127.0.0.1:3128",
+      "NO_PROXY": "localhost,127.0.0.1,::1"
+    }
+  },
+  "footprintsKb": {
+    "camoufox": {
+      "total": 2823112,
+      "browsers": 2495856,
+      "geolocation": 0
+    },
+    "cloakbrowser": {
+      "total": 1307080,
+      "freeBuild": 713544,
+      "proBuild": 593512
+    }
+  },
+  "install": {
+    "camoufoxMissingBuild": "ERROR ENOENT: no such file or directory, open '/nonexistent/application.ini'",
+    "camoufoxList": "Installed versions: |  | official/ |     └── v158.0.1-beta.41 (stable) (Oct 30) (active) |  | geoip/",
+    "downloadSamples": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 4 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401"
+  },
+  "license": "{\"cloakbrowserPackage\":{\"version\":\"0.4.10\",\"license\":\"MIT\"},\"camoufoxPackage\":{\"version\":\"0.5.9\",\"license\":\"MIT\"},\"cloakbrowserBinaryLicense\":\"not shipped in the npm package (downloaded with the binary)\",\"costModel\":{\"camoufox\":\"MPL-2.0 browser build + MIT tooling: no licence fee, redistribution allowed\",\"cloakbrowser\":\"MIT wrapper + separate binary licence: free tier = 1 concurrent session, no redistribution; paid tiers for 5/20/200/2000+ concurrent sessions\"}}",
+  "perEngine": {
+    "camoufox": {
+      "footprint": {
+        "total": 2823112,
+        "browsers": 2495856,
+        "geolocation": 0
+      },
+      "results": {
+        "cold": {
+          "name": "camoufox: cold start (first launch)",
+          "ok": true,
+          "ms": 4931,
+          "detail": "launch=2213ms first-paint=4188ms rss=932MB procs=9"
+        },
+        "warm": {
+          "name": "camoufox: warm start (second launch)",
+          "ok": true,
+          "ms": 6375,
+          "detail": "launch=3662ms first-paint=5733ms rss=932MB procs=9"
+        },
+        "cleanup": {
+          "name": "camoufox: no leftover processes",
+          "ok": true,
+          "ms": 5674,
+          "detail": "before=2 after=2"
+        }
+      }
+    },
+    "cloakbrowser": {
+      "footprint": {
+        "total": 1307080,
+        "freeBuild": 713544,
+        "proBuild": 593512
+      },
+      "results": {
+        "cold": {
+          "name": "cloakbrowser: cold start (first launch)",
+          "ok": true,
+          "ms": 1197,
+          "detail": "launch=535ms first-paint=933ms rss=787MB procs=10"
+        },
+        "warm": {
+          "name": "cloakbrowser: warm start (second launch)",
+          "ok": true,
+          "ms": 806,
+          "detail": "launch=158ms first-paint=536ms rss=788MB procs=10"
+        },
+        "cleanup": {
+          "name": "cloakbrowser: no leftover processes",
+          "ok": true,
+          "ms": 2911,
+          "detail": "before=0 after=0"
+        }
+      }
+    }
+  },
+  "results": [
+    {
+      "name": "install footprint measured",
+      "ok": true,
+      "ms": 0,
+      "detail": "camoufox=2757MB cloakbrowser=1276MB"
+    },
+    {
+      "name": "camoufox: cold start (first launch)",
+      "ok": true,
+      "ms": 4931,
+      "detail": "launch=2213ms first-paint=4188ms rss=932MB procs=9"
+    },
+    {
+      "name": "camoufox: warm start (second launch)",
+      "ok": true,
+      "ms": 6375,
+      "detail": "launch=3662ms first-paint=5733ms rss=932MB procs=9"
+    },
+    {
+      "name": "camoufox: no leftover processes",
+      "ok": true,
+      "ms": 5674,
+      "detail": "before=2 after=2"
+    },
+    {
+      "name": "cloakbrowser: cold start (first launch)",
+      "ok": true,
+      "ms": 1197,
+      "detail": "launch=535ms first-paint=933ms rss=787MB procs=10"
+    },
+    {
+      "name": "cloakbrowser: warm start (second launch)",
+      "ok": true,
+      "ms": 806,
+      "detail": "launch=158ms first-paint=536ms rss=788MB procs=10"
+    },
+    {
+      "name": "cloakbrowser: no leftover processes",
+      "ok": true,
+      "ms": 2911,
+      "detail": "before=0 after=0"
+    },
+    {
+      "name": "camoufox: missing browser build fails with a clear error",
+      "ok": true,
+      "ms": 756,
+      "detail": "ERROR ENOENT: no such file or directory, open '/nonexistent/application.ini'"
+    },
+    {
+      "name": "camoufox: supported install command lists the build",
+      "ok": true,
+      "ms": 833,
+      "detail": "Installed versions: |  | official/ |     └── v158.0.1-beta.41 (stable) (Oct 30) (active) |  | geoip/"
+    },
+    {
+      "name": "download throughput for the browser builds",
+      "ok": true,
+      "ms": 13247,
+      "detail": "camoufox camoufox-158.0.1-beta.41-lin.x86_64.zip: 4 MB/s, http=200 | cloakbrowser latest: 0 MB/s, http=401"
+    },
+    {
+      "name": "licensing facts collected",
+      "ok": true,
+      "ms": 4,
+      "detail": "{\"cloakbrowserPackage\":{\"version\":\"0.4.10\",\"license\":\"MIT\"},\"camoufoxPackage\":{\"version\":\"0.5.9\",\"license\":\"MIT\"},\"cloakbrowserBinaryLicense\":\"not shipped in the npm package (downloaded with the binary)\",\"costModel\":{\"camoufox\":\"MPL-2.0 browser build + MIT tooling: no licence fee, redistribution allowed\",\"cloakbrowser\":\"MIT wrapper + separate binary licence: free tier = 1 concurrent session, no redistribution; paid tiers for 5/20/200/2000+ concurrent sessions\"}}"
+    }
+  ],
+  "passed": 11,
+  "failed": 0
+}
