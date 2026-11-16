@@ -9,26 +9,49 @@
  */
 
 import type { BrowserType } from 'playwright';
+import { browserProcessEnv, proxyFromEnv, proxyLaunchOptions } from './proxy.ts';
 
 let _chromium: BrowserType | undefined;
 let _engineName: 'cloakbrowser' | 'unknown' = 'unknown';
 let _loaded = false;
 
 /**
- * Proxy from the environment (HTTPS_PROXY / HTTP_PROXY, NO_PROXY).
+ * The launch options of the browser.
  *
- * Chromium ignores the standard proxy env vars, so they have to be turned
- * into a launch option explicitly. CloakBrowser supports HTTP and SOCKS5
- * proxies, including credentials in the URL.
+ * The proxy of the environment (HTTPS_PROXY / HTTP_PROXY, NO_PROXY) is handed
+ * to Playwright through `launchOptions.proxy`: Playwright keeps the credentials
+ * in its own CDP session and authenticates the browser from there. CloakBrowser
+ * would otherwise inline them into `--proxy-server=http://user:pass@host:port`,
+ * which puts the password into the command line of every process of the browser.
+ *
+ * The proxy variables are dropped from the environment of the browser for the
+ * same reason — the environment of a process is readable by every local
+ * process, and Chromium does not need them.
  */
-function proxyFromEnv(): { server: string; bypass?: string } | undefined {
-  const server = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
-  if (!server) return undefined;
-  const bypass = process.env.NO_PROXY?.split(',')
-    .map((host) => host.trim())
-    .filter(Boolean)
-    .join(',');
-  return { server, ...(bypass ? { bypass } : {}) };
+export function buildLaunchOptions(
+  options?: Record<string, unknown>,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> {
+  const { channel: _channel, ...rest } = options ?? {};
+  const proxy = proxyFromEnv(env);
+
+  const launchOptions =
+    rest.launchOptions && typeof rest.launchOptions === 'object'
+      ? (rest.launchOptions as Record<string, unknown>)
+      : {};
+
+  return {
+    ...rest,
+    launchOptions: {
+      ...launchOptions,
+      // The proxy variables are dropped even when no proxy is configured: a
+      // variable that is not used can still carry the credentials of one
+      // (e.g. `ALL_PROXY`), and the environment of a process is readable by
+      // every local process of the machine.
+      env: browserProcessEnv(env),
+      ...(proxy ? proxyLaunchOptions(proxy) : {}),
+    },
+  };
 }
 
 async function loadEngine(): Promise<BrowserType> {
@@ -39,19 +62,14 @@ async function loadEngine(): Promise<BrowserType> {
   try {
     const cloakbrowser = await import('cloakbrowser');
     const humanize = process.env.TEN_X_CHAT_CLOAK_HUMANIZE !== '0';
-    const cleanOptions = (options?: Record<string, unknown>) => {
-      const { channel: _channel, ...rest } = options ?? {};
-      const proxy = proxyFromEnv();
-      return proxy ? { ...rest, proxy } : rest;
-    };
     _chromium = {
       launch: async (options?: Record<string, unknown>) => {
-        return cloakbrowser.launch({ ...cleanOptions(options), humanize });
+        return cloakbrowser.launch({ ...buildLaunchOptions(options), humanize });
       },
       launchPersistentContext: async (userDataDir: string, options?: Record<string, unknown>) => {
         return cloakbrowser.launchPersistentContext({
           userDataDir,
-          ...cleanOptions(options),
+          ...buildLaunchOptions(options),
           humanize,
         });
       },

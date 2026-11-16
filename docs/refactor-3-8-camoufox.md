@@ -176,3 +176,39 @@ No other production behaviour changed.
 - Windows / macOS hosts: Camoufox ships builds for them, but only Linux was exercised.
 - `headless: 'virtual'` (Xvfb) — Xvfb is not installed on this host, so only `headless: true` and
   `headless: false` on `DISPLAY=:0` were tested.
+
+## 10. Follow-up: the production-readiness gate (4/9)
+
+The spike above (22/23 checks, 3 runs per provider/engine, no credentials) was not sufficient to
+switch the production runtime. [#13](https://github.com/gazon1/10x-chat/issues/13) asked for a
+reproducible gate, and it was executed in `spike/readiness/` — full report, version matrix,
+per-check results and re-verification conditions:
+**[docs/refactor-4-9-camoufox-production-readiness.md](refactor-4-9-camoufox-production-readiness.md)**.
+
+Outcome: **NO-GO**, production stays on CloakBrowser. The 3/8 finding about SOCKS5 with
+authentication turned out to be deeper than "the Node launcher has no equivalent": on the pinned
+matrix (`camoufox@0.5.9` + browser build `158.0.1-beta.41`) **neither** the TS launcher **nor**
+the browser build can carry SOCKS5 credentials, and HTTP proxies with Basic auth fail the same
+way (`407`). The upstream fix exists but needs a Camoufox beta plus a newer browser build, which
+this gate is not allowed to apply on the side.
+
+The authorized prompt/response round-trip was since **measured** rather than left `unfinished`: it
+is a matrix of 3 providers × 2 engines = 6 mandatory combinations, each measured on its own
+persistent profile (the browser is closed and reopened on the same profile — the session has to
+survive a restart without a re-login) and only an answer that appeared **after** the prompt was
+sent counts. All 6 combinations are measured and pass, so the criterion is `done` for the providers
+of the matrix. Two providers were dropped from it: Grok has **no credentials** in this environment,
+so its combinations could only ever be `skipped` ("not measurable"), and Perplexity does not submit
+the prompt through its web UI here — the send button appears without a click handler, so neither a
+mouse click nor `Enter` sends anything. Neither of them could say anything about the engines; the
+production providers themselves are untouched in `src/providers/`.
+A proxy-credential leak in the current CloakBrowser runtime (credentials on the browser command
+line) was measured as well — and **fixed** in the production code afterwards: the credentials now
+go to Playwright instead of CloakBrowser (`src/browser/proxy.ts`), the browser only receives
+`--proxy-server=http://host` without userinfo, and the proxy variables are removed from the
+environment of the browser. A SOCKS proxy with credentials is refused with an explicit error
+instead of being leaked into the command line.
+
+The 3/8 spike files (`spike/camoufox/`) are untouched except for one fixture change: the
+`/storage` endpoint now seeds `localStorage`, so that the 4/9 lifecycle matrix can prove that
+localStorage — not only cookies — survives a profile restart.

@@ -1,0 +1,250 @@
+{
+  "matrix": "proxy",
+  "env": {
+    "node": "v22.22.2",
+    "platform": "Linux 7.2.10-200.fc44.x86_64 x64",
+    "camoufoxPackage": "0.5.9",
+    "playwrightCoreSpike": "1.62.0",
+    "playwrightCoreRepo": "1.61.1",
+    "cloakbrowser": "0.4.10",
+    "camoufoxBrowser": "158.0.1-beta.41",
+    "camoufoxBrowserSha256": "3f2eb1d0",
+    "versionSources": {
+      "camoufoxPackage": "spike/camoufox/node_modules/camoufox/package.json",
+      "playwrightCoreSpike": "spike/camoufox/node_modules/playwright-core/package.json",
+      "playwrightCoreRepo": "node_modules/playwright-core/package.json",
+      "cloakbrowser": "node_modules/cloakbrowser/package.json",
+      "camoufoxBrowser": "~/.cache/camoufox/config.json"
+    },
+    "display": ":99",
+    "proxyEnv": {
+      "HTTPS_PROXY": "http://127.0.0.1:3128",
+      "HTTP_PROXY": "http://127.0.0.1:3128",
+      "NO_PROXY": "localhost,127.0.0.1,::1"
+    }
+  },
+  "harness": {
+    "proxy": null,
+    "headless": true
+  },
+  "results": [
+    {
+      "name": "camoufox: http proxy (no auth)",
+      "ok": true,
+      "detail": "status=200 egress=46.138.35.132 tunnelled=1",
+      "ms": 2840
+    },
+    {
+      "name": "camoufox: http proxy (basic auth)",
+      "ok": true,
+      "detail": "status=200 tunnelled=2 challenge=1",
+      "ms": 2054
+    },
+    {
+      "name": "camoufox: socks5 proxy (no auth)",
+      "ok": true,
+      "detail": "status=200 tunnelled=1",
+      "ms": 2082
+    },
+    {
+      "name": "camoufox: socks5 proxy (rfc1929 auth)",
+      "ok": false,
+      "detail": "browserType.launch: Browser does not support socks5 proxy authentication",
+      "ms": 52
+    },
+    {
+      "name": "camoufox: proxy bypass list honoured",
+      "ok": true,
+      "detail": "local target bypassed the proxy",
+      "ms": 1748
+    },
+    {
+      "name": "camoufox: HTTPS_PROXY env behaviour (informational)",
+      "ok": true,
+      "detail": "engine used the env proxy on its own (repo proxyFromEnv() layer is redundant)",
+      "ms": 0
+    },
+    {
+      "name": "camoufox: proxy credentials do not leak",
+      "ok": true,
+      "detail": "no credential in page content, argv or environ",
+      "ms": 2346
+    },
+    {
+      "name": "camoufox: EXPERIMENT socks5 via local relay adapter",
+      "ok": true,
+      "detail": "works with an out-of-process adapter (workaround, not a supported path)",
+      "ms": 1953
+    },
+    {
+      "name": "cloakbrowser: http proxy (no auth)",
+      "ok": true,
+      "detail": "status=200 egress=46.138.35.132 tunnelled=1",
+      "ms": 1221
+    },
+    {
+      "name": "cloakbrowser: http proxy (basic auth)",
+      "ok": true,
+      "detail": "status=200 tunnelled=2 challenge=1",
+      "ms": 579
+    },
+    {
+      "name": "cloakbrowser: socks5 proxy (no auth)",
+      "ok": true,
+      "detail": "status=200 tunnelled=1",
+      "ms": 612
+    },
+    {
+      "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
+      "ok": false,
+      "detail": "SOCKS proxy authentication is not supported without exposing the credentials in the process table: Chromium can only authenticate a SOCKS proxy through the URL of the --proxy-server flag. Use an HTTP proxy with credentials, or a local relay (see docs/refactor-4-9-camoufox-production-readiness.md).",
+      "ms": 0
+    },
+    {
+      "name": "cloakbrowser: proxy bypass list honoured",
+      "ok": true,
+      "detail": "local target bypassed the proxy",
+      "ms": 290
+    },
+    {
+      "name": "cloakbrowser: HTTPS_PROXY env behaviour (informational)",
+      "ok": true,
+      "detail": "engine ignores env vars (repo proxyFromEnv() layer is mandatory)",
+      "ms": 1
+    },
+    {
+      "name": "cloakbrowser: proxy credentials do not leak",
+      "ok": true,
+      "detail": "no credential in page content, argv or environ",
+      "ms": 715
+    },
+    {
+      "name": "cloakbrowser: EXPERIMENT socks5 auth with inline credentials",
+      "ok": true,
+      "detail": "works, but the password is in the argv of 3 processes — not usable in production",
+      "ms": 6643
+    },
+    {
+      "name": "production: proxy credentials stay out of the browser process",
+      "ok": true,
+      "detail": "the production launch path authenticates the proxy without exposing the credentials",
+      "ms": 783
+    }
+  ],
+  "perEngine": {
+    "camoufox": {
+      "http-noauth": {
+        "name": "camoufox: http proxy (no auth)",
+        "ok": true,
+        "detail": "status=200 egress=46.138.35.132 tunnelled=1",
+        "ms": 2840
+      },
+      "http-basic-auth": {
+        "name": "camoufox: http proxy (basic auth)",
+        "ok": true,
+        "detail": "status=200 tunnelled=2 challenge=1",
+        "ms": 2054
+      },
+      "socks5-noauth": {
+        "name": "camoufox: socks5 proxy (no auth)",
+        "ok": true,
+        "detail": "status=200 tunnelled=1",
+        "ms": 2082
+      },
+      "socks5-auth": {
+        "name": "camoufox: socks5 proxy (rfc1929 auth)",
+        "ok": false,
+        "detail": "browserType.launch: Browser does not support socks5 proxy authentication",
+        "ms": 52
+      },
+      "no-proxy-bypass": {
+        "name": "camoufox: proxy bypass list honoured",
+        "ok": true,
+        "detail": "local target bypassed the proxy",
+        "ms": 1748
+      },
+      "env-proxy": {
+        "name": "camoufox: HTTPS_PROXY env behaviour (informational)",
+        "ok": true,
+        "detail": "engine used the env proxy on its own (repo proxyFromEnv() layer is redundant)",
+        "ms": 0
+      },
+      "credential-leak": {
+        "name": "camoufox: proxy credentials do not leak",
+        "ok": true,
+        "detail": "no credential in page content, argv or environ",
+        "ms": 2346
+      },
+      "socks5-auth-via-relay-experiment": {
+        "name": "camoufox: EXPERIMENT socks5 via local relay adapter",
+        "ok": true,
+        "detail": "works with an out-of-process adapter (workaround, not a supported path)",
+        "ms": 1953
+      },
+      "socks5-auth-inline-experiment": {
+        "name": "camoufox: EXPERIMENT socks5 auth with inline credentials",
+        "ok": true,
+        "ms": 0,
+        "detail": "not applicable: Firefox has no --proxy-server flag"
+      }
+    },
+    "cloakbrowser": {
+      "http-noauth": {
+        "name": "cloakbrowser: http proxy (no auth)",
+        "ok": true,
+        "detail": "status=200 egress=46.138.35.132 tunnelled=1",
+        "ms": 1221
+      },
+      "http-basic-auth": {
+        "name": "cloakbrowser: http proxy (basic auth)",
+        "ok": true,
+        "detail": "status=200 tunnelled=2 challenge=1",
+        "ms": 579
+      },
+      "socks5-noauth": {
+        "name": "cloakbrowser: socks5 proxy (no auth)",
+        "ok": true,
+        "detail": "status=200 tunnelled=1",
+        "ms": 612
+      },
+      "socks5-auth": {
+        "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
+        "ok": false,
+        "detail": "SOCKS proxy authentication is not supported without exposing the credentials in the process table: Chromium can only authenticate a SOCKS proxy through the URL of the --proxy-server flag. Use an HTTP proxy with credentials, or a local relay (see docs/refactor-4-9-camoufox-production-readiness.md).",
+        "ms": 0
+      },
+      "no-proxy-bypass": {
+        "name": "cloakbrowser: proxy bypass list honoured",
+        "ok": true,
+        "detail": "local target bypassed the proxy",
+        "ms": 290
+      },
+      "env-proxy": {
+        "name": "cloakbrowser: HTTPS_PROXY env behaviour (informational)",
+        "ok": true,
+        "detail": "engine ignores env vars (repo proxyFromEnv() layer is mandatory)",
+        "ms": 1
+      },
+      "credential-leak": {
+        "name": "cloakbrowser: proxy credentials do not leak",
+        "ok": true,
+        "detail": "no credential in page content, argv or environ",
+        "ms": 715
+      },
+      "socks5-auth-via-relay-experiment": {
+        "name": "cloakbrowser: EXPERIMENT socks5 via local relay adapter",
+        "ok": true,
+        "ms": 0,
+        "detail": "not needed: the engine authenticates SOCKS5 natively"
+      },
+      "socks5-auth-inline-experiment": {
+        "name": "cloakbrowser: EXPERIMENT socks5 auth with inline credentials",
+        "ok": true,
+        "detail": "works, but the password is in the argv of 3 processes — not usable in production",
+        "ms": 6643
+      }
+    }
+  },
+  "passed": 15,
+  "failed": 2
+}

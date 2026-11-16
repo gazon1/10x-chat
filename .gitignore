@@ -13,3 +13,6 @@ e2e-test.mjs
 
 # Camoufox spike artifacts
 spike/camoufox/.data/
+
+# Local run artifacts (diagnostics logs, throw-away probes)
+build/

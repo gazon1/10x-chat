@@ -1,0 +1,170 @@
+{
+  "generatedAt": "2026-11-16T21:36:39.218Z",
+  "outcomes": [
+    {
+      "matrix": "proxy-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 15,
+      "failed": 2,
+      "skipped": null,
+      "partial": false,
+      "failedChecks": [
+        {
+          "name": "camoufox: socks5 proxy (rfc1929 auth)",
+          "detail": "browserType.launch: Browser does not support socks5 proxy authentication"
+        },
+        {
+          "name": "cloakbrowser: socks5 proxy (rfc1929 auth)",
+          "detail": "SOCKS proxy authentication is not supported without exposing the credentials in the process table: Chromium can only authenticate a SOCKS proxy through the URL of the --proxy-server flag. Use an HTTP proxy with credentials, or a local relay (see docs/refactor-4-9-camoufox-production-readiness.md)."
+        }
+      ],
+      "skippedChecks": []
+    },
+    {
+      "matrix": "lifecycle-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 14,
+      "failed": 0,
+      "skipped": null,
+      "partial": false,
+      "failedChecks": [],
+      "skippedChecks": []
+    },
+    {
+      "matrix": "ops-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 11,
+      "failed": 0,
+      "skipped": null,
+      "partial": false,
+      "failedChecks": [],
+      "skippedChecks": []
+    },
+    {
+      "matrix": "provider-matrix",
+      "exitCode": 0,
+      "reused": true,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "partial": false,
+      "failedChecks": [],
+      "skippedChecks": []
+    }
+  ],
+  "authorizedRoundTrip": {
+    "status": "done",
+    "mandatory": 6,
+    "attempted": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "combinations": {
+      "camoufox/chatgpt": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-chatgpt",
+            "reseeded": false
+          }
+        }
+      },
+      "camoufox/gemini": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-gemini",
+            "reseeded": false
+          }
+        }
+      },
+      "camoufox/claude": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 41],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/camoufox-claude",
+            "reseeded": false
+          }
+        }
+      },
+      "cloakbrowser/chatgpt": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [20, 20],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-chatgpt",
+            "reseeded": false
+          }
+        }
+      },
+      "cloakbrowser/gemini": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [5, 5],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [2, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-gemini",
+            "reseeded": false
+          }
+        }
+      },
+      "cloakbrowser/claude": {
+        "ok": true,
+        "skipped": false,
+        "detail": {
+          "answerChars": [41, 41],
+          "answersBefore": [0, 0],
+          "answersAfter": [1, 1],
+          "submitAttempts": [1, 1],
+          "markerEchoed": [false, false],
+          "loginWall": false,
+          "sessionReused": true,
+          "profile": {
+            "userDataDir": "~/.10x-chat/profiles/readiness/cloakbrowser-claude",
+            "reseeded": false
+          }
+        }
+      }
+    }
+  }
+}
