@@ -367,6 +367,16 @@ describe('a broken config file', () => {
     expect(await exists(getSecretsPath())).toBe(false);
   });
 
+  it('refuses a broken config file even when the environment chooses the store', async () => {
+    // The environment decides *where* the secrets go — not whether the config
+    // file of the user is a valid one.
+    process.env[CREDENTIAL_STORAGE_ENV] = 'file';
+    await writeConfig('{ "credentialStorag": "keyring" }');
+
+    await expect(store().set('openai-key', SECRET)).rejects.toThrow(/unknown key/);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
   it('refuses a config file that cannot be read', async () => {
     if (process.platform === 'win32') return;
     if (typeof process.getuid === 'function' && process.getuid() === 0) return; // root reads anything

@@ -559,11 +559,26 @@ export interface SecretStoreOptions {
  *
  * The whole config file is validated (the same validation as `loadConfig()`):
  * a config file with a typo in another setting is a broken config file too.
+ * The validation runs even when the environment chooses the store — the
+ * environment decides *where* the secrets go, not whether the config file of
+ * the user is a valid one.
  */
 async function readCredentialStorage(): Promise<CredentialStorage> {
+  const config = await readConfigFile();
+
   const fromEnv = process.env[CREDENTIAL_STORAGE_ENV]?.trim().toLowerCase();
   if (fromEnv) return parseCredentialStorage(fromEnv, CREDENTIAL_STORAGE_ENV);
 
+  return config?.credentialStorage ?? 'auto';
+}
+
+/**
+ * The validated config file — `undefined` when there is none.
+ *
+ * The file is read and validated as a whole: a missing file is the default, a
+ * broken one an error.
+ */
+async function readConfigFile(): Promise<Partial<AppConfig> | undefined> {
   const configPath = getConfigPath();
   let raw: string;
   try {
@@ -572,7 +587,7 @@ async function readCredentialStorage(): Promise<CredentialStorage> {
     // No config file — the default. Every other error is a broken config
     // file, and a broken config file is an error (`loadConfig` reports the
     // same way — but the secrets commands do not run it).
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'auto';
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new Error(`Cannot read config file ${configPath}: ${message(error)}`);
   }
 
@@ -589,17 +604,14 @@ async function readCredentialStorage(): Promise<CredentialStorage> {
     );
   }
 
-  let config: Partial<AppConfig>;
   try {
-    config = validateConfig(parsed, configPath);
+    return validateConfig(parsed, configPath);
   } catch (error) {
     throw new Error(
       `${message(error)} The store of the secrets is not chosen while the config file is broken — ` +
         `repair it, then try again.`,
     );
   }
-
-  return config.credentialStorage ?? 'auto';
 }
 
 /** The store of the data directory of this run. */

@@ -51,8 +51,10 @@ measured in [docs/refactor-3-8-camoufox.md](refactor-3-8-camoufox.md) and
 - the stealth script fakes Chromium-only APIs and would have to be disabled for Firefox,
 - Camoufox can neither carry SOCKS credentials nor serve a persistent context to the daemon.
 
-Supported platforms (the CloakBrowser matrix): Linux x86_64/arm64, macOS arm64/x86_64, Windows
-x86_64. Node ≥ 22 (or Bun ≥ 1.3).
+Supported platform: **Linux x86_64/arm64** — the lock of the browser profiles and of the secrets store
+is an abstract unix socket, and only the kernel of Linux provides one. The CloakBrowser build also
+ships for macOS arm64/x86_64 and Windows x86_64, but the project does not run there. Node ≥ 22 (or
+Bun ≥ 1.3).
 
 The proxy contract is documented in [docs/config-contract.md](config-contract.md): HTTP(S) with and
 without Basic auth, SOCKS5 without credentials; **SOCKS with credentials is rejected** — Chromium
@@ -65,7 +67,7 @@ would have to authenticate through the URL in its command line.
 | Live provider round trips | **skipped** | they need a browser and an authorized session; the CI job must not need secrets, so the scenarios are opt-in (`TEN_X_CHAT_E2E_PROVIDERS=1`, workflow `.github/workflows/e2e.yml`) |
 | Grok, Perplexity in the readiness matrix | **unverified** | they are not part of the matrix of PR #14 (no authorized Grok session; Perplexity does not submit through its web UI in that environment) — no claim is made about them |
 | DeepSeek | **new, unmeasured** | DeepSeek was added in [#7](https://github.com/gazon1/10x-chat/issues/7) and has an end-to-end scenario, but no authorized session was available for the run |
-| Windows / macOS hosts | **not exercised** | the checks ran on Linux; the browser build supports them |
+| Windows / macOS hosts | **not supported** | the checks ran on Linux, and the lock of the browser profiles and of the secrets store is an abstract unix socket — Linux only. The browser build supports those hosts; the project does not |
 | npm registry name `10x-chat` | **taken by upstream** | the fork cannot be published under that name; the metadata now points at `gazon1/10x-chat`, the install instructions use the repository, and the release job needs a free name (open decision of the maintainer). Until that name is chosen, the `npm publish` step in `.github/workflows/release.yml` is disabled (`if: false`), so a `v*` tag still produces a GitHub Release instead of failing at the publish step |
 | `SPEC.md` | **historical** | it is the original design document and still describes the removed NotebookLM/Flow/Dreamina integrations and the per-provider profiles of the first version; the current contract lives in `README.md` and `docs/config-contract.md` |
 | `docs/refactor-baseline.md`, `spike/` | **historical** | they describe the state before the refactoring, including the removed integrations |
@@ -254,7 +256,7 @@ behind.
 | The validation of the names | **verified (unit)** | `assertSecretName()` runs on **every** operation of the store — `get`, `set`, `remove` of the file and of the keyring — and on the names that are read from `secrets.json`; a file with a name that is not allowed is a corrupt store (`tests/secrets.test.ts`, `tests/keyring.test.ts`); `__proto__`, `constructor` and `toString` stay ordinary secrets |
 | The name before the value | **verified (unit)** | `tests/secrets-cli.test.ts` — the CLI checks the name **before** it asks for the value: a password that could not be stored is not typed in |
 | The name and a line terminator | **verified (unit)** | every character of a name is checked, so a trailing `\n`, `\r` or `\r\n` is refused — by the input of the user and by the listing of the keyring (`tests/secrets.test.ts`, `tests/keyring.test.ts`) |
-| A broken config file | **verified (unit + e2e)** | only a **missing** config file falls back to the default; a config file that cannot be read, cannot be parsed or does not hold an object is an error — `secrets set` refuses to run instead of switching the store to the plaintext file (`tests/secrets.test.ts`, `tests/e2e/cli.e2e.ts`) |
+| A broken config file | **verified (unit + e2e)** | only a **missing** config file falls back to the default; a config file that cannot be read, cannot be parsed, carries an unknown key or an invalid setting is an error — also when `TEN_X_CHAT_CREDENTIAL_STORAGE` chooses the backend. `secrets set` refuses to run instead of switching the store to the plaintext file (`tests/secrets.test.ts`, `tests/e2e/cli.e2e.ts`) |
 | The proxy in a real browser | **not verified against a site** | the daemon and the isolated browser read the same store, but no run against a real proxy was made |
 | The permissions on Windows | **not applicable** | NTFS ignores the POSIX modes — the protection comes from the rights of the user profile (documented in [docs/secrets.md](secrets.md)) |
 | The system keyring | **verified (unit)** | `tests/keyring.test.ts` — the store keeps the names and the values in the keyring, the entries of another program are ignored, an invalid name is refused (`src/keyring.ts` pins the entries to the Secret Service — the kernel keyring is not used: it cannot enumerate its entries) |

@@ -17,8 +17,11 @@ https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-cha
 | Requirement | Version |
 |---|---|
 | Node.js | ≥ 22 (or Bun ≥ 1.3) |
-| OS | Linux x86_64/arm64, macOS arm64/x86_64, Windows x86_64 (the CloakBrowser platform matrix) |
+| OS | Linux x86_64/arm64 — the supported platform (see the note below) |
 | Display | only for the headed mode — the headed mode is the default for ChatGPT, Claude and Perplexity |
+
+> [!NOTE]
+> **Linux only.** The browser build of CloakBrowser also ships for macOS and Windows, but 10x-chat does not run there: the lock that guards the browser profiles and the secrets store is an **abstract unix socket**, and only the kernel of Linux provides one. On macOS and Windows every launch of a browser and every command that touches the store fails with `The lock of 10x-chat is an abstract unix socket — it works on Linux only.`
 
 No system Chromium is needed: the `postinstall` step of the package downloads the CloakBrowser build into `~/.cloakbrowser/`.
 

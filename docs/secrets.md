@@ -77,7 +77,8 @@ The setting `credentialStorage` in the config file chooses the backend:
 
 The environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` (`auto`, `keyring`,
 `file`) overrides the config file — it is the escape hatch for a machine
-without a secret service and for the tests.
+without a secret service and for the tests. It overrides the **setting**, not
+the validation: a broken config file is an error in every case (see below).
 
 `auto` falls back to the file **silently** — a server without a desktop
 session has no Secret Service. `10x-chat secrets list` shows which backend is
@@ -87,7 +88,8 @@ in use; a run that must not write a secret to a file has to say `keyring`.
 
 The config file chooses the backend, so it has to be readable. **Only a
 missing config file** falls back to the default (`auto`). A config file that
-cannot be read, cannot be parsed or does not hold an object is an **error**:
+cannot be read, cannot be parsed or does not hold a valid config is an
+**error**:
 
 ```
 Invalid config file ~/.10x-chat/config.json: cannot be parsed — JSON5: invalid
@@ -105,7 +107,10 @@ the store (`secrets set`, `secrets list`, `secrets remove`) do not run
 validate the **whole** config file (the same validation as `loadConfig()`): a
 config file with a typo in another setting (`"credentialStorag"`) or with an
 invalid value (`"headless": "yes"`) is a broken config file too, and it is
-refused before the store is chosen.
+refused before the store is chosen. The validation runs even when
+`TEN_X_CHAT_CREDENTIAL_STORAGE` chooses the backend: the environment decides
+*where* the secrets go, not whether the config file of the user is a valid
+one.
 
 ## The keyring
 
@@ -116,13 +121,16 @@ by the other processes of the machine.
 
 The platform limits:
 
-- **Linux is the supported platform** (the Secret Service). On macOS and
-  Windows the same adapter would use the keychain of the system (the native
-  module ignores the Linux-only option there) — it is not tested and not
-  supported.
+- **Linux is the supported platform** — for the whole project, not only for the
+  keyring. The lock that guards this store (and the browser profiles) is an
+  **abstract unix socket**: only the kernel of Linux provides one, so on macOS
+  and Windows every command that touches the store fails with `The lock of
+  10x-chat is an abstract unix socket — it works on Linux only.`
 - The **Secret Service** is the only backend. The kernel keyring
   (`keyutils`) is not used: it does not survive a reboot and it cannot list its
-  entries — and the store needs to list them.
+  entries — and the store needs to list them. On macOS and Windows the same
+  adapter would use the keychain of the system (the native module ignores the
+  Linux-only option there) — it is not tested and not supported.
 - The Secret Service must be **unlocked** in the desktop session. A locked
   keyring makes the command fail with the error of the keyring, not with an
   empty value.
@@ -224,7 +232,9 @@ variables are dropped from the environment of the browser. The daemon stores a
 
 ## The file and its permissions
 
-The file store is the fallback — it holds **plaintext** secrets.
+The file store is the fallback — it holds **plaintext** secrets. It runs on
+Linux only (the lock of the store is an abstract unix socket); the table below
+shows what the modes mean on Unix and what they would mean on Windows.
 
 | | Unix | Windows |
 |---|---|---|
