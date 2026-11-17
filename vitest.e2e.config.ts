@@ -9,6 +9,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['tests/e2e/**/*.e2e.ts'],
+    setupFiles: ['tests/setup.ts'],
     testTimeout: 5 * 60 * 1000,
     hookTimeout: 5 * 60 * 1000,
     // The scenarios drive one browser and one CLI at a time.

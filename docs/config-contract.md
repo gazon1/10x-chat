@@ -24,7 +24,8 @@ the environment.
 | Timeout | `--timeout` | `defaultTimeoutMs` (chat only) | the default of the command/provider |
 | Headless | `--headed` / `--headless` | `headless` | `true` (a provider that needs a visible browser always runs headed) |
 | Profile mode | `--profile` / `--isolated-profile` | `profileMode` | `shared` |
-| Proxy | — | `proxy` | the environment (§5) |
+| Proxy | — | `proxy` (§5) | the environment (§5) |
+| API key of a provider | — | `providerKeys.<provider>` (a name, §6) | none |
 
 A CLI flag that is **not given** does not shadow the config file. This is why
 `--timeout` has no default value: a flag with a default would always win over
@@ -63,6 +64,8 @@ change the other commands.
   defaultTimeoutMs: 300000,     // optional, positive number
   headless: true,               // boolean
   profileMode: 'shared',        // shared | isolated
+  providerKeys: { chatgpt: 'openai-key' },  // optional, names of secrets (§6)
+  credentialStorage: 'auto',    // optional, auto | keyring | file (§6)
   proxy: {                      // optional, see §5
     enabled: true,
     server: 'http://proxy.example:3128',
@@ -72,9 +75,14 @@ change the other commands.
 ```
 
 `10x-chat config set <key> <value>` writes the same keys:
-`provider`, `model`, `timeout`, `headless`, `profile-mode`. The proxy is not
-one of them: it is written into the config file by hand, because its
-credentials live in another file (§5).
+`provider`, `model`, `timeout`, `headless`, `profile-mode`, `provider-key`,
+`credential-storage`.
+`10x-chat config unset <key>` removes `provider-key` and `credential-storage`
+again. The proxy is not one of them: it is written into the config file by
+hand, because its credentials live in another file (§5).
+
+`providerKeys` holds **names**, never values: the values live in the secrets
+store ([docs/secrets.md](secrets.md)).
 
 ### What is an error
 
@@ -88,6 +96,7 @@ loudly, with the path of the file and the problem in it:
 | Broken JSON/JSON5 | `Invalid config file <path>: cannot be parsed — …` |
 | Unknown key | `Invalid config file <path>: unknown key "…" (known keys: …)` |
 | Invalid value | `Invalid config file <path>: "headless" must be true or false (got "yes")` |
+| Reference to a secret that is not stored | `Invalid config file <path>: No secret named "…" (config key "providerKeys.chatgpt"). Create it with: 10x-chat secrets set …` |
 
 An unknown key is an error on purpose: `profile_mod` would otherwise be
 silently ignored and the profile mode would stay what it was.
@@ -187,6 +196,8 @@ be broken otherwise.
 
 ## 5. The proxy
 
+## 5. The proxy
+
 The proxy comes from the config file, from the environment, or from nowhere —
 in that order:
 
@@ -206,8 +217,8 @@ and are tested as such:
 The proxy of the config file reaches the browser in every mode: the shared
 daemon, the persistent context of the shared profile and the persistent
 context of an isolated or named profile. The daemon is a separate process, and
-it resolves the proxy itself — from the same config file and the same
-environment as the invocation that started it.
+it resolves the proxy itself — from the same config file, the same secrets
+store and the same environment as the invocation that started it.
 
 ### The config file
 
@@ -222,32 +233,30 @@ environment as the invocation that started it.
 ```
 
 `server` is the proxy URL **without** credentials. A URL that carries them is
-rejected — the credentials belong into the secrets file. The check runs
+rejected — the credentials belong into the secrets store. The check runs
 whenever the field is present, also when the proxy is switched off: a
 disabled proxy is not used, but its credentials would still sit in a
 plaintext config file. `bypass` is the list of the hosts that must not go
 through the proxy; it replaces `NO_PROXY` while the config file names a
 proxy.
 
-### The secrets file
+### The credentials
 
-The credentials live in `~/.10x-chat/secrets.json` (JSON5), next to the config
-file:
+The credentials of the proxy live in the secrets store, not in the config
+file — under the names `proxy.username` and `proxy.password`:
 
-```json5
-{
-  proxy: {
-    username: 'proxy-user',
-    password: '…',
-  },
-}
+```bash
+10x-chat secrets set proxy.username   # asks for the value, input hidden
+10x-chat secrets set proxy.password
 ```
 
-The file must not be readable by other users of the machine (`chmod 600`): a
-secrets file that every local process can read is a password in the open. A
-missing file is not an error — a proxy without credentials works. A broken one
-is: a password that is silently dropped would send the browser through a proxy
-that cannot authenticate it. No error message ever names a value.
+The file of the store (`~/.10x-chat/secrets.json`, JSON5) must not be readable
+by other users of the machine (`chmod 600`): a secrets file that every local
+process can read is a password in the open. A missing file is not an error — a
+proxy without credentials works. A broken one is: a password that is silently
+dropped would send the browser through a proxy that cannot authenticate it.
+No error message ever names a value. The whole contract of the store is in
+[docs/secrets.md](secrets.md).
 
 ### The variables and their order
 
@@ -306,7 +315,9 @@ The userinfo of the proxy URL is split off the server URL:
   as its command line;
 - the **logs and the debug artifacts** redact the userinfo of every URL
   (`redactText()`), and the fingerprint of the proxy in the state file of the
-  daemon is a hash — the password never leaves the process that read it.
+  daemon is a hash — the password never leaves the process that read it;
+- a proxy from the **secrets store** is read by the process that launches the
+  browser and is never written into the environment of that process.
 
 ### Changing the proxy
 
@@ -317,3 +328,21 @@ restarts it: an idle daemon is stopped and started again with the new proxy,
 a daemon that still serves the session of another process is never stopped —
 the run fails with an error instead (§3). A run in the isolated mode launches
 its own browser and always uses the current proxy.
+
+## 6. Secrets
+
+The config file refers to secrets by **name**; the values live in the secrets
+store — the system keyring (the Secret Service of the desktop session) or the
+file `~/.10x-chat/secrets.json` (`0600` on Unix). The setting
+`credentialStorage` chooses the backend (`auto` — the keyring when it is
+reachable, the file otherwise; `keyring` — the keyring only; `file` — the file
+only); the environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it.
+The store, the CLI (`10x-chat secrets …`), the permissions, the platform limits
+and the rotation are documented in [docs/secrets.md](secrets.md).
+
+| Situation | Result |
+|---|---|
+| The secret is stored | the run uses the value |
+| The secret is not stored | `Invalid config file <path>: No secret named "…" (config key "…")` |
+| The store is broken | `Secrets file <path> is corrupt — …` — never an empty value |
+| The keyring is required but not reachable | `The system keyring (Secret Service) is not available: …` |

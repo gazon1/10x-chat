@@ -14,6 +14,7 @@ import { createImageCommand } from '../cli/image.js';
 import { createLoginCommand } from '../cli/login.js';
 import { createMigrateCommand } from '../cli/migrate.js';
 import { createResearchCommand } from '../cli/research.js';
+import { createSecretsCommand } from '../cli/secrets.js';
 import { createSkillCommand } from '../cli/skill.js';
 import { createSessionCommand, createStatusCommand } from '../cli/status.js';
 
@@ -53,6 +54,7 @@ program.addCommand(createResearchCommand());
 program.addCommand(createStatusCommand());
 program.addCommand(createSessionCommand());
 program.addCommand(createConfigCommand());
+program.addCommand(createSecretsCommand());
 program.addCommand(createSkillCommand());
 program.addCommand(createMigrateCommand());
 

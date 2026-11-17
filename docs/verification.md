@@ -203,3 +203,59 @@ after a login that would not help.
 
 The check set after the fix: typecheck, lint, test (33 files / 329 tests), e2e (7 CLI scenarios) and
 build all pass.
+
+## 10. Issue #24 — the secrets store
+
+The change of [#24](https://github.com/gazon1/10x-chat/issues/24) (branch
+`add-secure-persistent-storage-for-provider-and-p`) adds the store for the credentials: the
+**system keyring** (the Secret Service of the desktop session) with the file
+`~/.10x-chat/secrets.json` (`0600` on Unix, the directory `0700`) as the fallback, atomic writes,
+a CLI (`10x-chat secrets set|remove|list`) that never prints a value, and references in the
+config file (`providerKeys`) instead of the values themselves.
+
+The backend is chosen by `credentialStorage` in the config file (`auto` — the keyring when it is
+reachable, the file otherwise; `keyring` — the keyring only; `file` — the file only); the
+environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. The secrets of a store that
+was created before the keyring existed are migrated on the first use: they are written into the
+keyring, read back and compared — only then the file is deleted.
+
+The store and the proxy settings of [#34](https://github.com/gazon1/10x-chat/pull/34) share one
+store: the proxy itself is configured in the config file (the section `proxy`), its credentials
+are the two secrets `proxy.username` and `proxy.password`. The file format of #34
+(`{ "proxy": { "username": …, "password": … } }`) is still read.
+
+The lock of the store protects the read-modify-write cycle. A file-based lock cannot hold it: a
+lock whose owner died must be taken away, and that step has a race of its own — two processes can
+read the same stale lock, and the second one removes the lock that the first one has already
+created; both enter the critical section and one update is lost. Taking a dead lock over means
+replacing the file at the path, and no filesystem offers "replace it, but only if the dead lock is
+still there" as one step. The lock is therefore an **abstract unix socket** (Linux): the kernel
+gives the name to exactly one process, takes it away when the holder dies, and leaves no file
+behind.
+
+| Item | State | Notes |
+|---|---|---|
+| Set / get / remove / list | **verified (unit)** | `tests/secrets.test.ts` — the secret survives a new store instance (a later invocation), a name is replaced, an unknown name is reported |
+| The permissions | **verified (unit)** | the file is `0600`, the directory `0700` (Unix; the test skips itself on Windows and for root) — an already existing directory is tightened to `0700` as well; a directory that cannot be tightened **refuses the write** (`tests/secrets-directory.test.ts`) |
+| The atomic write | **verified (unit)** | no temp file is left behind, the file is complete JSON |
+| Parallel writes | **verified (unit)** | two writes at the same time keep both secrets — in one process and in two separate processes (the read-modify-write cycle is guarded by the lock of the store) |
+| A broken store | **verified (unit)** | a corrupt file is an error that names the file — never an empty value |
+| The redaction | **verified (unit)** | `redactSecretValues()` replaces every known value (the longest first); `config show` uses it |
+| The missing reference | **verified (unit)** | the error names the secret and the config key (`providerKeys.chatgpt`), never a value |
+| The CLI flow | **verified (e2e)** | `tests/e2e/cli.e2e.ts` — the value is written through stdin, `secrets list` prints the name only, `config show` prints no value, the secret is removed again |
+| The proxy from the store | **verified (unit)** | `tests/secrets.test.ts` — the credentials of the config file come from the store (`proxy.username`, `proxy.password`), the environment is the fallback without a `proxy` section |
+| The old file format | **verified (unit)** | `tests/secrets.test.ts` — the format of #34 is read and mapped onto the two secrets |
+| The names of the secrets | **verified (unit)** | `tests/secrets.test.ts` — `__proto__` is stored and read back as a secret, an inherited property (`toString`, `constructor`) reads as missing |
+| The proxy in a real browser | **not verified against a site** | the daemon and the isolated browser read the same store, but no run against a real proxy was made |
+| The permissions on Windows | **not applicable** | NTFS ignores the POSIX modes — the protection comes from the rights of the user profile (documented in [docs/secrets.md](secrets.md)) |
+| The system keyring | **verified (unit)** | `tests/keyring.test.ts` — the store keeps the names and the values in the keyring, the entries of another program are ignored, an invalid name is refused (`src/keyring.ts` pins the entries to the Secret Service — the kernel keyring is not used: it cannot enumerate its entries) |
+| The real Secret Service | **verified (unit, on a machine with a keyring)** | the same test writes, reads and deletes an entry in the Secret Service of the desktop session; the test skips itself on a machine without one (a CI runner) |
+| The choice of the backend | **verified (unit)** | `auto` falls back to the file when the keyring is not reachable, `keyring` fails instead of falling back, `file` never touches the keyring; the environment overrides the config file; an unknown value is an error |
+| The migration into the keyring | **verified (unit)** | the secrets of the file are written into the keyring, read back and compared — the file is deleted only then; a migration that cannot be verified keeps the file and fails |
+| The migration under the lock | **verified (unit, two processes)** | the whole cycle — read the file, write the keyring, verify, delete — runs under the lock of the store; two processes that migrate at the same time write the secret **once** (the second one reads the file again inside the lock and finds it gone) — `tests/keyring.test.ts` runs two real processes |
+| The privacy of the directory on a read | **verified (unit)** | the mode of the directory is enforced before every read as well: a directory that cannot be made private refuses the read (`tests/secrets-directory.test.ts`), a wide directory is tightened before the secrets are read (`tests/secrets.test.ts`) |
+| The input of the value | **verified (unit + e2e)** | a piped stdin is read as is (only the trailing newline is dropped) — `tests/secrets-cli.test.ts` and `tests/e2e/cli.e2e.ts`; a terminal asks with the echo switched off (`@inquirer/prompts`, the same call is asserted in `tests/secrets-cli.test.ts`); in a real pty the value is stored and never appears in the output |
+| The lock of the store | **verified (unit, three processes)** | the lock is an abstract unix socket: three processes that take the same lock enter their critical sections one after the other (`tests/lock.test.ts`); a lock of a living process is not taken, and the lock of a killed holder is free at once — the kernel gives the name back |
+
+The check set of that change: typecheck, lint, test (39 files / **413 tests**), e2e (9 CLI
+scenarios, the 7 live provider scenarios skipped) and build — all pass.

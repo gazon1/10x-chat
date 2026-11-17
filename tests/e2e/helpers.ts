@@ -27,8 +27,14 @@ export function stripAnsi(value: string): string {
  * The CLI is started with `node --import tsx`, so the suite exercises the real
  * entry point (the same code the built `dist/` runs) without needing a build
  * step first.
+ *
+ * @param input what is written to the stdin of the CLI (and closed)
  */
-export function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+export function runCli(
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+  input?: string,
+): Promise<CliResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.env.NODE_BINARY ?? 'node',
@@ -53,6 +59,9 @@ export function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Cli
       const err = clean(stderr);
       resolve({ code: code ?? -1, stdout: out, stderr: err, output: out + err });
     });
+    if (input !== undefined) {
+      child.stdin.end(input);
+    }
   });
 }
 

@@ -3,8 +3,20 @@ import path from 'node:path';
 import { type BrowserProxy, proxyFromEnv, validateProxyServer } from './browser/proxy.js';
 import { getConfigPath } from './paths.js';
 import { isValidProvider, listProviders } from './providers/index.js';
-import { loadSecrets } from './secrets.js';
-import { type AppConfig, DEFAULT_CONFIG, type ProfileMode, type ProxyConfig } from './types.js';
+import {
+  getSecretStore,
+  PROXY_PASSWORD_SECRET,
+  PROXY_USERNAME_SECRET,
+  parseCredentialStorage,
+  requireSecret,
+} from './secrets.js';
+import {
+  type AppConfig,
+  DEFAULT_CONFIG,
+  type ProfileMode,
+  type ProviderName,
+  type ProxyConfig,
+} from './types.js';
 
 /**
  * The keys of the config file. Every other key is an error — a typo like
@@ -16,7 +28,9 @@ export const CONFIG_KEYS = [
   'defaultTimeoutMs',
   'headless',
   'profileMode',
+  'providerKeys',
   'proxy',
+  'credentialStorage',
 ] as const;
 
 /** The keys of the proxy section of the config file. */
@@ -37,7 +51,7 @@ function configError(configPath: string, problem: string): Error {
  * Validate the proxy section of the config file.
  *
  * The credentials are not part of the config file — they live in the secrets
- * file. A server URL that carries them is rejected: the error names the
+ * store. A server URL that carries them is rejected: the error names the
  * problem, never the URL (the URL can carry the password).
  */
 function validateProxyConfig(raw: unknown, configPath: string): ProxyConfig {
@@ -136,7 +150,7 @@ export function validateConfig(raw: unknown, configPath: string): Partial<AppCon
       throw configError(
         configPath,
         `"defaultTimeoutMs" must be a positive number of milliseconds ` +
-          `(got ${JSON.stringify(timeout)})`,
+          `(got ${JSON.stringify(parsed.defaultTimeoutMs)})`,
       );
     }
     config.defaultTimeoutMs = timeout;
@@ -166,11 +180,73 @@ export function validateConfig(raw: unknown, configPath: string): Partial<AppCon
     config.profileMode = parsed.profileMode as ProfileMode;
   }
 
+  if (parsed.providerKeys !== undefined) {
+    const keys = parsed.providerKeys;
+    if (typeof keys !== 'object' || keys === null || Array.isArray(keys)) {
+      throw configError(
+        configPath,
+        '"providerKeys" must be an object with the provider names as keys',
+      );
+    }
+    const providerKeys: Partial<Record<ProviderName, string>> = {};
+    for (const [provider, secret] of Object.entries(keys)) {
+      if (!isValidProvider(provider)) {
+        throw configError(
+          configPath,
+          `"providerKeys" has an unknown provider "${provider}" ` +
+            `(known providers: ${listProviders().join(', ')})`,
+        );
+      }
+      if (typeof secret !== 'string' || !secret.trim()) {
+        throw configError(
+          configPath,
+          `"providerKeys.${provider}" must be the name of a secret (a non-empty string)`,
+        );
+      }
+      providerKeys[provider as ProviderName] = secret;
+    }
+    config.providerKeys = providerKeys;
+  }
+
   if (parsed.proxy !== undefined) {
     config.proxy = validateProxyConfig(parsed.proxy, configPath);
   }
 
+  if (parsed.credentialStorage !== undefined) {
+    try {
+      config.credentialStorage = parseCredentialStorage(parsed.credentialStorage);
+    } catch (error) {
+      throw configError(configPath, message(error));
+    }
+  }
+
   return config;
+}
+
+/**
+ * Check that every secret the config refers to is stored.
+ *
+ * A reference to a secret that does not exist is a configuration error: the
+ * run would fail later with a much worse message. The error names the
+ * reference and the provider — never the value of the secret.
+ */
+async function validateSecretReferences(
+  config: Partial<AppConfig>,
+  configPath: string,
+): Promise<void> {
+  const store = getSecretStore();
+  const references: [string, string][] = [];
+  for (const [provider, name] of Object.entries(config.providerKeys ?? {})) {
+    references.push([name, `config key "providerKeys.${provider}"`]);
+  }
+
+  for (const [name, context] of references) {
+    try {
+      await requireSecret(store, name, context);
+    } catch (error) {
+      throw configError(configPath, message(error));
+    }
+  }
 }
 
 /**
@@ -180,7 +256,8 @@ export function validateConfig(raw: unknown, configPath: string): Partial<AppCon
  * file with `proxy.enabled: false` switches the proxy off completely — the
  * environment is *not* used as a fallback then.
  *
- * The credentials come from the secrets file, never from the config file.
+ * The credentials come from the secrets store (`proxy.username` and
+ * `proxy.password`), never from the config file.
  *
  * @param env the environment to read (the process environment by default)
  * @returns the proxy, or `null` when there is none
@@ -188,7 +265,9 @@ export function validateConfig(raw: unknown, configPath: string): Partial<AppCon
 export async function resolveEffectiveProxy(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<BrowserProxy | null> {
-  const config = await loadConfig();
+  // The secret references are not checked here: a missing API key of a
+  // provider must not keep the browser from starting.
+  const config = await loadConfig({ checkSecrets: false });
 
   if (config.proxy) {
     if (!config.proxy.enabled) return null;
@@ -200,13 +279,15 @@ export async function resolveEffectiveProxy(
       );
     }
 
-    const secrets = await loadSecrets();
+    const store = getSecretStore();
+    const username = await store.get(PROXY_USERNAME_SECRET);
+    const password = await store.get(PROXY_PASSWORD_SECRET);
     const bypass = (config.proxy.bypass ?? []).join(',');
     return {
       server,
       ...(bypass ? { bypass } : {}),
-      ...(secrets.proxy?.username ? { username: secrets.proxy.username } : {}),
-      ...(secrets.proxy?.password ? { password: secrets.proxy.password } : {}),
+      ...(username ? { username } : {}),
+      ...(password ? { password } : {}),
     };
   }
 
@@ -219,8 +300,11 @@ export async function resolveEffectiveProxy(
  * A missing file yields the built-in defaults — that is the only case that
  * falls back. An unreadable or invalid file is an error that names the file
  * and the problem (see `docs/config-contract.md`).
+ *
+ * @param options `checkSecrets: false` skips the check of the secret
+ *   references — used by the commands that repair the config
  */
-export async function loadConfig(): Promise<AppConfig> {
+export async function loadConfig(options: { checkSecrets?: boolean } = {}): Promise<AppConfig> {
   const configPath = getConfigPath();
 
   let raw: string;
@@ -242,7 +326,11 @@ export async function loadConfig(): Promise<AppConfig> {
     throw configError(configPath, `cannot be parsed — ${message(error)}`);
   }
 
-  return { ...DEFAULT_CONFIG, ...validateConfig(parsed, configPath) };
+  const config = { ...DEFAULT_CONFIG, ...validateConfig(parsed, configPath) };
+  if (options.checkSecrets !== false) {
+    await validateSecretReferences(config, configPath);
+  }
+  return config;
 }
 
 /** Save the config to disk (atomic write: temp file + rename). */

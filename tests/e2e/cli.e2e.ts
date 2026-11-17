@@ -20,6 +20,7 @@ describe('cli flows', () => {
       'status',
       'session',
       'config',
+      'secrets',
       'skill',
       'migrate',
     ]) {
@@ -84,6 +85,52 @@ describe('cli flows', () => {
     await withTempHome(async (home) => {
       const result = await runCli(['migrate', '--dry-run'], { TEN_X_CHAT_HOME: home });
       expect(result.code).toBe(0);
+    });
+  });
+
+  it('stores a secret, lists its name and removes it again', async () => {
+    await withTempHome(async (home) => {
+      const value = 'sk-do-not-print-me';
+      const env = { TEN_X_CHAT_HOME: home };
+
+      const set = await runCli(['secrets', 'set', 'openai-key'], env, value);
+      expect(set.code).toBe(0);
+      expect(set.output).not.toContain(value);
+
+      const list = await runCli(['secrets', 'list'], env);
+      expect(list.code).toBe(0);
+      expect(list.output).toContain('openai-key');
+      expect(list.output).not.toContain(value);
+
+      // The secret is still there in the next invocation.
+      const show = await runCli(['config', 'show'], env);
+      expect(show.code).toBe(0);
+      expect(show.output).not.toContain(value);
+
+      const remove = await runCli(['secrets', 'remove', 'openai-key'], env);
+      expect(remove.code).toBe(0);
+
+      const empty = await runCli(['secrets', 'list'], env);
+      expect(empty.output).not.toContain('openai-key');
+    });
+  });
+
+  it('refuses a config file that refers to a secret that does not exist', async () => {
+    await withTempHome(async (home) => {
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+      await mkdir(home, { recursive: true });
+      await writeFile(
+        path.join(home, 'config.json'),
+        JSON.stringify({ providerKeys: { chatgpt: 'openai-key' } }),
+      );
+
+      const result = await runCli(['config', 'show'], { TEN_X_CHAT_HOME: home });
+      expect(result.code).toBe(0);
+
+      const history = await runCli(['history'], { TEN_X_CHAT_HOME: home });
+      expect(history.code).toBe(1);
+      expect(history.output).toContain('No secret named "openai-key"');
     });
   });
 });
