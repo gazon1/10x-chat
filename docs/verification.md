@@ -272,3 +272,38 @@ behind.
 
 The check set of that change: typecheck, lint, test (39 files / **431 tests**), e2e (10 CLI
 scenarios, the 7 live provider scenarios skipped) and build — all pass.
+
+## 11. Issue #25 — the API transport
+
+The transport is chosen explicitly: `--transport browser|api`. The browser stays the
+default, so an existing run is not changed by the flag. The API path
+(`src/core/api-orchestrator.ts`) sends the prompt to the HTTP API of the provider with
+the key of `providerKeys.<provider>` — no browser, no login check, no profile. The
+session, the bundle and the response are the same files as in the browser run.
+
+The credential comes from the secrets store, the proxy from the effective proxy
+(`resolveEffectiveProxy()`) — the same one the browser uses. The key never reaches an
+error message: the value of the secret is replaced with `***` in the message of a
+failed run, and the headers of the request are never part of a message.
+
+A capability that the transport does not have is rejected, never ignored: an
+attachment in an API run fails the run instead of being dropped.
+
+| Item | State | Notes |
+|---|---|---|
+| The default | **verified (unit)** | `resolveTransport()` returns `browser` without the flag — the browser path of `runChat()` is untouched (`tests/api-transport.test.ts`) |
+| The selection | **verified (unit)** | `runChat({transport: 'api'})` runs the API path — no browser is started |
+| A fake transport | **verified (unit)** | the transport is an interface (`ApiTransport`) and the HTTP client is an interface (`ApiHttpClient`) — the test answers without a network and without a browser (`tests/api-transport.test.ts`) |
+| The credential | **verified (unit)** | the transport receives the key of the secrets store; the request of the DeepSeek transport carries it as `Authorization: Bearer …` (`tests/api-transport.test.ts`) |
+| A missing key | **verified (unit)** | the failure is a `missing-credential` — it names the config key (`providerKeys.deepseek`), never a value |
+| A non-2xx answer | **verified (unit)** | HTTP 401/403 is an `unauthorized`, HTTP 5xx an `unavailable`; the status is in the message |
+| A timeout | **verified (unit)** | the message names the timeout and the session is marked `timeout` |
+| A malformed answer | **verified (unit)** | a body that is not the expected JSON is an error, not an empty answer |
+| The redaction | **verified (unit)** | a key in the message of a failed run becomes `***` |
+| The proxy | **verified (unit)** | the client hands the effective proxy (server, user, password) to the request context of Playwright (`tests/api-http.test.ts`) |
+| The DeepSeek transport | **verified (unit)** | the model, the prompt and the credential are sent; an answer that the API cut off is marked as truncated (`tests/api-transport.test.ts`) |
+| A real API call | **not verified against a site** | no run against the API of a provider was made — a key of a provider is needed |
+| The browser transport | **verified (unit + e2e)** | the browser path is unchanged: the whole test suite and the CLI scenarios pass as before |
+
+The check set of that change: typecheck, lint, test (41 files / **451 tests**), e2e (10
+CLI scenarios, the 7 live provider scenarios skipped) and build — all pass.

@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import type { BrowserContext, Page } from 'playwright';
 import { saveStorageState } from '../browser/state.js';
-import type { Provider, ProviderName } from '../types.js';
+import type { Provider, ProviderName, TransportName } from '../types.js';
 
 /**
  * The failure kinds of a provider run.
@@ -10,7 +10,7 @@ import type { Provider, ProviderName } from '../types.js';
  * site block the browser, is the session gone, or is the site not there at
  * all?
  */
-export type FailureKind = 'antibot' | 'unauthorized' | 'unavailable';
+export type FailureKind = 'antibot' | 'unauthorized' | 'unavailable' | 'missing-credential';
 
 /** The site answered with a bot challenge (Cloudflare) instead of the app. */
 export class AntibotChallengeError extends Error {
@@ -36,11 +36,46 @@ export class SiteUnavailableError extends Error {
   }
 }
 
+/** No API key is configured for the provider. */
+export class MissingCredentialError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissingCredentialError';
+  }
+}
+
+/** The API of the provider answered with an error status. */
+export class ApiRequestError extends Error {
+  constructor(
+    /** The HTTP status of the answer. */
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
+/**
+ * The kind of a failed API request.
+ *
+ * The status decides what the user can do: a rejected key is a credential
+ * problem, a broken server is a site that is not there.
+ *
+ * @param status the HTTP status of the answer
+ */
+export function apiFailureKind(status: number): FailureKind | undefined {
+  if (status === 401 || status === 403) return 'unauthorized';
+  if (status >= 500) return 'unavailable';
+  return undefined;
+}
+
 /** The kind of a failure, or undefined when the error is not classified. */
 export function failureKind(error: unknown): FailureKind | undefined {
   if (error instanceof AntibotChallengeError) return 'antibot';
   if (error instanceof UnauthorizedError) return 'unauthorized';
   if (error instanceof SiteUnavailableError) return 'unavailable';
+  if (error instanceof MissingCredentialError) return 'missing-credential';
   return undefined;
 }
 
@@ -53,25 +88,37 @@ export function reclassify(kind: FailureKind, message: string): Error {
       return new UnauthorizedError(message);
     case 'unavailable':
       return new SiteUnavailableError(message);
+    case 'missing-credential':
+      return new MissingCredentialError(message);
   }
 }
 
-/** What the user can do about a failure. */
-export function failureHint(kind: FailureKind): string {
+/**
+ * What the user can do about a failure.
+ *
+ * @param kind the kind of the failure
+ * @param transport the transport of the run — an API run needs a key, not a
+ *   login, so the hint of the browser does not fit it
+ */
+export function failureHint(kind: FailureKind, transport?: TransportName): string {
   switch (kind) {
     case 'antibot':
       return 'The site showed a bot challenge. Run with --headed and complete the challenge in the browser window.';
     case 'unauthorized':
-      return 'The session is not authorized. Log in first: 10x-chat login <provider>';
+      return transport === 'api'
+        ? 'The provider rejected the API key. Check the key in the secrets store (see docs/secrets.md).'
+        : 'The session is not authorized. Log in first: 10x-chat login <provider>';
     case 'unavailable':
       return 'The site did not load. Check the network and the proxy.';
+    case 'missing-credential':
+      return 'No API key is configured for the provider. Create one with: 10x-chat secrets set <name> (see docs/secrets.md).';
   }
 }
 
 /** Print the hint of a classified failure — nothing for an unclassified one. */
-export function printFailureHint(error: unknown): void {
+export function printFailureHint(error: unknown, transport?: TransportName): void {
   const kind = failureKind(error);
-  if (kind) console.error(chalk.yellow(`Hint: ${failureHint(kind)}`));
+  if (kind) console.error(chalk.yellow(`Hint: ${failureHint(kind, transport)}`));
 }
 
 // ── Bot challenge ───────────────────────────────────────────────

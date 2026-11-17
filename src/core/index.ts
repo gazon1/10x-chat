@@ -1,3 +1,4 @@
+export { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
 export { buildBundle } from './bundle.js';
 export {
   AntibotChallengeError,

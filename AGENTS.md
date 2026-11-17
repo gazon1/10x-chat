@@ -10,6 +10,9 @@
 | `src/providers/registry.ts` | Provider name → config + actions mapping |
 | `src/providers/submit.ts` | Shared prompt submission helper (composer → type → send) |
 | `src/core/orchestrator.ts` | Single + parallel chat execution (`runChat`, `runChatAll`) |
+| `src/core/api-orchestrator.ts` | The same chat through the HTTP API of a provider (`runApiChat`) |
+| `src/transport/http.ts` | The shared HTTP client of the API transports (honors the effective proxy) |
+| `src/providers/api/` | The API transports of the providers (`registry.ts` maps a provider to its transport) |
 | `src/core/failures.ts` | Bot-challenge detection, failure kinds (`antibot`/`unauthorized`/`unavailable`) |
 | `src/core/polling.ts` | `pollUntilStable` — waits for streamed response to stop changing |
 | `src/core/bundle.ts` | Assembles prompt + file context into a markdown bundle |
@@ -103,6 +106,7 @@ Provider actions implement:
 - **The input of a secret**: a piped stdin is read as is, a terminal asks with the echo switched
   off (`@inquirer/prompts`, `password()`) — no patching of the private fields of `readline`
 - **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro
+- **The transport**: `--transport browser|api` (the browser is the default). The API transport (`src/core/api-orchestrator.ts`) sends the prompt to the HTTP API of the provider with the key of `providerKeys.<provider>` — no browser, no login check, no profile. A capability the transport does not have (attachments, streaming, cancellation) is **rejected**, never ignored. The key never reaches an error message (`redactSecretValues`) — see `docs/transports.md`
 
 ## Pre-Commit Checklist
 
