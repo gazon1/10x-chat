@@ -36,6 +36,14 @@ export interface BrowserSession {
   page: Page;
   /** Profile lock (only set in isolated mode; null in shared mode). */
   lock: ProfileLock | null;
+  /**
+   * The cookies of this session live in the shared storage-state.json.
+   *
+   * A persistent context (isolated or named profile) keeps its cookies in its
+   * own directory — those must never be written into the shared state, that
+   * would cross the boundary of the isolation.
+   */
+  sharedState: boolean;
   close: () => Promise<void>;
 }
 
@@ -166,6 +174,7 @@ async function launchSharedBrowser(opts: LaunchOptions): Promise<BrowserSession>
       context: session.context,
       page: session.page,
       lock: null,
+      sharedState: true,
       close,
     };
   } catch (error) {
@@ -253,7 +262,7 @@ async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<Brows
     }
   };
 
-  return { context, page, lock, close };
+  return { context, page, lock, sharedState: false, close };
 }
 
 /**
@@ -314,5 +323,5 @@ async function launchIsolatedBrowser(opts: LaunchOptions): Promise<BrowserSessio
     }
   };
 
-  return { context, page, lock, close };
+  return { context, page, lock, sharedState: false, close };
 }

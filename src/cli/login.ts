@@ -3,6 +3,11 @@ import { Command } from 'commander';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
+import {
+  AntibotChallengeError,
+  isChallengeVisible,
+  waitForChallengeToPass,
+} from '../core/failures.js';
 import { getProvider, isValidProvider, listProviders } from '../providers/index.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 
@@ -107,9 +112,12 @@ async function loginToProvider(
   try {
     // Anti-bot providers can close when probed during login. Just hold the
     // window open; cookies persist in the profile. Close it manually when done.
-    if (provider.config.headlessBlocked) {
+    if (provider.config.botProtected) {
       const timeoutMs = 10 * 60 * 1000;
       console.log(chalk.dim('Anti-bot login: not probing the page; close the window when done.'));
+      if (await isChallengeVisible(browser.page)) {
+        console.log(chalk.yellow('Bot challenge detected — complete it in the browser window.'));
+      }
       await browser.page.waitForTimeout(timeoutMs).catch(() => {});
       return;
     }
@@ -117,7 +125,7 @@ async function loginToProvider(
     // Wait for the user to login — poll until logged in or timeout
     const timeoutMs = 5 * 60 * 1000; // 5 minutes to login
     const startTime = Date.now();
-    let cloudflareNoted = false;
+    let challengeNoted = false;
 
     while (Date.now() - startTime < timeoutMs) {
       try {
@@ -127,20 +135,22 @@ async function loginToProvider(
           return;
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('Cloudflare bot-protection is blocking the browser')) {
-          if (!cloudflareNoted) {
-            cloudflareNoted = true;
+        if (error instanceof AntibotChallengeError) {
+          if (!challengeNoted) {
+            challengeNoted = true;
             console.log(
               chalk.yellow(
-                'Cloudflare challenge detected. Please complete it manually, then continue signing in.',
+                'Bot challenge detected. Please complete it manually in the browser window.',
               ),
             );
-            console.log(
-              chalk.dim('Window will keep retrying for up to 5 minutes while you finish login.'),
-            );
           }
-          await browser.page.waitForTimeout(2000);
+          // One bounded wait for the challenge to be solved — no retry loop.
+          const remaining = startTime + timeoutMs - Date.now();
+          const passed = await waitForChallengeToPass(browser.page, Math.max(remaining, 0));
+          if (!passed) {
+            console.log(chalk.yellow('The bot challenge was not solved in time.'));
+            return;
+          }
           continue;
         }
         throw error;
@@ -249,7 +259,7 @@ async function checkLoginStatus(
     try {
       const browser = await launchBrowser({
         provider: name,
-        headless: resolveHeadlessMode(name, configHeadless),
+        headless: resolveHeadlessMode(provider.config, configHeadless),
         url: provider.config.url,
         profileMode,
         profile,

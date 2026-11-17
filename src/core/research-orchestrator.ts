@@ -12,6 +12,7 @@ import { activateGeminiTool } from '../providers/gemini.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ProviderName, ResearchOptions, ResearchResult } from '../types.js';
+import { checkProviderSession, failureKind, reclassify } from './failures.js';
 import { commandTimeoutMs, RESEARCH_TIMEOUT_MS } from './timeout.js';
 
 /**
@@ -589,7 +590,7 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
 
   const timeoutMs = commandTimeoutMs(options.timeoutMs, RESEARCH_TIMEOUT_MS);
   const pollIntervalMs = options.pollIntervalMs ?? 5_000;
-  const headless = resolveHeadlessMode(providerName, config.headless, options.headed === true);
+  const headless = resolveHeadlessMode(provider.config, config.headless, options.headed === true);
   const profileMode = options.profile || options.isolatedProfile ? 'isolated' : config.profileMode;
 
   // Create session
@@ -630,12 +631,14 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
 
   try {
     stage = 'login-check';
-    const loggedIn = await provider.actions.isLoggedIn(browser.page);
-    if (!loggedIn) {
-      throw new Error(
-        `Not logged in to ${provider.config.displayName}. Run: 10x-chat login ${providerName}`,
-      );
-    }
+    await checkProviderSession({
+      page: browser.page,
+      context: browser.context,
+      provider,
+      providerName,
+      headless,
+      sharedState: browser.sharedState,
+    });
 
     if (options.model && provider.actions.selectModel) {
       stage = 'select-model';
@@ -760,6 +763,14 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
+    const kind = failureKind(error);
+    if (kind) {
+      // Keep the kind of the failure: the wrapper must not hide it.
+      throw reclassify(
+        kind,
+        `${(error as Error).message} (provider=${providerName} stage=${stage})`,
+      );
+    }
     throw browserError('Research operation failed', { ...op, stage }, error);
   } finally {
     await browser.close();

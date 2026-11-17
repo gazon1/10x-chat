@@ -7,6 +7,8 @@ import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { buildBundle } from './bundle.js';
+import type { FailureKind } from './failures.js';
+import { checkProviderSession, failureKind, reclassify } from './failures.js';
 import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
 import { chatModel } from './model.js';
@@ -51,7 +53,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
     provider.config.defaultTimeoutMs,
   );
   const headless = resolveHeadlessMode(
-    providerName,
+    provider.config,
     config.headless,
     options.headed === true,
     options.headless === true,
@@ -102,12 +104,14 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
 
   try {
     stage = 'login-check';
-    const loggedIn = await provider.actions.isLoggedIn(browser.page);
-    if (!loggedIn) {
-      throw new Error(
-        `Not logged in to ${provider.config.displayName}. Run: 10x-chat login ${providerName}`,
-      );
-    }
+    await checkProviderSession({
+      page: browser.page,
+      context: browser.context,
+      provider,
+      providerName,
+      headless,
+      sharedState: browser.sharedState,
+    });
 
     const modelName = chatModel(options.model, config.defaultModel, provider.config.defaultModel);
     if (modelName && provider.actions.selectModel) {
@@ -181,6 +185,14 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
+    const kind = failureKind(error);
+    if (kind) {
+      // Keep the kind of the failure: the wrapper must not hide it.
+      throw reclassify(
+        kind,
+        `${(error as Error).message} (provider=${providerName} stage=${stage})`,
+      );
+    }
     throw browserError('Chat operation failed', { ...op, stage }, error);
   } finally {
     await browser.close();
@@ -191,6 +203,17 @@ export interface ChatAllResult {
   provider: ProviderName;
   result?: ChatResult;
   error?: string;
+  /** The kind of the failure — the CLI turns it into a hint. */
+  kind?: FailureKind;
+}
+
+/** The result of a provider that failed in a parallel run. */
+export function failedChatAllResult(provider: ProviderName, error: unknown): ChatAllResult {
+  return {
+    provider,
+    error: error instanceof Error ? error.message : String(error),
+    kind: failureKind(error),
+  };
 }
 
 /**
@@ -207,10 +230,7 @@ export async function runChatAll(options: ChatOptions): Promise<ChatAllResult[]>
       const result = await runChat({ ...options, provider });
       return { provider, result };
     } catch (error) {
-      return {
-        provider,
-        error: error instanceof Error ? error.message : String(error),
-      };
+      return failedChatAllResult(provider, error);
     }
   });
 

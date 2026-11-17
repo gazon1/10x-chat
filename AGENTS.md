@@ -10,6 +10,7 @@
 | `src/providers/registry.ts` | Provider name → config + actions mapping |
 | `src/providers/submit.ts` | Shared prompt submission helper (composer → type → send) |
 | `src/core/orchestrator.ts` | Single + parallel chat execution (`runChat`, `runChatAll`) |
+| `src/core/failures.ts` | Bot-challenge detection, failure kinds (`antibot`/`unauthorized`/`unavailable`) |
 | `src/core/polling.ts` | `pollUntilStable` — waits for streamed response to stop changing |
 | `src/core/bundle.ts` | Assembles prompt + file context into a markdown bundle |
 | `src/browser/manager.ts` | Browser launch: shared (daemon), shared-persistent (login), isolated modes |
@@ -40,7 +41,8 @@ CLI (Commander)
 2. Add the name to `ProviderName` union in `src/types.ts`
 3. Register in `src/providers/registry.ts`
 4. Export from `src/providers/index.ts`
-5. If Cloudflare-protected: set `headlessBlocked: true` in config
+5. If Cloudflare-protected: set `botProtected: true` in config; if the provider only
+   works in a visible browser: set `requiresHeaded: true`
 
 Provider actions implement:
 - `isLoggedIn(page)` — detect auth state
@@ -50,7 +52,21 @@ Provider actions implement:
 
 ## Key Patterns
 
-- **headlessBlocked**: Providers using Cloudflare (ChatGPT, Perplexity) auto-force headed mode
+- **requiresHeaded**: A provider that only works in a visible browser runs headed — the
+  decision comes from `ProviderConfig`, not from a list of provider names
+- **botProtected**: A Cloudflare challenge is a state of its own (`src/core/failures.ts`),
+  not "not logged in": the user is asked to solve it in the window that is already open
+  (one attempt, 120 s), and the clearance cookie is saved for the next run
+- **One session check**: `checkProviderSession()` — chat, research, image, delegate and
+  history all go through it, so a challenge is solved and the session is saved everywhere;
+  only a shared run writes `storage-state.json` (`BrowserSession.sharedState`) — an isolated
+  or named profile keeps its cookies in its own directory
+- **A challenge that appears during the check**: `checkSession()` asks the page for a challenge
+  again after `isLoggedIn()` answered "not logged in" — most providers report a late interstitial
+  as a lost session, and it must stay an antibot failure, not an `unauthorized` one
+- **Failure kinds**: `antibot` / `unauthorized` / `unavailable` — `failureKind()` and
+  `failureHint()` turn them into a message the user can act on; `printFailureHint()` prints
+  it in every command
 - **Shared profile mode** (default): All providers share `~/.10x-chat/profiles/default/storage-state.json`
 - **Browser daemon**: `chromium.launchServer` persisted to disk for cross-CLI reuse
 - **Tab ref-counting**: Multiple CLI invocations share one Chromium; last tab stops the daemon

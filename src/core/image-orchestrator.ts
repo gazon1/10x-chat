@@ -7,6 +7,7 @@ import { loadConfig } from '../config.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { GeneratedImage, ImageGenOptions, ImageGenResult, ProviderName } from '../types.js';
+import { checkProviderSession, failureKind, reclassify } from './failures.js';
 import { downloadImages } from './images.js';
 import { commandTimeoutMs, IMAGE_TIMEOUT_MS } from './timeout.js';
 
@@ -242,7 +243,7 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
   }
 
   const timeoutMs = commandTimeoutMs(options.timeoutMs, IMAGE_TIMEOUT_MS);
-  const headless = resolveHeadlessMode(providerName, config.headless, options.headed === true);
+  const headless = resolveHeadlessMode(provider.config, config.headless, options.headed === true);
   const profileMode = options.isolatedProfile ? 'isolated' : config.profileMode;
 
   const session = await createSession(providerName, options.prompt);
@@ -278,12 +279,14 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
 
   try {
     stage = 'login-check';
-    const loggedIn = await provider.actions.isLoggedIn(browser.page);
-    if (!loggedIn) {
-      throw new Error(
-        `Not logged in to ${provider.config.displayName}. Run: 10x-chat login ${providerName}`,
-      );
-    }
+    await checkProviderSession({
+      page: browser.page,
+      context: browser.context,
+      provider,
+      providerName,
+      headless,
+      sharedState: browser.sharedState,
+    });
 
     // Snapshot images already present in the chat so old/generated history does not
     // get reported as output for this run.
@@ -381,6 +384,14 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,
     });
+    const kind = failureKind(error);
+    if (kind) {
+      // Keep the kind of the failure: the wrapper must not hide it.
+      throw reclassify(
+        kind,
+        `${(error as Error).message} (provider=${providerName} stage=${stage})`,
+      );
+    }
     throw browserError('Image generation failed', { ...op, stage }, error);
   } finally {
     await browser.close();

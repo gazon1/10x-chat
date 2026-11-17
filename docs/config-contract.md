@@ -21,7 +21,7 @@ and the proxy (§5).
 | Provider | `--provider` | `defaultProvider` | `chatgpt` |
 | Model | `--model` | `defaultModel` (chat commands) | the default of the provider |
 | Timeout | `--timeout` | `defaultTimeoutMs` (chat only) | the default of the command/provider |
-| Headless | `--headed` / `--headless` | `headless` | `true` (ChatGPT and Claude always run headed) |
+| Headless | `--headed` / `--headless` | `headless` | `true` (a provider that needs a visible browser always runs headed) |
 | Profile mode | `--profile` / `--isolated-profile` | `profileMode` | `shared` |
 | Proxy | — | — | the environment (§5) |
 
@@ -31,6 +31,13 @@ A CLI flag that is **not given** does not shadow the config file. This is why
 
 The timeout of a **chat** (`chat`, `delegate`) is `--timeout` →
 `defaultTimeoutMs` → the default of the provider.
+
+The headless mode is decided per provider: a provider whose config sets
+`requiresHeaded` (ChatGPT, Claude, Perplexity) runs in a visible browser,
+every other provider follows the `headless` key of the config file. There is no
+list of provider names in the code — the decision belongs to the provider
+config. `--headless` forces the headless mode for such a provider as well
+(needed on a host without a display), `--headed` forces the visible browser.
 
 The commands `image` and `research` have their own defaults (120 s and 600 s)
 and are only changed by their own `--timeout` flag: `defaultTimeoutMs` is the
@@ -137,6 +144,24 @@ minutes at the latest) and then restarts the daemon.
 
 The cookies of the shared profile live in `storage-state.json` and survive the
 restart of the daemon.
+
+A **bot challenge** (Cloudflare) is a state of its own, not "not logged in".
+When a run meets one, the browser is asked to solve it in the window that is
+already open — one attempt, 120 s. The clearance cookie is written to
+`storage-state.json` right away, so the next run reuses the cleared session.
+Without a visible window (headless) the run fails with an antibot error
+instead of waiting for a challenge nobody can see.
+
+Every command that talks to a provider — `chat`, `research`, `image`, `delegate`
+and `history` — goes through the same session check, so a challenge is solved
+and the cleared session is saved everywhere. Every command that can fail this
+way prints the same hint (`antibot` / `unauthorized` / `unavailable`).
+
+The cleared session is written to `storage-state.json` **only in the shared
+profile mode**. An isolated (`--isolated-profile`) or a named (`--profile`)
+profile is a persistent Chromium context: it keeps its cookies in its own
+directory and never writes them into the shared state — the isolation would
+be broken otherwise.
 
 ## 4. Sessions
 

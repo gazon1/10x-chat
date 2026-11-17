@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import { AntibotChallengeError, isChallengeVisible } from '../core/failures.js';
 import type {
   CapturedResponse,
   GeneratedImage,
@@ -61,8 +62,8 @@ export const CHATGPT_CONFIG: ProviderConfig = {
   defaultModel: 'Pro',
   defaultTimeoutMs: 5 * 60 * 1000,
   // ChatGPT's Cloudflare bot-protection blocks headless Playwright permanently.
-  // The chat orchestrator will automatically force headed mode for this provider.
-  headlessBlocked: true,
+  botProtected: true,
+  requiresHeaded: true,
 };
 
 function resolveChatGPTModelLabels(model: string): string[] {
@@ -361,36 +362,6 @@ async function dismissOverlays(page: Page): Promise<void> {
   }
 }
 
-/**
- * Detect Cloudflare bot-protection challenge pages.
- * Returns true when the current page is the "Just a moment..." challenge.
- */
-async function isCloudflareChallenge(page: Page): Promise<boolean> {
-  const title = await page.title().catch(() => '');
-  if (title === 'Just a moment...' || title.toLowerCase().includes('checking your browser')) {
-    return true;
-  }
-  // Also check for the Cloudflare challenge iframe/form
-  const cfElement = await page
-    .locator('#challenge-running, #challenge-form, .cf-browser-verification')
-    .first()
-    .isVisible()
-    .catch(() => false);
-  return cfElement;
-}
-
-/** Sentinel error class so the orchestrator can distinguish CF blocks from other failures. */
-export class CloudflareBlockedError extends Error {
-  constructor() {
-    super(
-      'Cloudflare bot-protection is blocking the browser.\n' +
-        'ChatGPT requires a visible browser window — run with the --headed flag:\n' +
-        '  10x-chat chat --provider chatgpt --headed -p "your prompt"',
-    );
-    this.name = 'CloudflareBlockedError';
-  }
-}
-
 export const chatgptActions: ProviderActions = {
   async selectModel(page: Page, model: string): Promise<void> {
     await dismissOverlays(page);
@@ -481,12 +452,10 @@ export const chatgptActions: ProviderActions = {
   },
 
   async isLoggedIn(page: Page): Promise<boolean> {
-    // Detect Cloudflare challenge before anything else.
-    // This happens when running headless — Cloudflare blocks non-human browsers.
-    // The orchestrator should have already forced headed mode via headlessBlocked,
-    // but throw a clear error here as a safety net.
-    if (await isCloudflareChallenge(page)) {
-      throw new CloudflareBlockedError();
+    // Detect a bot challenge before anything else.
+    // The orchestrator offers the user to solve it in the visible window.
+    if (await isChallengeVisible(page)) {
+      throw new AntibotChallengeError();
     }
 
     try {
@@ -497,9 +466,9 @@ export const chatgptActions: ProviderActions = {
         .waitFor({ state: 'visible', timeout: 8_000 })
         .catch(() => {});
 
-      // Re-check for Cloudflare after the wait (page may have navigated)
-      if (await isCloudflareChallenge(page)) {
-        throw new CloudflareBlockedError();
+      // Re-check for the challenge after the wait (page may have navigated)
+      if (await isChallengeVisible(page)) {
+        throw new AntibotChallengeError();
       }
 
       // Dismiss any overlays that might be hiding the composer
@@ -529,8 +498,8 @@ export const chatgptActions: ProviderActions = {
 
       return false;
     } catch (err) {
-      // Re-throw Cloudflare errors so the orchestrator can surface them
-      if (err instanceof CloudflareBlockedError) throw err;
+      // Re-throw the challenge so the orchestrator can surface it
+      if (err instanceof AntibotChallengeError) throw err;
       return false;
     }
   },

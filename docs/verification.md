@@ -11,6 +11,10 @@ repository after the refactoring, what was checked, and what is **not** covered 
 The historical baseline of the first refactoring step is
 [docs/refactor-baseline.md](refactor-baseline.md); the numbers below are compared against it.
 
+> **Update (issue [#16](https://github.com/gazon1/10x-chat/issues/16))** — the check run of
+> 2026-11-17 on branch `gazon1/hogfish` is the current one: 33 files / **329 tests**, everything
+> green. What changed since the run above is listed in §7, and the P2 review fix in §9.
+
 ## 1. The check set
 
 | # | Command | Result | Notes |
@@ -18,11 +22,11 @@ The historical baseline of the first refactoring step is
 | 1 | `bun install --frozen-lockfile` | **PASS** | 116 packages, lockfile unchanged; `prepare` builds `dist/`, `postinstall` downloads the CloakBrowser build |
 | 2 | `bun run typecheck` | **PASS** | `tsc --noEmit` |
 | 3 | `bun run lint` | **PASS** | `biome check .` — Biome 2.4.4 (the version the lockfile pins) |
-| 4 | `bun run test` | **PASS** | 30 files, **300 tests**, ~1.3 s |
+| 4 | `bun run test` | **PASS** | 33 files, **326 tests**, ~2.6 s |
 | 5 | `bun run test:e2e` | **PASS** | 7 CLI scenarios; the 7 live provider scenarios are skipped (see §4) |
 | 6 | `bun run build` | **PASS** | `tsc -p tsconfig.build.json` |
 
-Compared with the baseline: 18 files / 153 tests → **30 files / 300 tests**. The lint caveat of
+Compared with the baseline: 18 files / 153 tests → **33 files / 326 tests**. The lint caveat of
 the baseline still holds — a plain `npm install` resolves Biome 2.6.8, which reports formatter
 findings in Markdown; the lockfile-pinned 2.4.4 is clean. Use `bun install --frozen-lockfile`.
 
@@ -98,3 +102,104 @@ bun run build
 # the live provider scenarios (need a logged-in profile and a display)
 TEN_X_CHAT_E2E_PROVIDERS=1 bun run test:e2e
 ```
+
+## 7. Issue #16 — the bot challenge as a state of its own
+
+The change of [#16](https://github.com/gazon1/10x-chat/issues/16) (branch `gazon1/hogfish`)
+moves the headed/headless decision into the provider config, makes a bot challenge a state the
+run recognizes, and lets the user solve it in the window that is already open.
+
+| Item | State | Notes |
+|---|---|---|
+| Headed/headless per provider | **verified (unit)** | `tests/browser-mode.test.ts` — the decision comes from `ProviderConfig`, not from a provider name list; `--headed` / `--headless` override it |
+| Challenge detection and the bounded wait | **verified (unit)** | `tests/failures.test.ts` — the challenge is detected, the user gets 120 s, the run then fails with an antibot error, and the page is not probed while the challenge is unsolved |
+| Failure classification | **verified (unit)** | antibot / unauthorized / unavailable, with the kind kept through the `browserError` wrapper |
+| Session reuse | **verified (unit)** | `tests/storage-state.test.ts` — a saved `storage-state.json` is found by the next run; a missing or broken file falls back |
+| The challenge flow on a real site | **verified (live, 2026-11-17)** | see §8 — the challenge is detected, solved and the cleared session is saved; the shared state is written, the isolated profile is not |
+| Perplexity in headed mode | **new behavior, unverified against the site** | Perplexity now runs headed (its config always claimed that, the hardcoded list overrode it). `--headless` still forces headless on a host without a display |
+| The stealth init script | **unchanged** | it was already skipped for CloakBrowser (`getEngineName() !== 'cloakbrowser'`), so nothing had to be done for that item of the issue |
+
+The check set of that change is the one in §1 — typecheck, lint, test (33 files / 329 tests),
+e2e (7 CLI scenarios) and build all pass.
+
+The review of the change added three more things:
+
+| Item | State | Notes |
+|---|---|---|
+| One session check for every command | **verified (unit)** | `checkProviderSession()` — chat, research, image, delegate and history use it; `delegate` keeps `--no-login-check` as an opt-out, `history` reports the classified error per provider |
+| The hint of a failure | **verified (unit)** | `printFailureHint()` — chat, research, delegate and history print the same hint for the same kind of failure |
+| The temp file of a save | **verified (unit)** | every save gets its own temp file (`tempStatePath`), so parallel saves of one process (`chat --all`) cannot delete each other's file |
+| The boundary of the profiles | **verified (unit)** | `BrowserSession.sharedState` — only a shared run writes `storage-state.json`; an isolated or named profile keeps its cookies in its own directory |
+| The hint of every command | **verified (unit)** | `chat`, `research`, `image`, `delegate` and `history` print it; a parallel run keeps the kind of the failure in its result (`failedChatAllResult`) |
+
+## 8. The live run of 2026-11-17 — the challenge and the boundary of the profiles
+
+The unit tests of §7 were followed by a live run with authorized sessions (the cookies exported
+from a real browser for ChatGPT and Claude). Two runs: the real sites, and a local Cloudflare-like
+interstitial that clears itself after a few seconds — the same code path (detect → wait → save),
+without a human in the loop.
+
+### 8.1 The real sites
+
+No interstitial was shown on the real sites — the exported cookies carried the clearance, and the
+site issued a fresh one during the run. The runs show where those cookies end up.
+
+| Run | Result |
+|---|---|
+| `claude.ai`, shared mode | the answer came (`OK`), and the shared state was rewritten after the run — 25 cookies, including the refreshed `cf_clearance` (`.claude.ai`) and the origin `https://claude.ai` |
+| `claude.ai`, `--isolated-profile` | the answer came (`OK`), the clearance and the probe stayed in `profiles/claude/`, and the shared state was **byte-identical** before and after the run (`sha256` prefix `56a96c3b9fa76d5c`) |
+| `chatgpt.com`, shared mode | the prompt was submitted, the site issued a fresh `cf_clearance` during the run, and it landed in the shared state (27 cookies) |
+| `chatgpt.com`, `--isolated-profile` | the site issued `cf_clearance` inside the isolated profile (19 cookies in `profiles/chatgpt/`), and the shared state stayed **byte-identical** (`sha256` prefix `56a96c3b9fa76d5c`) — no `cf_clearance`, no probe cookie |
+
+The challenge flow itself (detect → wait → save) was exercised by the local interstitial, in all
+three phases:
+
+| Run | Result |
+|---|---|
+| shared mode | the challenge was detected, the wait ran, the cleared session was saved — the clearance landed in the shared state |
+| control: the old behaviour (a save that does not know about the profile) | the isolated cookies were written into the shared state — `LEAK in the old behaviour: true` |
+| fixed: `checkProviderSession` with `sharedState: false` | the shared state stayed at the baseline — `LEAK in the fixed behaviour: false`; the clearance stayed in the isolated profile |
+
+### 8.2 What the live run does not prove
+
+| Item | State | Why |
+|---|---|---|
+| A challenge solved by a human | **not exercised** | the real sites did not show an interstitial — the exported cookies were accepted, so nobody had to solve one. The path is covered by the local interstitial and by `tests/failures.test.ts` |
+| The answer of `chatgpt.com` | **not captured** | the prompt was sent, but the assistant answer did not arrive within the 5-minute timeout (`Timed out waiting for ChatGPT assistant response`). This is the response capture, not the session check — the run got past the check and submitted the prompt |
+| The 21 cookies of the ChatGPT export | **partly expired** | four of them (`__oailb`, `__cflb`, `_uasid`, `_umsid`) were already past their expiry; the session cookies of the export do not survive the close of a persistent context, so the seeding of an isolated profile has to give them an expiry |
+| A run from the sources with `tsx` | **broken, unrelated to the change** | `page.evaluate: ReferenceError: __name is not defined` — esbuild wraps the inner functions of a `page.evaluate` callback with `__name`, and the helper does not exist in the browser. The built CLI (`dist/`) is unaffected; the live runs above used `dist/` |
+
+## 9. The P2 review fix — a challenge that appears during the login check
+
+The review of issue #16 found a hole in the session check: the challenge was looked for **before**
+the provider's own check and in the exception it throws, but not after it. The provider checks wait
+up to 8 s, and a Cloudflare interstitial that appears during that wait is answered by most
+providers (Claude, Gemini, Grok, DeepSeek, Perplexity) with "not logged in" — the run was then
+classified as `unauthorized` and the user was told to log in instead of being asked to solve the
+challenge in the window that was already open.
+
+The fix is one extra question to the page in `checkSession()`: after `isLoggedIn()` answered
+`false`, ask the page again whether a challenge is up. If it is, use the existing `recover()` —
+one bounded attempt, the same 120 s in the open window — and check the session once more.
+
+| Item | State | Notes |
+|---|---|---|
+| The re-check after `isLoggedIn()` | **verified (unit)** | `tests/failures.test.ts` — a challenge that appears during the provider's check is solved, the session is saved and the run continues (`isLoggedIn` is called twice, `saveSession` once) |
+| The classification | **verified (unit)** | the same scenario without a window fails with `AntibotChallengeError` (antibot), not `UnauthorizedError` — the check happens before `classifySessionFailure()` |
+| The behaviour in a real browser | **verified (live, 2026-11-17)** | the local interstitial of §8, triggered during the provider's check |
+
+The live run (`build/diagnostics/challenge-during-check.ts`, the same local interstitial as §8 —
+the provider's check navigates into the challenge and answers "not logged in"):
+
+| Run | Result |
+|---|---|
+| the classification of a challenge page | `classifySessionFailure()` on the interstitial returns `unauthorized` — the kind the old code reported |
+| the same scenario **without** the fix (the pre-fix `checkSession()`) | headed run → `UnauthorizedError` ("Not logged in to ChatGPT"), headless run → `UnauthorizedError` as well |
+| the same scenario **with** the fix | headed run → the challenge is detected, solved, and the session is saved (the `cf_clearance` landed in the shared state); headless run → `AntibotChallengeError`, kind `antibot` |
+
+So the regression is closed in both directions: the challenge is now solved instead of being
+reported as a lost session, and a headless run reports the right kind instead of sending the user
+after a login that would not help.
+
+The check set after the fix: typecheck, lint, test (33 files / 329 tests), e2e (7 CLI scenarios) and
+build all pass.
