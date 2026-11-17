@@ -4,33 +4,93 @@
 
 **English** | [繁體中文](./README-zh.md)
 
-10x-chat uses [Playwright](https://playwright.dev) to automate browser sessions with persisted login profiles. Login once, then send prompts — bundled with file context — from your CLI or AI coding agent.
+10x-chat drives a **patched Chromium** ([CloakBrowser](https://www.npmjs.com/package/cloakbrowser)) through Playwright, with persisted login profiles. Login once, then send prompts — bundled with file context — from your CLI or AI coding agent.
 
 ## Use with OpenClaw
 
 Paste this into your [OpenClaw](https://openclaw.ai) chat to install as a skill:
 
 ```
-https://raw.githubusercontent.com/MikeChongCan/10x-chat/refs/heads/main/skills/10x-chat/SKILL.md
+https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-chat/SKILL.md
 ```
+
+## Prerequisites
+
+| Requirement | Version |
+|---|---|
+| Node.js | ≥ 22 (or Bun ≥ 1.3) |
+| OS | Linux x86_64/arm64, macOS arm64/x86_64, Windows x86_64 (the CloakBrowser platform matrix) |
+| Display | only for the headed mode — the headed mode is the default for ChatGPT, Claude and Perplexity |
+
+No system Chromium is needed: the `postinstall` step of the package downloads the CloakBrowser build into `~/.cloakbrowser/`.
+
+## Install
+
+```bash
+npm install -g github:gazon1/10x-chat     # or: bun add -g github:gazon1/10x-chat
+```
+
+The install builds the CLI (`prepare`) and downloads the CloakBrowser build (`postinstall`). Every example below uses the `10x-chat` binary of a global install.
+
+> [!NOTE]
+> The name `10x-chat` on npm belongs to the upstream project, which still ships the integrations that were removed here. This fork is therefore installed from the repository — it is not published to the registry yet.
 
 ## Quick Start
 
 ```bash
-npx playwright install chromium  # one-time browser setup
-
 # 1. Login to a provider (opens a browser window)
-npx 10x-chat@latest login chatgpt
+10x-chat login chatgpt
 
 # 2. Send a prompt
-npx 10x-chat@latest chat -p "Explain this error" --provider chatgpt --file "src/**/*.ts"
+10x-chat chat -p "Explain this error" --provider chatgpt --file "src/**/*.ts"
 
 # 3. View session history
-npx 10x-chat@latest status
+10x-chat status
 ```
 
 > [!TIP]
-> Use `bunx` (bun.sh) instead of `npx` for faster startup.
+> Bun starts the CLI faster: `bun run src/bin/cli.ts …` in a checkout, `bunx` for a published package.
+
+## Browser runtime
+
+The runtime is **CloakBrowser (a patched Chromium)** — there is no other supported engine.
+
+Firefox/Camoufox was evaluated and rejected: the migration would invalidate every provider selector (they were written against Chromium), the stealth script fakes Chromium-specific APIs, and Camoufox cannot carry a SOCKS proxy with credentials. The full measurement is in
+[docs/refactor-3-8-camoufox.md](docs/refactor-3-8-camoufox.md) and
+[docs/refactor-4-9-camoufox-production-readiness.md](docs/refactor-4-9-camoufox-production-readiness.md).
+
+## Proxy
+
+The proxy comes from the environment only — there is no config key and no CLI flag, because the shared browser daemon is a separate process that inherits the environment of the invocation that started it.
+
+```bash
+HTTPS_PROXY=http://user:password@proxy.example:3128 10x-chat chat -p "…"
+NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
+```
+
+| Proxy | Supported |
+|---|---|
+| `http://` / `https://` without credentials | yes |
+| `http://` with Basic auth | yes — the credentials go to Playwright, the browser only sees the bare proxy URL |
+| `socks5://` without credentials | yes |
+| `socks4://` / `socks5://` **with** credentials | **no** — rejected, because Chromium would have to authenticate through the URL in its command line |
+
+The full contract (order of the variables, where the credentials live, why SOCKS with credentials is refused) is in [docs/config-contract.md](docs/config-contract.md).
+
+## Login and sessions
+
+`login` opens a headed browser, waits until the provider reports a logged-in session and stores the cookies in the browser profile. In the default **shared** profile mode all providers use the same profile (`~/.10x-chat/profiles/default/storage-state.json`), so one login per provider is enough and parallel runs share it.
+
+```bash
+10x-chat login chatgpt      # one provider
+10x-chat login --all        # every provider, one after another
+10x-chat login --all --tabs # every provider as a tab of one window
+10x-chat login --status     # check the login state of every provider
+```
+
+- `--isolated-profile` gives every provider its own profile (`~/.10x-chat/profiles/<provider>`), `--profile <name>` a named one.
+- `migrate` merges the old per-provider profiles into the shared one.
+- Every run writes its own session (`meta.json`, `bundle.md`, `response.md`) into `~/.10x-chat/sessions/<uuid>/`; `status` lists them, `session <id>` shows one.
 
 ## Commands
 
@@ -39,13 +99,13 @@ npx 10x-chat@latest status
 Opens a headed browser for you to authenticate. The session persists across runs.
 
 ```bash
-npx 10x-chat@latest login chatgpt       # Login to ChatGPT
-npx 10x-chat@latest login gemini         # Login to Gemini
-npx 10x-chat@latest login claude         # Login to Claude
-npx 10x-chat@latest login grok           # Login to Grok
-npx 10x-chat@latest login perplexity     # Login to Perplexity
-npx 10x-chat@latest login deepseek       # Login to DeepSeek
-npx 10x-chat@latest login --status       # Check login status for all providers
+10x-chat login chatgpt       # Login to ChatGPT
+10x-chat login gemini         # Login to Gemini
+10x-chat login claude         # Login to Claude
+10x-chat login grok           # Login to Grok
+10x-chat login perplexity     # Login to Perplexity
+10x-chat login deepseek       # Login to DeepSeek
+10x-chat login --status       # Check login status for all providers
 ```
 
 ### `chat`
@@ -53,23 +113,30 @@ npx 10x-chat@latest login --status       # Check login status for all providers
 Send a prompt to an AI provider via browser automation.
 
 ```bash
-npx 10x-chat@latest chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
-npx 10x-chat@latest chat -p "Debug this error" --file "logs/error.log"
-npx 10x-chat@latest chat -p "Explain this" --dry-run              # Preview bundle without sending
-npx 10x-chat@latest chat -p "Explain this" --copy                  # Copy bundle to clipboard
-npx 10x-chat@latest chat -p "Long task" --timeout 600000 --headed  # 10min timeout, visible browser
+10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
+10x-chat chat -p "Debug this error" --file "logs/error.log"
+10x-chat chat -p "Explain this" --dry-run              # Preview bundle without sending
+10x-chat chat -p "Explain this" --copy                  # Copy bundle to clipboard
+10x-chat chat -p "Long task" --timeout 600000 --headed  # 10min timeout, visible browser
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-p, --prompt <text>` | **(required)** The prompt to send |
 | `--provider <name>` | Provider: `chatgpt`, `gemini`, `claude`, `grok`, `perplexity`, `deepseek` (default: config) |
+| `--all` | Send to all chat providers in parallel and compare the answers |
 | `--model <name>` | Model/mode to select in the provider UI (e.g. ChatGPT: `GPT-5.6 Sol High`, `Pro`; Gemini: `Fast`, `Thinking`, `Deep Think`, `Pro`) |
 | `-f, --file <paths...>` | Files/globs to bundle as context |
+| `-a, --attach <paths...>` | Images/files to upload as attachments |
 | `--copy` | Copy bundle to clipboard instead of sending |
 | `--dry-run` | Preview the bundle without sending |
 | `--headed` | Show browser window during chat |
+| `--headless` | Force headless, also for the providers that normally run headed |
 | `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
+| `--save-images <dir>` | Save the generated images to a directory |
+| `--profile <name>` | Use a named browser profile |
+| `--isolated-profile` | Use the per-provider browser profile |
+
 
 ### `delegate <provider>`
 
@@ -77,7 +144,7 @@ Start a provider-specific JSONL delegate for external AI callers that need multi
 
 ```bash
 # One long-lived provider session controlled over JSONL
-npx 10x-chat@latest delegate gemini --model Pro <<'EOF'
+10x-chat delegate gemini --model Pro <<'EOF'
 {"id":1,"action":"status"}
 {"id":2,"action":"submit","prompt":"Draft three launch angles for this product."}
 {"id":3,"action":"capture","timeoutMs":600000}
@@ -86,7 +153,7 @@ EOF
 
 # Convenience combined action: select model/files, submit, capture
 printf '%s\n' '{"action":"chat","model":"Thinking","prompt":"Review this pasted plan."}' \
-  | npx 10x-chat@latest delegate gemini
+  | 10x-chat delegate gemini
 ```
 
 Supported actions: `status`, `goto`, `selectModel`, `attach`, `submit`, `capture`, `chat`, `eval`, `close`.
@@ -104,9 +171,9 @@ Supported actions: `status`, `goto`, `selectModel`, `attach`, `submit`, `capture
 Generate images via ChatGPT (DALL-E), Gemini (Imagen), or Grok with non-blocking polling.
 
 ```bash
-npx 10x-chat@latest image -p "A fox astronaut in space, digital art" --provider chatgpt
-npx 10x-chat@latest image -p "Watercolor landscape" --provider gemini --save-dir ./images
-npx 10x-chat@latest image -p "Logo design" --provider grok --headed --timeout 120000
+10x-chat image -p "A fox astronaut in space, digital art" --provider chatgpt
+10x-chat image -p "Watercolor landscape" --provider gemini --save-dir ./images
+10x-chat image -p "Logo design" --provider grok --headed --timeout 120000
 ```
 
 | Flag | Description |
@@ -122,10 +189,10 @@ npx 10x-chat@latest image -p "Logo design" --provider grok --headed --timeout 12
 Deep research via ChatGPT, Gemini, or Perplexity with non-blocking progress polling. Designed for long-running research tasks (5-10+ minutes).
 
 ```bash
-npx 10x-chat@latest research -p "Latest breakthroughs in quantum computing" --provider gemini
-npx 10x-chat@latest research -p "Hard technical research" --provider gemini --model "Deep Think"
-npx 10x-chat@latest research -p "Market analysis of EVs" --provider chatgpt --model "Extra High" --timeout 900000
-npx 10x-chat@latest research -p "Compare React vs Vue in 2026" --provider perplexity --save-dir ./reports
+10x-chat research -p "Latest breakthroughs in quantum computing" --provider gemini
+10x-chat research -p "Hard technical research" --provider gemini --model "Deep Think"
+10x-chat research -p "Market analysis of EVs" --provider chatgpt --model "Extra High" --timeout 900000
+10x-chat research -p "Compare React vs Vue in 2026" --provider perplexity --save-dir ./reports
 ```
 
 | Flag | Description |
@@ -147,9 +214,9 @@ ChatGPT Deep Research is selected from the composer `+` (`Add files and more`) m
 List chat history visible in provider sidebars (ChatGPT, Gemini, Claude, Grok, Perplexity).
 
 ```bash
-npx 10x-chat@latest history --provider gemini
-npx 10x-chat@latest history --provider all --limit 10
-npx 10x-chat@latest history --provider chatgpt --json
+10x-chat history --provider gemini
+10x-chat history --provider all --limit 10
+10x-chat history --provider chatgpt --json
 ```
 
 | Flag | Description |
@@ -164,8 +231,8 @@ npx 10x-chat@latest history --provider chatgpt --json
 List local 10x-chat CLI sessions.
 
 ```bash
-npx 10x-chat@latest status              # Last 24 hours
-npx 10x-chat@latest status --hours 72   # Last 3 days
+10x-chat status              # Last 24 hours
+10x-chat status --hours 72   # Last 3 days
 ```
 
 ### `session <id>`
@@ -173,7 +240,7 @@ npx 10x-chat@latest status --hours 72   # Last 3 days
 View details of a specific session.
 
 ```bash
-npx 10x-chat@latest session <id> --render   # Pretty-print the response
+10x-chat session <id> --render   # Pretty-print the response
 ```
 
 ### `config`
@@ -181,11 +248,11 @@ npx 10x-chat@latest session <id> --render   # Pretty-print the response
 View or modify configuration.
 
 ```bash
-npx 10x-chat@latest config show
-npx 10x-chat@latest config set provider gemini
-npx 10x-chat@latest config set timeout 600000
-npx 10x-chat@latest config set headless false
-npx 10x-chat@latest config set profile-mode isolated
+10x-chat config show
+10x-chat config set provider gemini
+10x-chat config set timeout 600000
+10x-chat config set headless false
+10x-chat config set profile-mode isolated
 ```
 
 The order of the settings (CLI flag > config file > default), the rules of the
@@ -197,8 +264,8 @@ profiles and the proxy contract are documented in
 Manage the agent integration skill (for Codex, Claude Code, etc).
 
 ```bash
-npx 10x-chat@latest skill install   # Install SKILL.md to ~/.codex/skills/
-npx 10x-chat@latest skill show      # Display SKILL.md content
+10x-chat skill install   # Install SKILL.md to ~/.codex/skills/
+10x-chat skill show      # Display SKILL.md content
 ```
 
 ### `migrate`
@@ -208,10 +275,10 @@ profile used by default. Useful when upgrading from a version that stored a
 separate profile per provider.
 
 ```bash
-npx 10x-chat@latest migrate --dry-run            # Preview without making changes
-npx 10x-chat@latest migrate                      # Auto-pick the largest profile as the base
-npx 10x-chat@latest migrate --source chatgpt     # Use a specific provider's profile as the base
-npx 10x-chat@latest migrate --keep               # Keep the old isolated profiles after migrating
+10x-chat migrate --dry-run            # Preview without making changes
+10x-chat migrate                      # Auto-pick the largest profile as the base
+10x-chat migrate --source chatgpt     # Use a specific provider's profile as the base
+10x-chat migrate --keep               # Keep the old isolated profiles after migrating
 ```
 
 ## File Bundling
@@ -219,7 +286,7 @@ npx 10x-chat@latest migrate --keep               # Keep the old isolated profile
 The `--file` flag accepts globs. Files are assembled into a markdown bundle sent as the prompt:
 
 ```bash
-npx 10x-chat@latest chat -p "Review these" --file "src/**/*.ts" "!src/**/*.test.ts"
+10x-chat chat -p "Review these" --file "src/**/*.ts" "!src/**/*.test.ts"
 ```
 
 Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically excluded.
@@ -229,24 +296,26 @@ Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically exc
 ```
 ~/.10x-chat/
 ├── profiles/
-│   ├── chatgpt/          # Playwright persistent browser profile
-│   ├── gemini/
-│   ├── claude/
-│   └── grok/
+│   ├── default/             # Shared profile (default): storage-state.json
+│   └── <provider>/          # Isolated or named profile
 ├── sessions/
 │   └── <uuid>/
-│       ├── meta.json     # Session metadata
-│       ├── bundle.md     # Prompt bundle sent
-│       └── response.md   # Captured response
-└── config.json           # User configuration
+│       ├── meta.json        # Session metadata
+│       ├── bundle.md        # Prompt bundle sent
+│       └── response.md      # Captured response
+├── debug/                   # Debug artifacts (only with TEN_X_CHAT_BROWSER_DEBUG=1)
+├── browser-daemon.json      # State of the shared browser daemon
+└── config.json              # User configuration
 ```
+
+`TEN_X_CHAT_HOME` moves the whole directory.
 
 ## Agent Integration
 
 10x-chat includes a `SKILL.md` for AI coding agents. Install it with:
 
 ```bash
-npx 10x-chat@latest skill install
+10x-chat skill install
 ```
 
 This lets agents like Codex or Claude Code use 10x-chat to query other models for cross-validation, code review, or debugging help.
@@ -262,6 +331,33 @@ This lets agents like Codex or Claude Code use 10x-chat to query other models fo
 | Perplexity | ✅ | — | perplexity.ai |
 | DeepSeek | ✅ | deepseek-chat, deepseek-reasoner | chat.deepseek.com |
 
+The provider UIs change without notice — Grok in particular is the most fragile one. A provider that stops answering is usually a changed selector, not a broken login.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| `CloakBrowser is not installed or failed to load` | `npm install -g github:gazon1/10x-chat` again, or run `npx cloakbrowser install` |
+| The browser does not start / no window | the build is missing: `npx cloakbrowser install` (it lands in `~/.cloakbrowser/`) |
+| `Not logged in` although you logged in | the session expired — `10x-chat login <provider>` again; `login --status` shows the state of every provider |
+| ChatGPT / Perplexity open a window even with headless | both are blocked by anti-bot protection and always run headed; `--headless` overrides it |
+| The daemon is busy with another session | another run holds the shared browser — wait for it to finish, or use `--isolated-profile` |
+| `SOCKS proxy authentication is not supported…` | use an HTTP proxy with credentials, or a SOCKS proxy without them |
+| `Invalid config file …` | the config file is broken — it is an error, not a fallback; fix or delete `~/.10x-chat/config.json` |
+
+### Debug artifacts
+
+Set `TEN_X_CHAT_BROWSER_DEBUG=1` and every browser operation writes its artifacts into `~/.10x-chat/debug/<timestamp>-<provider>-<operation>/`:
+
+```
+meta.json       # the operation, the URL and the duration
+events.json     # console messages, page errors, failed requests
+screenshot.png  # a screenshot of the page
+page.html       # the page source
+```
+
+The artifacts are redacted: the userinfo of every URL, cookies, tokens and the home directory of the machine are removed — they are safe to attach to a bug report.
+
 ## Development
 
 ```bash
@@ -269,9 +365,19 @@ bun install
 bun run dev login chatgpt      # Run CLI in dev mode
 bun run typecheck               # Type check
 bun run lint                    # Lint
-bun run test                    # Run tests
+bun run test                    # Unit tests
+bun run test:e2e                # End-to-end scenarios (CLI flows; the live provider scenarios are opt-in)
 bun run build                   # Build for production
 ```
+
+The live provider scenarios need a browser and a logged-in profile:
+
+```bash
+TEN_X_CHAT_E2E_PROVIDERS=1 bun run test:e2e                 # every provider
+TEN_X_CHAT_E2E_PROVIDERS=gemini,deepseek bun run test:e2e   # only these
+```
+
+The result of the last full check run — and the exceptions that are documented on purpose — is in [docs/verification.md](docs/verification.md).
 
 ## Publishing
 
@@ -284,6 +390,9 @@ git push --follow-tags
 
 Requires `NPM_TOKEN` secret in the GitHub repository settings.
 
+> [!NOTE]
+> The registry name `10x-chat` belongs to the upstream project, so the `npm publish` step of the release workflow is currently disabled — a `v*` tag creates the GitHub Release but does not publish to npm. A free name has to be chosen first; the open items are listed in [docs/verification.md](docs/verification.md).
+
 ## Disclaimer
 
 This project is provided **for research and educational purposes only**. It
@@ -293,4 +402,4 @@ compliance with any applicable terms, and you use it at your own risk.
 
 ## License
 
-MIT © Mike Chong — see [LICENSE](./LICENSE).
+MIT © Mike Chong (upstream) — this fork is maintained by gazon1. See [LICENSE](./LICENSE).
