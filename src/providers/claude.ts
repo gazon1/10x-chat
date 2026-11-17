@@ -11,6 +11,9 @@ export const CLAUDE_CONFIG: ProviderConfig = {
   models: ['Opus 4.6', 'Sonnet 4.6', 'Haiku 4.5', 'Extended thinking'],
   defaultModel: 'Sonnet 4.6',
   defaultTimeoutMs: 5 * 60 * 1000,
+  // Claude serves a different DOM under headless Chromium — it only works in
+  // a visible browser.
+  requiresHeaded: true,
 };
 
 const SELECTORS = {

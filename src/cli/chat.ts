@@ -1,7 +1,14 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { buildBundle } from '../core/bundle.js';
-import { type ChatAllResult, type ChatResult, runChat, runChatAll } from '../core/index.js';
+import {
+  type ChatAllResult,
+  type ChatResult,
+  failureHint,
+  printFailureHint,
+  runChat,
+  runChatAll,
+} from '../core/index.js';
 import { isValidProvider } from '../providers/index.js';
 import type { ProviderName } from '../types.js';
 
@@ -110,6 +117,7 @@ export function createChatCommand(): Command {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(chalk.red(`Error: ${message}`));
+        printFailureHint(error);
         process.exit(1);
       }
     });
@@ -138,6 +146,7 @@ function renderChatAllResult(results: ChatAllResult[]): void {
     } else {
       console.log(chalk.bold.red(`▶ ${r.provider.toUpperCase()} — FAILED`));
       console.log(chalk.red(`  ${r.error}`));
+      if (r.kind) console.log(chalk.yellow(`  Hint: ${failureHint(r.kind)}`));
     }
   }
   console.log('');

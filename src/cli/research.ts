@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { printFailureHint } from '../core/failures.js';
 import { runResearch } from '../core/research-orchestrator.js';
 import { isValidProvider } from '../providers/index.js';
 import type { ProviderName, ResearchResult } from '../types.js';
@@ -85,6 +86,7 @@ export function createResearchCommand(): Command {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(chalk.red(`Error: ${message}`));
+        printFailureHint(error);
         process.exit(1);
       }
     });

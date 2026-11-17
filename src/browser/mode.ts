@@ -1,21 +1,20 @@
-import type { ProviderName } from '../types.js';
-
-const HEADED_PROVIDERS = new Set<ProviderName>(['chatgpt', 'claude']);
+import type { ProviderConfig } from '../types.js';
 
 /**
  * Resolve whether a provider should run headless for this invocation.
- * Explicit --headed/--headless wins. Some providers are more reliable with a
- * visible browser because anti-bot checks or alternate DOM branches trigger
- * under headless Chromium.
+ *
+ * Explicit --headed/--headless wins. Otherwise the provider decides: a
+ * provider that only works in a visible browser (`requiresHeaded`) runs
+ * headed, every other provider follows the config file.
  */
 export function resolveHeadlessMode(
-  providerName: ProviderName,
+  provider: Pick<ProviderConfig, 'requiresHeaded'>,
   configHeadless: boolean,
   headedOverride = false,
   headlessOverride = false,
 ): boolean {
   if (headedOverride) return false;
   if (headlessOverride) return true;
-  if (HEADED_PROVIDERS.has(providerName)) return false;
+  if (provider.requiresHeaded) return false;
   return configHeadless;
 }

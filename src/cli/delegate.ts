@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
+import { checkProviderSession, printFailureHint } from '../core/failures.js';
 import { resolveAttachPaths } from '../core/files.js';
 import { chatModel } from '../core/model.js';
 import { chatTimeoutMs } from '../core/timeout.js';
@@ -125,7 +126,7 @@ export function createDelegateCommand(): Command {
           provider.config.defaultTimeoutMs,
         );
         const headless = resolveHeadlessMode(
-          providerName,
+          provider.config,
           config.headless,
           options.headed === true,
         );
@@ -154,15 +155,33 @@ export function createDelegateCommand(): Command {
         });
 
         try {
-          const loggedIn = await provider.actions.isLoggedIn(browser.page);
-          if (!loggedIn && options.loginCheck !== false) {
-            writeJsonLine({
-              ok: false,
-              provider: providerName,
-              error: `Not logged in to ${provider.config.displayName}. Run: 10x-chat login ${providerName}`,
-            });
-            await close();
-            process.exit(1);
+          let loggedIn = false;
+          if (options.loginCheck === false) {
+            // --no-login-check: the state is only reported, never fatal.
+            loggedIn = await provider.actions.isLoggedIn(browser.page).catch(() => false);
+          } else {
+            // The same session check as a chat run: a bot challenge is solved
+            // in the window that is already open, the cleared session is saved.
+            try {
+              await checkProviderSession({
+                page: browser.page,
+                context: browser.context,
+                provider,
+                providerName,
+                headless,
+                sharedState: browser.sharedState,
+              });
+              loggedIn = true;
+            } catch (error) {
+              writeJsonLine({
+                ok: false,
+                provider: providerName,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              printFailureHint(error);
+              await close();
+              process.exit(1);
+            }
           }
 
           const model = chatModel(options.model, config.defaultModel, undefined);
@@ -340,6 +359,7 @@ export function createDelegateCommand(): Command {
                 provider: providerName,
                 error: error instanceof Error ? error.message : String(error),
               });
+              printFailureHint(error);
             }
           }
         } finally {

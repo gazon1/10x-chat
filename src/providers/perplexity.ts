@@ -12,7 +12,8 @@ export const PERPLEXITY_CONFIG: ProviderConfig = {
   defaultModel: 'Auto',
   defaultTimeoutMs: 2 * 60 * 1000, // Perplexity is fast (search + generate)
   // Perplexity uses Cloudflare bot-protection that blocks headless Playwright.
-  headlessBlocked: true,
+  botProtected: true,
+  requiresHeaded: true,
 };
 
 const SELECTORS = {

@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
+import { checkProviderSession, printFailureHint } from '../core/failures.js';
 import { getProvider, isValidProvider } from '../providers/index.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 
@@ -104,7 +105,7 @@ async function listProviderHistory(
 ): Promise<HistoryResult> {
   const config = await loadConfig();
   const provider = getProvider(providerName);
-  const headless = resolveHeadlessMode(providerName, config.headless, opts.headed);
+  const headless = resolveHeadlessMode(provider.config, config.headless, opts.headed);
   const profileMode: ProfileMode =
     opts.profile || opts.isolatedProfile ? 'isolated' : config.profileMode;
 
@@ -125,15 +126,22 @@ async function listProviderHistory(
       operation: 'history',
     });
 
-    const loggedIn = await provider.actions.isLoggedIn(browser.page);
-    if (!loggedIn) {
-      return { provider: providerName, items: [], error: 'not logged in' };
-    }
+    // The same session check as a chat run: a bot challenge is solved in the
+    // window that is already open, the cleared session is saved.
+    await checkProviderSession({
+      page: browser.page,
+      context: browser.context,
+      provider,
+      providerName,
+      headless,
+      sharedState: browser.sharedState,
+    });
 
     await revealHistory(browser.page, providerName);
     const items = await extractHistoryItems(browser.page, providerName, opts.limit);
     return { provider: providerName, items };
   } catch (error) {
+    printFailureHint(error);
     return {
       provider: providerName,
       items: [],
