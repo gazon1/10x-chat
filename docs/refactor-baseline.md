@@ -3,6 +3,7 @@
 Snapshot for [#2](https://github.com/gazon1/10x-chat/issues/2). No production code was changed.
 
 > Historical snapshot: it predates [#3](https://github.com/gazon1/10x-chat/issues/3), which removed the NotebookLM, Flow, and Dreamina integrations.
+> The current state of the repository is documented in [docs/verification.md](verification.md).
 
 - Branch / commit: `gazon1/refactor-1-8-baseline` @ `3fda497`
 - Date: 2026-11-16

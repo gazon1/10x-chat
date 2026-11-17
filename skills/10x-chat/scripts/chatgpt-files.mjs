@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_REPO = process.env.TEN_X_CHAT_REPO ?? '/home/ranma/prog/10x-chat';
+const HOME = os.homedir();
+// The profile of the CLI: the shared profile holds the ChatGPT login.
+const DEFAULT_REPO = process.env.TEN_X_CHAT_REPO ?? process.cwd();
 const DEFAULT_PROFILE =
-  process.env.TEN_X_CHAT_CHATGPT_PROFILE ?? '/home/ranma/.10x-chat/profiles/chatgpt';
+  process.env.TEN_X_CHAT_CHATGPT_PROFILE ?? path.join(HOME, '.10x-chat', 'profiles', 'default');
 const DEFAULT_OUT_DIR =
-  process.env.TEN_X_CHAT_DOWNLOAD_DIR ?? '/home/ranma/tmp/10xchat-chatgpt-downloads';
+  process.env.TEN_X_CHAT_DOWNLOAD_DIR ?? path.join(HOME, '10x-chat-downloads');
 const CHATGPT_URL = 'https://chatgpt.com/';
 const DEFAULT_LABEL = 'Download the full updated code ZIP';
 
@@ -52,8 +55,28 @@ function expandHome(p) {
 }
 
 async function loadCloakBrowser() {
-  const modulePath = path.join(DEFAULT_REPO, 'node_modules/cloakbrowser/dist/index.js');
-  return import(pathToFileURL(modulePath).href);
+  // The same CloakBrowser build the CLI uses. Look for it in the checkout the
+  // helper runs in, next to the skill, and finally in the module resolution
+  // of the process itself.
+  const candidates = [
+    path.join(DEFAULT_REPO, 'node_modules', 'cloakbrowser', 'dist', 'index.js'),
+    path.join(
+      path.resolve(import.meta.dirname, '..', '..', '..'),
+      'node_modules',
+      'cloakbrowser',
+      'dist',
+      'index.js',
+    ),
+  ];
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return await import(pathToFileURL(candidate).href);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return await import('cloakbrowser');
 }
 
 async function markProfileClean(profileDir) {

@@ -30,7 +30,9 @@
     "lint:fix": "biome check --fix .",
     "test": "vitest run",
     "test:watch": "vitest watch",
-    "prepublishOnly": "bun run typecheck && bun run lint && bun run test && bun run build",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "prepare": "tsc -p tsconfig.build.json",
     "postinstall": "npx cloakbrowser install 2>/dev/null || true"
   },
   "engines": {
@@ -49,14 +51,14 @@
     "playwright"
   ],
   "license": "MIT",
-  "author": "Mike Chong",
+  "author": "Drobin Max (gazon1)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MikeChongCan/10x-chat.git"
+    "url": "https://github.com/gazon1/10x-chat.git"
   },
-  "homepage": "https://github.com/MikeChongCan/10x-chat#readme",
+  "homepage": "https://github.com/gazon1/10x-chat#readme",
   "bugs": {
-    "url": "https://github.com/MikeChongCan/10x-chat/issues"
+    "url": "https://github.com/gazon1/10x-chat/issues"
   },
   "publishConfig": {
     "access": "public"

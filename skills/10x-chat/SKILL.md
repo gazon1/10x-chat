@@ -1,32 +1,28 @@
 ---
 name: 10x-chat
-description: Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity) via browser automation. Use when stuck, need cross-validation, want a second-model review, need image generation, want deep research, or need to inspect ChatGPT chats, download ChatGPT artifacts/ZIPs, or upload files to ChatGPT.
+description: Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) via browser automation. Use when stuck, need cross-validation, want a second-model review, need image generation, want deep research, or need to inspect ChatGPT chats, download ChatGPT artifacts/ZIPs, or upload files to ChatGPT.
 ---
 
 # 10x-chat — AI Agent Skill
 
 Use 10x-chat to send prompts to web-based AI agents via automated browser sessions. Supports chat, image generation, and deep research. Sessions use a shared persisted profile by default.
 
-## Architecture (v0.9.0+)
+## Runtime
 
-10x-chat uses an **HTTP browser daemon** — a persistent local Node.js server wrapping Playwright:
-
-- **One daemon, multiple sessions**: parallel CLI runs share a single Chrome instance via HTTP RPC
-- **Auto-start/stop**: daemon launches on first use, shuts down after 30 min idle
-- **Crash recovery**: if daemon dies, next CLI run auto-restarts it
-- **No zombie Chrome**: proper tab ref-counting and graceful shutdown
-- **State file**: `~/.10x-chat/browser-daemon.json` (port, PID, bearer token, chmod 600)
+- **Browser**: CloakBrowser (a patched Chromium). It is the only supported engine — there is no Firefox/Camoufox runtime.
+- **Shared daemon**: one Chromium serves every parallel run over a local HTTP RPC; it stops itself after 30 minutes of idleness.
+- **Profiles**: the shared profile (`~/.10x-chat/profiles/default`) holds the login of every provider; `--isolated-profile` gives each provider its own.
+- **Proxy**: the environment only (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`). SOCKS proxies with credentials are refused.
+- **Debug artifacts**: `TEN_X_CHAT_BROWSER_DEBUG=1` writes redacted artifacts (metadata, console, screenshot, page source) into `~/.10x-chat/debug/`.
 
 ## Installation
 
-Use the local wrapper, which runs `/home/ranma/prog/10x-chat/dist/bin/cli.js`:
-
 ```bash
-command -v 10x-chat
+npm install -g github:gazon1/10x-chat   # or: bun add -g github:gazon1/10x-chat
 10x-chat --version
 ```
 
-Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 changes.
+The npm registry name `10x-chat` belongs to the upstream project — install this fork from the repository.
 
 ## When to use
 
@@ -42,10 +38,11 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 | Provider | Chat | Image | Research | Models | Notes |
 |----------|------|-------|----------|--------|-------|
 | chatgpt | ✅ | ✅ (DALL-E) | ✅ | — | Runs headed by default (anti-bot) |
-| gemini | ✅ | ✅ (Imagen) | ✅ | Fast, **Thinking** (default), Deep Think (Ultra tool), Pro | `--model` switches mode |
+| gemini | ✅ | ✅ (Imagen) | ✅ | Fast, **Thinking** (default), Deep Think, Pro | `--model` switches mode |
 | claude | ✅ | ❌ | ❌ | — | Runs headed by default |
 | grok | ✅ | ✅ | ❌ | — | UI changes often; keep the local checkout current |
-| perplexity | ✅ | ❌ | ✅ | — | Best for research with citations |
+| perplexity | ✅ | ❌ | ✅ | — | Runs headed by default (anti-bot) |
+| deepseek | ✅ | ❌ | ❌ | deepseek-chat, deepseek-reasoner | `--model` switches the model |
 
 ## Commands
 
@@ -56,13 +53,15 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 10x-chat login claude
 10x-chat login grok
 10x-chat login perplexity
+10x-chat login deepseek
+10x-chat login --status          # check the login state of every provider
 
 # Chat
 10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
 10x-chat chat -p "Hard reasoning task" --provider chatgpt --model "GPT-5.6 Sol High"
 10x-chat chat --provider gemini --file "path/to/prompt.md" -p "Complete this task"
 10x-chat chat --provider gemini --model Pro -p "Solve this math problem"
-10x-chat chat --provider gemini --model "Deep Think" -p "Solve this hard problem"
+10x-chat chat --all -p "Compare the answers"          # every chat provider in parallel
 
 # Multi-step provider delegate for external AI callers (JSONL over stdin/stdout)
 10x-chat delegate gemini --model Pro
@@ -75,13 +74,7 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 # Deep research (long-form, 5-10 min)
 10x-chat research -p "Latest breakthroughs in quantum computing" --provider perplexity
 10x-chat research -p "Hard technical research" --provider gemini --model "Deep Think"
-10x-chat research -p "Market analysis of EVs" --provider chatgpt --model "GPT-5.6 Sol Extra High" --timeout 600000
-
-# Local Gemini Deep Research profile note (ranma/prog)
-# Historical full-report profiles: gemini-2, gemini-3, gemini-4, gemini-5, gemini-12, gemini-15
-# Historical toggle-available profiles, not full-report tested: gemini-6, gemini-13, gemini-14, gemini-16
-# Revalidate before use: on 2026-06-25 these ~/.10x-chat/profiles had no Google SID/LSID auth cookies and opened signed-out Gemini.
-# Use the above profiles for parallel targeted Deep Research only after login is revalidated; validate every report is non-placeholder.
+10x-chat research -p "Market analysis of EVs" --provider chatgpt --timeout 900000
 
 # Dry run / clipboard
 10x-chat chat --dry-run -p "Debug this error" --file src/
@@ -97,7 +90,7 @@ Do not use `npx 10x-chat@latest`; npm does not contain this fork's GPT-5.6 chang
 10x-chat skill install
 ```
 
-## Provider delegate (v0.10.18+)
+## Provider delegate
 
 Use `delegate <provider>` when an external AI caller needs flexible multi-step control instead of a single one-shot `chat`, `image`, or `research` command. It opens one provider tab, keeps it alive, reads JSONL commands from stdin, and emits JSONL responses on stdout.
 
@@ -126,9 +119,9 @@ Actions:
 
 Flags: `--model`, `--headed`, `--timeout <ms>`, `--isolated-profile`, `--no-login-check`.
 
-## Parallel sessions (v0.9.0+)
+## Parallel sessions
 
-HTTP daemon makes parallel runs stable. All providers share one Chrome:
+The daemon makes parallel runs stable. All providers share one Chromium:
 
 ```bash
 # Login all once
@@ -145,9 +138,10 @@ wait
 
 ## Browser mode
 
-- **Headless (default for gemini, grok, perplexity)**: no visible window
-- **Headed (default for chatgpt, claude)**: visible Chrome window (anti-bot protection)
+- **Headless (default for gemini, grok, deepseek)**: no visible window
+- **Headed (default for chatgpt, claude, perplexity)**: visible Chromium window (anti-bot protection)
 - **Force headed**: `--headed` flag on any provider
+- **Force headless**: `--headless` flag on any provider
 
 The daemon stores the headless/headed mode in its state file. If you switch modes, the daemon restarts automatically.
 
@@ -155,23 +149,21 @@ The daemon stores the headless/headed mode in its state file. If you switch mode
 
 **Shared (default):** One browser profile, all providers share cookies.
 
-**Isolated:** Separate profile per provider (backward compat): `--isolated-profile`
+**Isolated:** Separate profile per provider: `--isolated-profile`
 
 ```bash
 # Migrate from isolated to shared
 10x-chat migrate
 ```
 
-## ChatGPT chat/artifact workflow for this machine
+## ChatGPT artifacts (helper script)
 
-Hard rule for this user: use **only CloakBrowser-backed tooling** for ChatGPT browser work. Do not use normal Playwright, Puppeteer, Chromium scripts, or the generic 10x-chat daemon/chat/history commands for ChatGPT unless the user explicitly overrides this rule. For real ChatGPT account checks, **do not trust `login --status`**; validate via the CloakBrowser helper by inspecting/listing real UI state.
-
-For ChatGPT sidebar inspection, downloading artifact buttons, uploading files, and polling, use the bundled CloakBrowser helper. Resolve `$SKILL_DIR` to this skill directory. The helper clears dismissible ChatGPT notices, including the intermittent "Too many requests" OK/Got-it modal, before acting. If a notice still appears, it is usually safe to click OK/Got-it and continue. If it returns `RATE_LIMIT_EXCEEDED`, treat that as a real backend block and wait/back off instead of retrying in a tight loop.
+For ChatGPT sidebar inspection, downloading artifact buttons, uploading files and polling, use the bundled helper. It drives the same CloakBrowser build as the CLI. Resolve `$SKILL_DIR` to this skill directory.
 
 ```bash
-SKILL_DIR=/home/ranma/.pi/agent/skills/10x-chat
+SKILL_DIR=~/.codex/skills/10x-chat   # wherever `10x-chat skill install` put it
 
-# List visible ChatGPT chats (CloakBrowser only)
+# List visible ChatGPT chats
 xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" list --limit 12
 
 # Inspect a conversation for downloadable artifacts/buttons
@@ -182,19 +174,15 @@ xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" inspect \
 xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" download \
   --url "https://chatgpt.com/c/<conversation-id>" \
   --label "Download the full updated code ZIP" \
-  --out-dir /home/ranma/tmp/10xchat-chatgpt-downloads
+  --out-dir ./downloads
 
-# Download from a specific turn when there are multiple artifact sets
-xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" download \
-  --url "https://chatgpt.com/c/<conversation-id>" \
-  --turn 8 \
-  --label "Download the full updated code ZIP"
-
-# Upload files into ChatGPT and submit a prompt (CloakBrowser only); omit --file for a prompt-only nudge.
+# Upload files into ChatGPT and submit a prompt
 xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" upload \
   --file /path/to/file.zip \
   --prompt "Use this uploaded file and summarize the implementation."
 ```
+
+The helper reads the shared profile (`~/.10x-chat/profiles/default`); `TEN_X_CHAT_CHATGPT_PROFILE`, `TEN_X_CHAT_REPO` and `TEN_X_CHAT_DOWNLOAD_DIR` override the defaults.
 
 After downloading a ZIP, always verify it before claiming success:
 
@@ -210,25 +198,24 @@ unzip -t /path/to/file.zip
 cat ~/.10x-chat/browser-daemon.json
 
 # Force stop daemon
-# (CLI calls stopDaemon() on Ctrl+C automatically)
+# (the CLI calls stopDaemon() on Ctrl+C automatically)
 kill $(cat ~/.10x-chat/browser-daemon.json | python3 -c "import sys,json; print(json.load(sys.stdin)['pid'])")
 ```
 
 ## Tips
 
-- **Always use local `10x-chat`**: it includes this fork's unreleased fixes
 - **Login first**: `login <provider>` once per provider. Sessions persist in `~/.10x-chat/profiles/`
 - **Use `--headed`** if a provider is flaky (Grok especially)
 - **Keep file sets small**: fewer files + focused prompt = better answers
 - **Research needs longer timeouts**: `--timeout 600000` for 10-min research jobs
 - **Image gen can take 1-2 min**: use `--timeout 120000` when needed
 - **Use `--dry-run`** to preview what will be sent
+- **Debug with artifacts**: `TEN_X_CHAT_BROWSER_DEBUG=1` before the failing command
 
 ## Known issues
 
 - **Grok**: UI changes frequently. Keep the local checkout current and use `--headed` for best reliability
 - **ChatGPT/Grok sessions expire quickly**: login again if you get "Not logged in" errors
-- **ChatGPT notice modals**: use the CloakBrowser helper; it clicks OK/Got-it or removes dismissible "Too many requests" overlays. If one still appears, click OK/Got-it and continue. If `RATE_LIMIT_EXCEEDED` remains, cooldown instead of hammering.
 - **Some provider UIs are flaky under automation**: retry with `--headed` before assuming a hard failure
 
 ## Safety

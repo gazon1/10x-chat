@@ -19,12 +19,22 @@ bun run lint:fix
 bun run test
 ```
 
-4. Stage any formatting changes from lint:fix:
+4. Run the end-to-end scenarios of the CLI flows:
+```bash
+bun run test:e2e
+```
+
+5. Build:
+```bash
+bun run build
+```
+
+6. Stage any formatting changes from lint:fix:
 ```bash
 git add -A
 ```
 
-5. If there are staged changes, amend the last commit:
+7. If there are staged changes, amend the last commit:
 ```bash
 git diff --cached --quiet || git commit --amend --no-edit
 ```

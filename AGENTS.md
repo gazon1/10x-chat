@@ -19,6 +19,8 @@
 | `src/types.ts` | Core types: `ProviderName`, `ProviderConfig`, `ProviderActions`, `ChatOptions` |
 | `src/session/` | Session storage (metadata, bundles, responses) |
 | `tests/` | Vitest unit tests |
+| `tests/e2e/` | End-to-end scenarios: CLI flows (always) and live provider round trips (opt-in) |
+| `docs/verification.md` | The result of the last full check run and the documented exceptions |
 
 ## Architecture
 
@@ -57,17 +59,25 @@ Provider actions implement:
 
 ## Pre-Commit Checklist
 
-Run all three steps before every commit. CI will fail if any step fails.
+Run all four steps before every commit. CI will fail if any step fails.
 
 ```bash
-npm run build                              # 1. TypeScript compile (tsc)
-npx biome check --no-errors-on-unmatched src/  # 2. Lint + format (biome)
-npm test                                   # 3. Unit tests (vitest)
+bun run typecheck                          # 1. TypeScript type check (tsc --noEmit)
+bun run lint                               # 2. Lint + format (biome)
+bun run test                               # 3. Unit tests (vitest)
+bun run build                              # 4. Production build (tsc)
+```
+
+The end-to-end scenarios of the CLI flows run in CI as well:
+
+```bash
+bun run test:e2e                           # CLI flows; the live provider scenarios are opt-in
+TEN_X_CHAT_E2E_PROVIDERS=1 bun run test:e2e   # live provider scenarios (needs a logged-in profile)
 ```
 
 If biome reports fixable issues:
 ```bash
-npx biome check --write src/               # auto-fix lint + format
+bun run lint:fix                            # auto-fix lint + format
 ```
 
 ## Release Flow
@@ -81,7 +91,12 @@ git tag v<version>
 git push origin main --tags
 ```
 
-CI pipeline (GitHub Actions): checkout → install → typecheck → lint → **test** → build → publish to npm → GitHub Release.
+CI pipeline (GitHub Actions): checkout → install → typecheck → lint → **test** → end-to-end → build → publish to npm → GitHub Release. The live provider scenarios are a separate, opt-in workflow (`.github/workflows/e2e.yml`) that needs a runner with a logged-in profile.
+
+## Browser runtime
+
+CloakBrowser (a patched Chromium) is the only supported engine — see `src/browser/engine.ts`. The Camoufox/Firefox migration was measured and rejected ([docs/refactor-3-8-camoufox.md](docs/refactor-3-8-camoufox.md), [docs/refactor-4-9-camoufox-production-readiness.md](docs/refactor-4-9-camoufox-production-readiness.md)).
+
 
 ## Config
 

@@ -2,6 +2,11 @@
 
 > A TypeScript CLI that uses Playwright to open a browser, lets the user login with a **persisted Chrome profile**, then programmatically chats with web-based AI agents (ChatGPT, Gemini, Claude, etc.).
 
+> **Historical document.** This is the original design; it describes the integrations (NotebookLM,
+> Flow, Dreamina) and the per-provider profiles that were removed or replaced later. The current
+> behaviour is documented in [README.md](README.md), [docs/config-contract.md](docs/config-contract.md)
+> and [docs/verification.md](docs/verification.md).
+
 ---
 
 ## 1 · Problem
