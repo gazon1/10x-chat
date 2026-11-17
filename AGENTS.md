@@ -16,12 +16,16 @@
 | `src/browser/manager.ts` | Browser launch: shared (daemon), shared-persistent (login), isolated modes |
 | `src/browser/daemon.ts` | Long-running Chromium server for cross-invocation reuse |
 | `src/browser/state.ts` | `saveStorageState` / `loadStorageState` for cookie persistence |
-| `src/cli/` | Commander subcommands: chat, login, status, config, skill, migrate |
+| `src/cli/` | Commander subcommands: chat, login, status, config, secrets, skill, migrate |
 | `src/types.ts` | Core types: `ProviderName`, `ProviderConfig`, `ProviderActions`, `ChatOptions` |
+| `src/secrets.ts` | The secrets store: named values in the system keyring or in the file (`0600` on Unix) |
+| `src/keyring.ts` | The adapter of the system keyring (Linux: the Secret Service) |
+| `src/core/credentials.ts` | The proxy and the provider keys of this run (store first, environment second) |
 | `src/session/` | Session storage (metadata, bundles, responses) |
 | `tests/` | Vitest unit tests |
 | `tests/e2e/` | End-to-end scenarios: CLI flows (always) and live provider round trips (opt-in) |
 | `docs/verification.md` | The result of the last full check run and the documented exceptions |
+| `docs/secrets.md` | The secrets store: CLI, permissions, backup, rotation |
 
 ## Architecture
 
@@ -71,6 +75,33 @@ Provider actions implement:
 - **Browser daemon**: `chromium.launchServer` persisted to disk for cross-CLI reuse
 - **Tab ref-counting**: Multiple CLI invocations share one Chromium; last tab stops the daemon
 - **Force-click**: Some providers need `click({ force: true })` to bypass overlay interception
+- **Secrets**: credentials live in the secrets store — the system keyring (the Secret Service of the
+  desktop session) or, as a fallback, `~/.10x-chat/secrets.json` (`0600` on Unix), a map of names
+  to values. The config file refers to a secret by name (`providerKeys`); the credentials of the
+  proxy are the two secrets `proxy.username` and `proxy.password`. The value is never an
+  argument of a command, never in a log and never in the config file — see `docs/secrets.md`
+- **The backend of the secrets store**: `credentialStorage` in the config file (`auto` — the
+  keyring when it is reachable, the file otherwise; `keyring` — the keyring only; `file` — the
+  file only), the environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. Only a
+  **missing** config file falls back to the default: a config file that cannot be read or parsed
+  is an error, so a broken file never switches the run to the plaintext file behind the back of
+  the user. The secrets of an old file store are migrated into the keyring on the first use —
+  compared with the keyring first, written, read back, compared, and only then the file is
+  deleted. The keyring is never overwritten by the file: a secret with another value in the
+  keyring refuses the migration
+- **The lock of the secrets store**: the read-modify-write cycle and the whole migration into the
+  keyring (read the file, write the keyring, verify, delete the file) run under the lock of the
+  store — the file is read again inside the lock
+- **The lock itself** (`src/core/lock.ts`): an **abstract unix socket** (Linux only) — the kernel
+  gives the name to exactly one process and takes it away when the holder dies. A file-based lock
+  cannot hold it: taking a dead lock over means replacing the file at the path, and there is no
+  atomic "replace it, but only if the dead lock is still there" — two processes would both enter
+  the critical section. The lock has no protocol: an incoming connection is destroyed at once, so
+  a stranger cannot delay the release of the lock
+- **The privacy of the store**: the mode of the directory (`0700`) is enforced before every read
+  and every write — a directory that cannot be made private refuses the read and the write
+- **The input of a secret**: a piped stdin is read as is, a terminal asks with the echo switched
+  off (`@inquirer/prompts`, `password()`) — no patching of the private fields of `readline`
 - **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro
 
 ## Pre-Commit Checklist
@@ -127,4 +158,4 @@ error, not a fallback — only a *missing* file falls back to the defaults.
 
 `~/.10x-chat/sessions/<uuid>/` — per-session metadata, prompt bundle, captured response.
 `~/.10x-chat/profiles/` — browser profiles (shared default + per-provider isolated).
-`~/.10x-chat/secrets.json` — the credentials of the proxy (mode 600, never in the config file).
+`~/.10x-chat/secrets.json` — the credentials of the proxy (mode 600, never in the config file); the file store is the fallback of the system keyring.

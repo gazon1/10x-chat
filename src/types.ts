@@ -113,9 +113,9 @@ export interface SessionResult {
 /**
  * The proxy of the config file.
  *
- * The credentials are not part of it: they live in the secrets file
- * (`~/.10x-chat/secrets.json`), so they never end up in a config file that is
- * copied around (see `docs/config-contract.md`).
+ * The credentials are not part of it: they live in the secrets store (the
+ * system keyring or `~/.10x-chat/secrets.json`), so they never end up in a
+ * config file that is copied around (see `docs/config-contract.md`).
  */
 export interface ProxyConfig {
   /**
@@ -134,6 +134,17 @@ export interface ProxyConfig {
 
 // ── Config Types ────────────────────────────────────────────────
 
+/**
+ * Where the secrets of the store are kept.
+ *
+ * - `auto` (default): the system keyring when it is reachable, the file
+ *   otherwise.
+ * - `keyring`: the system keyring only — a run without it fails instead of
+ *   falling back to a plaintext file.
+ * - `file`: the file store only.
+ */
+export type CredentialStorage = 'auto' | 'keyring' | 'file';
+
 export interface AppConfig {
   defaultProvider: ProviderName;
   defaultModel?: string;
@@ -148,10 +159,20 @@ export interface AppConfig {
   /** Profile mode: 'shared' (default, single profile) or 'isolated' (per-provider profiles). */
   profileMode: ProfileMode;
   /**
+   * The name of the secret that holds the API key of a provider, per provider.
+   * The keys themselves live in the secrets store, never in this file.
+   */
+  providerKeys?: Partial<Record<ProviderName, string>>;
+  /**
    * The proxy of the browser. Without this key the proxy of the environment is
    * used; with `enabled: false` there is no proxy at all.
    */
   proxy?: ProxyConfig;
+  /**
+   * Where the secrets live: the system keyring, the file, or the first that
+   * works (`auto`, the default).
+   */
+  credentialStorage?: CredentialStorage;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

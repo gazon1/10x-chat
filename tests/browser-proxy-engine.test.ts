@@ -59,7 +59,7 @@ describe('the proxy of the browser', () => {
         },
       }),
     );
-    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+    await writeSecrets(JSON.stringify({ 'proxy.username': LOGIN, 'proxy.password': SECRET }));
 
     const { getChromium } = await import('../src/browser/engine.js');
     const chromium = await getChromium();
@@ -102,7 +102,7 @@ describe('the proxy of the browser', () => {
     await writeConfig(
       JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
     );
-    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+    await writeSecrets(JSON.stringify({ 'proxy.username': LOGIN, 'proxy.password': SECRET }));
 
     const { getChromium } = await import('../src/browser/engine.js');
     const chromium = await getChromium();

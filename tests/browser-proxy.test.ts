@@ -326,7 +326,7 @@ describe('the effective proxy', () => {
     await writeConfig(
       JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
     );
-    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+    await writeSecrets(JSON.stringify({ 'proxy.username': LOGIN, 'proxy.password': SECRET }));
 
     const proxy = await resolve();
 
@@ -339,7 +339,7 @@ describe('the effective proxy', () => {
     await writeConfig(
       JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
     );
-    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+    await writeSecrets(JSON.stringify({ 'proxy.username': LOGIN, 'proxy.password': SECRET }));
 
     const proxy = await resolve();
 
@@ -388,7 +388,10 @@ describe('the effective proxy', () => {
     await writeConfig(
       JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
     );
-    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }), 0o644);
+    await writeSecrets(
+      JSON.stringify({ 'proxy.username': LOGIN, 'proxy.password': SECRET }),
+      0o644,
+    );
 
     await expect(resolve()).rejects.toThrow(/must not be readable by other users/);
   });

@@ -27,15 +27,30 @@ export function stripAnsi(value: string): string {
  * The CLI is started with `node --import tsx`, so the suite exercises the real
  * entry point (the same code the built `dist/` runs) without needing a build
  * step first.
+ *
+ * A variable of `env` whose value is `undefined` is **removed** from the
+ * environment of the child — the tests use it to take a variable of the
+ * parent (the forced file store of `tests/setup.ts`) away.
+ *
+ * @param input what is written to the stdin of the CLI (and closed)
  */
-export function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<CliResult> {
+export function runCli(
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+  input?: string,
+): Promise<CliResult> {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete childEnv[key];
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.env.NODE_BINARY ?? 'node',
       ['--import', 'tsx', CLI_ENTRY, ...args],
       {
         cwd: REPO_ROOT,
-        env: { ...process.env, ...env },
+        env: childEnv,
       },
     );
     let stdout = '';
@@ -53,6 +68,9 @@ export function runCli(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Cli
       const err = clean(stderr);
       resolve({ code: code ?? -1, stdout: out, stderr: err, output: out + err });
     });
+    if (input !== undefined) {
+      child.stdin.end(input);
+    }
   });
 }
 

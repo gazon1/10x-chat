@@ -2,8 +2,6 @@
 
 > Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) from your terminal via browser automation.
 
-**English** | [繁體中文](./README-zh.md)
-
 10x-chat drives a **patched Chromium** ([CloakBrowser](https://www.npmjs.com/package/cloakbrowser)) through Playwright, with persisted login profiles. Login once, then send prompts — bundled with file context — from your CLI or AI coding agent.
 
 ## Use with OpenClaw
@@ -19,8 +17,11 @@ https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-cha
 | Requirement | Version |
 |---|---|
 | Node.js | ≥ 22 (or Bun ≥ 1.3) |
-| OS | Linux x86_64/arm64, macOS arm64/x86_64, Windows x86_64 (the CloakBrowser platform matrix) |
+| OS | Linux x86_64/arm64 — the supported platform (see the note below) |
 | Display | only for the headed mode — the headed mode is the default for ChatGPT, Claude and Perplexity |
+
+> [!NOTE]
+> **Linux only.** The browser build of CloakBrowser also ships for macOS and Windows, but 10x-chat does not run there: the lock that guards the browser profiles and the secrets store is an **abstract unix socket**, and only the kernel of Linux provides one. On macOS and Windows every launch of a browser and every command that touches the store fails with `The lock of 10x-chat is an abstract unix socket — it works on Linux only.`
 
 No system Chromium is needed: the `postinstall` step of the package downloads the CloakBrowser build into `~/.cloakbrowser/`.
 
@@ -90,14 +91,14 @@ NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
 }
 ```
 
-The credentials of the proxy are not part of the config file — they live in `~/.10x-chat/secrets.json` (`chmod 600`):
+The credentials of the proxy are not part of the config file — they live in the secrets store under the names `proxy.username` and `proxy.password`:
 
-```json5
-// ~/.10x-chat/secrets.json
-{
-  proxy: { username: 'proxy-user', password: '…' },
-}
+```bash
+10x-chat secrets set proxy.username   # asks for the value, input hidden
+10x-chat secrets set proxy.password
 ```
+
+The store keeps the values in the **system keyring** (the Secret Service of the desktop session) or — as a fallback — in `~/.10x-chat/secrets.json` (`chmod 600`):
 
 | Proxy | Supported |
 |---|---|
@@ -107,6 +108,23 @@ The credentials of the proxy are not part of the config file — they live in `~
 | `socks4://` / `socks5://` **with** credentials | **no** — rejected, because Chromium would have to authenticate through the URL in its command line |
 
 The full contract (the order of the variables, where the credentials live, why SOCKS with credentials is refused) is in [docs/config-contract.md](docs/config-contract.md).
+
+## Secrets
+
+API keys and proxy credentials are stored once — in the **system keyring** (the Secret Service of the desktop session) or, as a fallback, in `~/.10x-chat/secrets.json` (`0600` on Unix) — and are referred to by name in the config file.
+```bash
+10x-chat secrets set openai-key   # asks for the value, input hidden
+printf %s "$KEY" | 10x-chat secrets set openai-key
+10x-chat secrets list              # the names — never the values
+10x-chat secrets remove openai-key
+
+10x-chat config set provider-key chatgpt openai-key
+10x-chat config unset provider-key chatgpt
+```
+
+The backend is chosen by the setting `credentialStorage` of the config file: `auto` (the default — the keyring when it is reachable, the file otherwise), `keyring` (the keyring only) or `file` (the file only). A store that was created before the keyring existed is migrated into it on the first use.
+
+The permissions, the platform limits, the backup and the rotation are in [docs/secrets.md](docs/secrets.md).
 
 ## Login and sessions
 
@@ -289,6 +307,16 @@ View or modify configuration.
 The order of the settings (CLI flag > config file > default), the rules of the
 profiles and the proxy contract are documented in
 [docs/config-contract.md](docs/config-contract.md).
+
+### `secrets`
+
+Store credentials outside of the config file — see [Secrets](#secrets).
+
+```bash
+10x-chat secrets list
+10x-chat secrets set corp-proxy
+10x-chat secrets remove corp-proxy
+```
 
 ### `skill`
 
