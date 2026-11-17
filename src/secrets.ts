@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseCredentialStorage, validateConfig } from './config-schema.js';
 import { acquireLock } from './core/lock.js';
 import { createSecretServiceBackend, KEYRING_SERVICE, type KeyringBackend } from './keyring.js';
 import { getConfigPath, getSecretsPath } from './paths.js';
-import type { CredentialStorage } from './types.js';
+import type { AppConfig, CredentialStorage } from './types.js';
 
 export { getSecretsPath };
+export { CREDENTIAL_STORAGE_VALUES, parseCredentialStorage } from './config-schema.js';
 
 /** The name of the lock file that guards the read-modify-write cycle. */
 const LOCK_NAME = 'secrets.lock';
@@ -17,9 +19,6 @@ const LOCK_TIMEOUT_MS = 10_000;
 
 /** The environment variable that overrides the setting of the config file. */
 export const CREDENTIAL_STORAGE_ENV = 'TEN_X_CHAT_CREDENTIAL_STORAGE';
-
-/** The values of the `credentialStorage` setting. */
-export const CREDENTIAL_STORAGE_VALUES: readonly CredentialStorage[] = ['auto', 'keyring', 'file'];
 
 /**
  * The secrets store.
@@ -184,6 +183,22 @@ class FileSecretStore implements SecretStore {
     // (the pattern allows it), and a plain object would turn the assignment
     // into a setter of `Object.prototype` instead of an own property.
     const result: Record<string, string> = Object.create(null);
+    // The file key every logical name came from — the old format of the proxy
+    // settings and the new names of the secrets can carry the same name.
+    const origins = new Map<string, string>();
+    const assign = (target: string, value: string, source: string): void => {
+      const previous = origins.get(target);
+      if (previous !== undefined) {
+        // The same logical name twice: the value would depend on the order of
+        // the keys of the file, and one of the two values would be lost.
+        throw new Error(
+          `Secrets file ${this.filePath} is corrupt — the secret "${target}" is defined twice ` +
+            `("${previous}" and "${source}"). Repair or delete the file, then set the secret again.`,
+        );
+      }
+      origins.set(target, source);
+      result[target] = value;
+    };
     for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
       // A damaged store is an error, not a store with arbitrary names: every
       // operation of the store works with the name, and the name of the
@@ -197,7 +212,7 @@ class FileSecretStore implements SecretStore {
       }
 
       if (typeof value === 'string') {
-        result[name] = value;
+        assign(name, value, name);
         continue;
       }
 
@@ -205,8 +220,8 @@ class FileSecretStore implements SecretStore {
       // proxy in one object. They are two secrets of the store now — the old
       // shape is read, the next write stores the new one.
       if (name === 'proxy' && isProxyCredentials(value)) {
-        if (value.username !== undefined) result[PROXY_USERNAME_SECRET] = value.username;
-        if (value.password !== undefined) result[PROXY_PASSWORD_SECRET] = value.password;
+        if (value.username !== undefined) assign(PROXY_USERNAME_SECRET, value.username, name);
+        if (value.password !== undefined) assign(PROXY_PASSWORD_SECRET, value.password, name);
         continue;
       }
 
@@ -529,37 +544,21 @@ export interface SecretStoreOptions {
 }
 
 /**
- * Check the value of the `credentialStorage` setting.
- *
- * @param value the value from the config file or from the environment
- * @param context what the value is (for the message)
- */
-export function parseCredentialStorage(
-  value: unknown,
-  context = '"credentialStorage"',
-): CredentialStorage {
-  if (
-    typeof value === 'string' &&
-    (CREDENTIAL_STORAGE_VALUES as readonly string[]).includes(value)
-  ) {
-    return value as CredentialStorage;
-  }
-  throw new Error(`${context} must be one of: ${CREDENTIAL_STORAGE_VALUES.join(', ')}`);
-}
-
-/**
  * Where the secrets of this run are stored.
  *
  * The environment wins over the config file, the config file over the default
  * (`auto` — the keyring when it is reachable, the file otherwise).
  *
  * A **missing** config file is the only case that falls back to the default.
- * A config file that cannot be read, cannot be parsed or does not hold an
- * object is an **error**: the store of the secrets is chosen by the config
- * file, and a broken one must not silently switch the run to the plaintext
- * file — `credentialStorage: "keyring"` is the promise that no secret ever
- * reaches a file, and a promise that cannot be read is not a promise that can
- * be broken quietly.
+ * A config file that cannot be read, cannot be parsed or does not hold a
+ * valid config is an **error**: the store of the secrets is chosen by the
+ * config file, and a broken one must not silently switch the run to the
+ * plaintext file — `credentialStorage: "keyring"` is the promise that no
+ * secret ever reaches a file, and a promise that cannot be read is not a
+ * promise that can be broken quietly.
+ *
+ * The whole config file is validated (the same validation as `loadConfig()`):
+ * a config file with a typo in another setting is a broken config file too.
  */
 async function readCredentialStorage(): Promise<CredentialStorage> {
   const fromEnv = process.env[CREDENTIAL_STORAGE_ENV]?.trim().toLowerCase();
@@ -590,17 +589,17 @@ async function readCredentialStorage(): Promise<CredentialStorage> {
     );
   }
 
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  let config: Partial<AppConfig>;
+  try {
+    config = validateConfig(parsed, configPath);
+  } catch (error) {
     throw new Error(
-      `Invalid config file ${configPath}: expected an object at the top level. ` +
-        `The store of the secrets is not chosen while the config file is broken — ` +
+      `${message(error)} The store of the secrets is not chosen while the config file is broken — ` +
         `repair it, then try again.`,
     );
   }
 
-  const value = (parsed as Record<string, unknown>).credentialStorage;
-  if (value === undefined) return 'auto';
-  return parseCredentialStorage(value, `"credentialStorage" in the config file ${configPath}`);
+  return config.credentialStorage ?? 'auto';
 }
 
 /** The store of the data directory of this run. */

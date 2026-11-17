@@ -101,7 +101,11 @@ file when the Secret Service is not reachable. `credentialStorage: "keyring"`
 is the promise that no secret ever reaches a file, and a promise that cannot
 be read is not a promise that may be broken quietly. The commands that touch
 the store (`secrets set`, `secrets list`, `secrets remove`) do not run
-`loadConfig()` — they read the setting themselves, with the same rule.
+`loadConfig()` — they read the setting themselves, with the same rule. They
+validate the **whole** config file (the same validation as `loadConfig()`): a
+config file with a typo in another setting (`"credentialStorag"`) or with an
+invalid value (`"headless": "yes"`) is a broken config file too, and it is
+refused before the store is chosen.
 
 ## The keyring
 
@@ -304,7 +308,10 @@ underscores. Repair or delete the file, then set the secret again.
 - The file format of the proxy settings of [#34](https://github.com/gazon1/10x-chat/pull/34)
   (`{ "proxy": { "username": "…", "password": "…" } }`) is still read: the two
   values become the secrets `proxy.username` and `proxy.password`. The next
-  write stores the new format.
+  write stores the new format. A file that carries the old format **and** the
+  new name of the same secret is refused (`the secret "proxy.username" is
+  defined twice`) — the value would depend on the order of the keys of the
+  file.
 
 ## Rotating and revoking a key
 

@@ -221,6 +221,20 @@ describe('secrets store', () => {
     expect(await store.get(PROXY_PASSWORD_SECRET)).toBe('proxy-pass');
     expect(await store.list()).toEqual(['proxy.password', 'proxy.username']);
   });
+
+  it('refuses a file where the old proxy format collides with a secret name', async () => {
+    // Both entries become the secret `proxy.username` — the value would
+    // depend on the order of the keys of the file, and one of the two values
+    // would be lost.
+    await writeFile(
+      getSecretsPath(),
+      JSON.stringify({ proxy: { username: 'old-value' }, 'proxy.username': 'new-value' }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    await expect(getSecretStore().list()).rejects.toThrow(/defined twice/);
+    await expect(getSecretStore().get(PROXY_USERNAME_SECRET)).rejects.toThrow(/defined twice/);
+  });
 });
 
 describe('secret references in the config file', () => {
@@ -334,6 +348,22 @@ describe('a broken config file', () => {
     await writeConfig('["credentialStorage"]');
 
     await expect(store().set('openai-key', SECRET)).rejects.toThrow(/expected an object/);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
+  it('refuses a config file with an unknown key', async () => {
+    // The typo of `credentialStorage` — the setting is not read at all, and
+    // the store would fall back to the plaintext file.
+    await writeConfig('{ "credentialStorag": "keyring" }');
+
+    await expect(store().set('openai-key', SECRET)).rejects.toThrow(/unknown key/);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
+  it('refuses a config file whose other setting is invalid', async () => {
+    await writeConfig('{ "headless": "yes" }');
+
+    await expect(store().set('openai-key', SECRET)).rejects.toThrow(/"headless" must be true/);
     expect(await exists(getSecretsPath())).toBe(false);
   });
 
