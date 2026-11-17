@@ -184,6 +184,62 @@ describe('the API transport', () => {
   });
 });
 
+describe('the status of an API session', () => {
+  it('is running while the request is in flight', async () => {
+    let statusDuringRequest = '';
+    let markStarted: () => void = () => {};
+    let release: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const transport: ApiTransport = {
+      capabilities: { attachments: false, streaming: false, cancellation: false },
+      async send() {
+        const sessions = await listSessions();
+        statusDuringRequest = sessions[0]?.status ?? '';
+        markStarted();
+        await gate;
+        return { text: 'the answer', markdown: 'the answer', truncated: false };
+      },
+    };
+
+    const run = runApiChat(
+      { prompt: 'hello', provider: 'deepseek' },
+      { transport, client: fakeClient({ status: 200, text: '' }) },
+    );
+
+    await started;
+    expect(statusDuringRequest).toBe('running');
+
+    release();
+    const result = await run;
+    expect((await getSession(result.sessionId)).meta.status).toBe('completed');
+  });
+
+  it('is failed when the proxy cannot be resolved', async () => {
+    const transport = fakeTransport();
+
+    const error = await runApiChat(
+      { prompt: 'hello', provider: 'deepseek' },
+      {
+        transport,
+        resolveProxy: async () => {
+          throw new Error('the proxy cannot be resolved');
+        },
+      },
+    ).catch((err: unknown) => err as Error);
+
+    expect(error.message).toContain('the proxy cannot be resolved');
+    expect(transport.calls).toHaveLength(0);
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
+  });
+});
+
 describe('the selection of the transport', () => {
   it('keeps the browser as the default', () => {
     expect(resolveTransport({ prompt: 'hello' })).toBe('browser');

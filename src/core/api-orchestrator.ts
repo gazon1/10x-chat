@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { BrowserProxy } from '../browser/proxy.js';
 import { loadConfig, resolveEffectiveProxy } from '../config.js';
 import { getApiTransport } from '../providers/api/registry.js';
 import { getProvider } from '../providers/index.js';
@@ -18,6 +19,8 @@ export interface ApiChatDeps {
   transport?: ApiTransport;
   /** The HTTP client of the run — a real one by default. */
   client?: ApiHttpClient;
+  /** The resolver of the proxy of the run — the effective one by default. */
+  resolveProxy?: () => Promise<BrowserProxy | null>;
 }
 
 /**
@@ -109,10 +112,18 @@ export async function runApiChat(
   console.log(chalk.dim(`Session: ${session.id}`));
   console.log(chalk.blue(`Provider: ${provider.config.displayName} (api)`));
 
-  const client = deps.client ?? createApiHttpClient(await resolveEffectiveProxy());
+  // The session is running from here on: a run that dies now must not leave
+  // a session that claims to be pending.
+  await updateSession(session.id, { status: 'running' });
+
   const startTime = Date.now();
 
   try {
+    // The client is built inside the try: a failure of the setup (a proxy
+    // that cannot be resolved) has to end the session as failed too.
+    const client =
+      deps.client ?? createApiHttpClient(await (deps.resolveProxy ?? resolveEffectiveProxy)());
+
     const captured = await transport.send({
       prompt: bundle,
       model,
