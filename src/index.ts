@@ -1,7 +1,8 @@
 export { type BrowserSession, launchBrowser } from './browser/index.js';
 export { loadConfig, resolveEffectiveProxy, saveConfig } from './config.js';
 export { getProviderApiKey } from './core/credentials.js';
-export { buildBundle, type ChatResult, runChat } from './core/index.js';
+export { buildBundle, type ChatResult, runApiChat, runChat } from './core/index.js';
+export { getApiTransport, listApiProviders } from './providers/api/registry.js';
 export { getProvider, isValidProvider, listProviders } from './providers/index.js';
 export {
   getSecretStore,
@@ -16,6 +17,11 @@ export {
   listSessions,
 } from './session/index.js';
 export type {
+  ApiHttpClient,
+  ApiHttpRequest,
+  ApiHttpResponse,
+  ApiRequest,
+  ApiTransport,
   AppConfig,
   CapturedResponse,
   ChatOptions,
@@ -27,4 +33,6 @@ export type {
   ProviderName,
   SessionMeta,
   SessionResult,
+  TransportCapabilities,
+  TransportName,
 } from './types.js';

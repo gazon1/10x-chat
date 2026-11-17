@@ -10,7 +10,7 @@ import {
   runChatAll,
 } from '../core/index.js';
 import { isValidProvider } from '../providers/index.js';
-import type { ProviderName } from '../types.js';
+import type { ProviderName, TransportName } from '../types.js';
 
 const DIVIDER = chalk.dim('─'.repeat(60));
 
@@ -31,6 +31,7 @@ export function createChatCommand(): Command {
     .option('--headed', 'Show browser window during chat')
     .option('--headless', 'Force headless browser even for providers that prefer headed')
     .option('--timeout <ms>', 'Response timeout in milliseconds (overrides the config)')
+    .option('--transport <name>', 'Transport to use: browser (default) or api')
     .option('--save-images <dir>', 'Save generated images to directory')
     .option('--profile <name>', 'Use named browser profile')
     .option('--isolated-profile', 'Use per-provider browser profiles (backward compat)')
@@ -46,6 +47,14 @@ export function createChatCommand(): Command {
       }
       if (options.headed && options.headless) {
         console.error(chalk.red('Cannot use --headed and --headless together.'));
+        process.exit(1);
+      }
+
+      const transport = options.transport as string | undefined;
+      if (transport && transport !== 'browser' && transport !== 'api') {
+        console.error(
+          chalk.red(`Invalid --transport value: ${transport} (expected "browser" or "api")`),
+        );
         process.exit(1);
       }
 
@@ -72,6 +81,7 @@ export function createChatCommand(): Command {
         isolatedProfile: options.isolatedProfile,
         profile: options.profile,
         timeoutMs,
+        transport: transport as TransportName | undefined,
       };
 
       // Dry run: just show the bundle
@@ -97,7 +107,7 @@ export function createChatCommand(): Command {
       if (options.all) {
         try {
           const results = await runChatAll(commonOpts);
-          renderChatAllResult(results);
+          renderChatAllResult(results, transport as TransportName | undefined);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(chalk.red(`Error: ${message}`));
@@ -117,7 +127,7 @@ export function createChatCommand(): Command {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(chalk.red(`Error: ${message}`));
-        printFailureHint(error);
+        printFailureHint(error, transport as TransportName | undefined);
         process.exit(1);
       }
     });
@@ -125,7 +135,7 @@ export function createChatCommand(): Command {
   return cmd;
 }
 
-function renderChatAllResult(results: ChatAllResult[]): void {
+function renderChatAllResult(results: ChatAllResult[], transport?: TransportName): void {
   console.log('\n');
   console.log(chalk.bold.blue('═'.repeat(60)));
   console.log(chalk.bold.blue('  RESPONSES'));
@@ -146,7 +156,7 @@ function renderChatAllResult(results: ChatAllResult[]): void {
     } else {
       console.log(chalk.bold.red(`▶ ${r.provider.toUpperCase()} — FAILED`));
       console.log(chalk.red(`  ${r.error}`));
-      if (r.kind) console.log(chalk.yellow(`  Hint: ${failureHint(r.kind)}`));
+      if (r.kind) console.log(chalk.yellow(`  Hint: ${failureHint(r.kind, transport)}`));
     }
   }
   console.log('');

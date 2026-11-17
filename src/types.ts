@@ -87,6 +87,85 @@ export interface Provider {
   actions: ProviderActions;
 }
 
+// ── Transport Types ─────────────────────────────────────────────
+
+/**
+ * The transport that carries a prompt to a provider.
+ *
+ * `browser` (the default) drives the web app of the provider; `api` sends the
+ * prompt to the HTTP API of the provider with the configured API key.
+ */
+export type TransportName = 'browser' | 'api';
+
+/**
+ * What a transport can do.
+ *
+ * A capability that a transport does not have is rejected with an error, never
+ * silently ignored — a prompt that is sent without its attachment is worse than
+ * a run that fails.
+ */
+export interface TransportCapabilities {
+  /** Files can be attached to the prompt. */
+  attachments: boolean;
+  /** The answer arrives in pieces while it is generated. */
+  streaming: boolean;
+  /** The request can be cancelled while it runs. */
+  cancellation: boolean;
+}
+
+/** A request of the shared HTTP client of the API transports. */
+export interface ApiHttpRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  /** The deadline of the request in milliseconds. */
+  timeoutMs: number;
+}
+
+/** The answer of the shared HTTP client. */
+export interface ApiHttpResponse {
+  status: number;
+  /** The body of the answer. */
+  text: string;
+}
+
+/**
+ * The shared HTTP client of the API transports.
+ *
+ * It is an interface, so a transport can be tested without a network — and
+ * without a browser.
+ */
+export interface ApiHttpClient {
+  request(req: ApiHttpRequest): Promise<ApiHttpResponse>;
+}
+
+/** What an API transport receives. */
+export interface ApiRequest {
+  /** The prompt — the bundle of the prompt and the files. */
+  prompt: string;
+  /** The model to use, when the provider has more than one. */
+  model?: string;
+  /** The API key of the provider — never logged, never in an error. */
+  apiKey: string;
+  /** The deadline of the request in milliseconds. */
+  timeoutMs: number;
+  /** The shared HTTP client — it honors the effective proxy. */
+  client: ApiHttpClient;
+}
+
+/**
+ * The API transport of a provider.
+ *
+ * It is independent of the browser: no selectors, no login check, no page.
+ */
+export interface ApiTransport {
+  /** What the transport supports. */
+  capabilities: TransportCapabilities;
+  /** Send a prompt and return the normalized response. */
+  send(req: ApiRequest): Promise<CapturedResponse>;
+}
+
 // ── Session Types ───────────────────────────────────────────────
 
 export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout';
@@ -201,6 +280,8 @@ export interface ChatOptions {
   isolatedProfile?: boolean;
   /** Named browser profile under ~/.10x-chat/profiles/<name>. */
   profile?: string;
+  /** The transport to use: 'browser' (the default) or 'api'. */
+  transport?: TransportName;
 }
 
 // ── Research Types ──────────────────────────────────────────────

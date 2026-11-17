@@ -141,6 +141,16 @@ The permissions, the platform limits, the backup and the rotation are in [docs/s
 - `migrate` merges the old per-provider profiles into the shared one.
 - Every run writes its own session (`meta.json`, `bundle.md`, `response.md`) into `~/.10x-chat/sessions/<uuid>/`; `status` lists them, `session <id>` shows one.
 
+## Transports
+
+A prompt reaches a provider through the **browser** (the default — the web app is driven, a logged-in session is needed) or through the **HTTP API** of the provider (`--transport api` — an API key from the secrets store is needed, no browser is started).
+
+```bash
+10x-chat chat -p "Explain this" --provider deepseek --transport api
+```
+
+The capabilities that differ (attachments are rejected, no streaming, no cancellation), the setup of the key and the failures are in [docs/transports.md](docs/transports.md).
+
 ## Commands
 
 ### `login <provider>`
@@ -182,6 +192,7 @@ Send a prompt to an AI provider via browser automation.
 | `--headed` | Show browser window during chat |
 | `--headless` | Force headless, also for the providers that normally run headed |
 | `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
+| `--transport <name>` | `browser` (default) or `api` — see [docs/transports.md](docs/transports.md) |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |
 | `--isolated-profile` | Use the per-provider browser profile |

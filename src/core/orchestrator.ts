@@ -6,6 +6,7 @@ import { loadConfig } from '../config.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
+import { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
 import { buildBundle } from './bundle.js';
 import type { FailureKind } from './failures.js';
 import { checkProviderSession, failureKind, reclassify } from './failures.js';
@@ -42,8 +43,15 @@ export interface ChatResult {
  * 4. Submit the prompt
  * 5. Capture the response
  * 6. Save session
+ *
+ * With `--transport api` the prompt goes to the HTTP API of the provider
+ * instead: no browser, no login check, the API key of the secrets store.
  */
-export async function runChat(options: ChatOptions): Promise<ChatResult> {
+export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Promise<ChatResult> {
+  if (resolveTransport(options) === 'api') {
+    return runApiChat(options, deps);
+  }
+
   const config = await loadConfig();
   const providerName = options.provider ?? config.defaultProvider;
   const provider = getProvider(providerName);

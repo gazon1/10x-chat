@@ -26,6 +26,7 @@ the environment.
 | Profile mode | `--profile` / `--isolated-profile` | `profileMode` | `shared` |
 | Proxy | — | `proxy` (§5) | the environment (§5) |
 | API key of a provider | — | `providerKeys.<provider>` (a name, §6) | none |
+| Transport | `--transport browser\|api` | — | `browser` |
 
 A CLI flag that is **not given** does not shadow the config file. This is why
 `--timeout` has no default value: a flag with a default would always win over
