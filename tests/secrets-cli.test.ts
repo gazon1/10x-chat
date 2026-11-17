@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@inquirer/prompts', () => ({ password: vi.fn() }));
 
 const { password } = await import('@inquirer/prompts');
-const { readValue } = await import('../src/cli/secrets.js');
+const { readValue, createSecretsCommand } = await import('../src/cli/secrets.js');
 
 /** A stream that pretends to be a terminal (the prompt branch). */
 function terminal(): Readable & { isTTY?: boolean } {
@@ -36,5 +36,29 @@ describe('reading the value of a secret', () => {
     vi.mocked(password).mockResolvedValue('typed-value');
     expect(await readValue(terminal())).toBe('typed-value');
     expect(password).toHaveBeenCalledWith({ message: 'Value (input hidden):' });
+  });
+});
+
+describe('the name of a secret', () => {
+  beforeEach(() => {
+    vi.mocked(password).mockReset();
+  });
+
+  it('is checked before the value is asked for', async () => {
+    const cmd = createSecretsCommand();
+
+    await expect(cmd.parseAsync(['set', '../escape'], { from: 'user' })).rejects.toThrow(
+      /Invalid secret name/,
+    );
+    // The user was not asked for a password that could not be stored.
+    expect(password).not.toHaveBeenCalled();
+  });
+
+  it('is checked before a secret is removed', async () => {
+    const cmd = createSecretsCommand();
+
+    await expect(cmd.parseAsync(['remove', '../escape'], { from: 'user' })).rejects.toThrow(
+      /Invalid secret name/,
+    );
   });
 });

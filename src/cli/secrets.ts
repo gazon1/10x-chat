@@ -2,7 +2,7 @@ import type { Readable } from 'node:stream';
 import { password } from '@inquirer/prompts';
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { getSecretStore } from '../secrets.js';
+import { assertSecretName, getSecretStore } from '../secrets.js';
 
 /** The input of the prompt: a pipe (no TTY) or a terminal. */
 export type SecretInput = Readable & { isTTY?: boolean };
@@ -61,6 +61,9 @@ export function createSecretsCommand(): Command {
     .description('Store a secret, replacing an existing one with the same name')
     .argument('<name>', 'Name of the secret')
     .action(async (name: string) => {
+      // The name is checked before the value is asked for: a password that
+      // could not be stored must not be typed in.
+      assertSecretName(name);
       const store = getSecretStore();
       const existed = (await store.list()).includes(name);
       const value = await readValue();
@@ -73,6 +76,7 @@ export function createSecretsCommand(): Command {
     .description('Delete a stored secret')
     .argument('<name>', 'Name of the secret')
     .action(async (name: string) => {
+      assertSecretName(name);
       const store = getSecretStore();
       if (!(await store.remove(name))) {
         console.error(chalk.red(`No secret named "${name}"`));

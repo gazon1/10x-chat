@@ -101,6 +101,23 @@ describe('the keyring store', () => {
     await expect(keyringStore().set('../escape', SECRET)).rejects.toThrow(/Invalid secret name/);
   });
 
+  it('rejects an invalid secret name on a read and on a delete', async () => {
+    await expect(keyringStore().get('../escape')).rejects.toThrow(/Invalid secret name/);
+    await expect(keyringStore().remove('../escape')).rejects.toThrow(/Invalid secret name/);
+    // Nothing reached the keyring.
+    expect(backend.entries.size).toBe(0);
+  });
+
+  it('keeps a secret whose name is a property of Object.prototype', async () => {
+    const store = keyringStore();
+    await store.set('__proto__', SECRET);
+
+    expect(await store.get('__proto__')).toBe(SECRET);
+    expect(await store.list()).toEqual(['__proto__']);
+    expect(await store.remove('__proto__')).toBe(true);
+    expect(await store.get('__proto__')).toBeUndefined();
+  });
+
   it('ignores the entries of another program', async () => {
     backend.entries.set('foreign entry', 'value');
     backend.entries.set('openai-key', SECRET);
@@ -130,6 +147,56 @@ describe('the keyring store', () => {
     backend.broken = true;
 
     await expect(keyringStore().list()).rejects.toThrow(/could not be migrated/);
+    expect(await exists(getSecretsPath())).toBe(true);
+  });
+
+  it('migrates a secret that the keyring already holds with the same value', async () => {
+    await writeFile(getSecretsPath(), JSON.stringify({ 'openai-key': SECRET }), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    backend.entries.set('openai-key', SECRET);
+
+    const store = keyringStore();
+    expect(await store.list()).toEqual(['openai-key']);
+    expect(backend.entries.get('openai-key')).toBe(SECRET);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
+  it('refuses to overwrite a secret of the keyring with an older value', async () => {
+    await writeFile(getSecretsPath(), JSON.stringify({ 'openai-key': 'old-key' }), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    backend.entries.set('openai-key', 'new-key');
+
+    const error = await keyringStore()
+      .list()
+      .catch((err: unknown) => err as Error);
+    expect(error.message).toMatch(/could not be migrated/);
+    expect(error.message).toMatch(/already holds a different value/);
+    // The message names the secret, never its value.
+    expect(error.message).not.toContain('old-key');
+    expect(error.message).not.toContain('new-key');
+
+    // The newer value survived and the file is untouched.
+    expect(backend.entries.get('openai-key')).toBe('new-key');
+    expect(await exists(getSecretsPath())).toBe(true);
+    expect(await readFile(getSecretsPath(), 'utf-8')).toContain('old-key');
+  });
+
+  it('finds every conflict before it writes the first secret', async () => {
+    await writeFile(
+      getSecretsPath(),
+      JSON.stringify({ 'openai-key': 'old-key', 'deepseek-key': 'file-value' }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    backend.entries.set('openai-key', 'new-key');
+
+    await expect(keyringStore().list()).rejects.toThrow(/already holds a different value/);
+
+    // The secret without a conflict was not written — the keyring is untouched.
+    expect(backend.entries.has('deepseek-key')).toBe(false);
     expect(await exists(getSecretsPath())).toBe(true);
   });
 

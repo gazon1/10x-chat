@@ -60,9 +60,20 @@ export const PROXY_USERNAME_SECRET = 'proxy.username';
 /** The name of the secret that holds the password of the proxy. */
 export const PROXY_PASSWORD_SECRET = 'proxy.password';
 
+/**
+ * Whether a name may be used as the name of a secret.
+ *
+ * The names `__proto__`, `constructor` and `toString` are ordinary names: the
+ * store keeps them as own properties of an object without a prototype, so
+ * they are never confused with something inherited from `Object.prototype`.
+ */
+export function isSecretName(name: string): boolean {
+  return SECRET_NAME_PATTERN.test(name) && name !== '.' && name !== '..';
+}
+
 /** Check a secret name — the name becomes a key of the secrets file. */
 export function assertSecretName(name: string): void {
-  if (!SECRET_NAME_PATTERN.test(name) || name === '.' || name === '..') {
+  if (!isSecretName(name)) {
     throw new Error(
       `Invalid secret name "${name}": a name may contain only letters, numbers, dots, dashes and underscores`,
     );
@@ -164,6 +175,17 @@ class FileSecretStore implements SecretStore {
     // into a setter of `Object.prototype` instead of an own property.
     const result: Record<string, string> = Object.create(null);
     for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+      // A damaged store is an error, not a store with arbitrary names: every
+      // operation of the store works with the name, and the name of the
+      // keyring is an account of an entry.
+      if (!isSecretName(name)) {
+        throw new Error(
+          `Secrets file ${this.filePath} is corrupt — the secret name "${name}" is not allowed: ` +
+            `a name may contain only letters, numbers, dots, dashes and underscores. ` +
+            `Repair or delete the file, then set the secret again.`,
+        );
+      }
+
       if (typeof value === 'string') {
         result[name] = value;
         continue;
@@ -271,6 +293,7 @@ class FileSecretStore implements SecretStore {
   }
 
   async get(name: string): Promise<string | undefined> {
+    assertSecretName(name);
     const secrets = await this.readAll();
     // An own property only: a name like `toString` must not resolve to
     // something inherited from `Object.prototype`.
@@ -288,6 +311,7 @@ class FileSecretStore implements SecretStore {
   }
 
   async remove(name: string): Promise<boolean> {
+    assertSecretName(name);
     return this.withLock(async () => {
       const secrets = await this.readAll();
       if (!Object.hasOwn(secrets, name)) return false;
@@ -330,6 +354,12 @@ class KeyringSecretStore implements SecretStore {
    * read the same file must not migrate it at the same time — the second one
    * would write the old values over the new ones. The file is read again
    * inside the lock: another process may have migrated it already.
+   *
+   * The keyring is **not** a copy of the file: a secret that the keyring
+   * already holds is never overwritten. A conflict — the keyring holds
+   * another value under the same name — stops the migration before the first
+   * write: a conflict that is found halfway would leave the keyring half
+   * migrated, and the file would be deleted in the end.
    */
   private async migrate(): Promise<void> {
     await this.file.withLock(async () => {
@@ -337,7 +367,34 @@ class KeyringSecretStore implements SecretStore {
       const entries = Object.entries(secrets);
       if (entries.length === 0) return;
 
-      for (const [name, value] of entries) await this.backend.set(name, value);
+      // Every conflict is found before the first write.
+      const conflicts: string[] = [];
+      const missing: [string, string][] = [];
+      for (const [name, value] of entries) {
+        const stored = await this.backend.get(name);
+        if (stored === undefined) {
+          // Not in the keyring — it can be moved.
+          missing.push([name, value]);
+        } else if (stored !== value) {
+          // The keyring holds another value: the file is not the source of
+          // truth here, and overwriting it would lose the newer credential.
+          conflicts.push(name);
+        }
+        // The same value: the keyring already holds it — nothing to do.
+      }
+
+      if (conflicts.length > 0) {
+        throw new Error(
+          `The secrets of the file store could not be migrated into the system keyring: ` +
+            `the keyring already holds a different value for ${conflicts
+              .map((name) => `"${name}"`)
+              .join(', ')}. ` +
+            `The file is kept and the keyring is untouched — remove the secret from the keyring ` +
+            `or update the file, then try again.`,
+        );
+      }
+
+      for (const [name, value] of missing) await this.backend.set(name, value);
 
       // The file is only deleted when every secret was read back unchanged.
       for (const [name, value] of entries) {
@@ -367,6 +424,7 @@ class KeyringSecretStore implements SecretStore {
   }
 
   async get(name: string): Promise<string | undefined> {
+    assertSecretName(name);
     await this.ensureMigrated();
     return this.backend.get(name);
   }
@@ -379,6 +437,7 @@ class KeyringSecretStore implements SecretStore {
   }
 
   async remove(name: string): Promise<boolean> {
+    assertSecretName(name);
     await this.ensureMigrated();
     return this.backend.remove(name);
   }

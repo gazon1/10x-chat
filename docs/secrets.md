@@ -47,6 +47,17 @@ are ordinary secrets: the store keeps them as own properties, and a name that
 was never stored reads as *missing* — it never resolves to something inherited
 from the prototype.
 
+The name is checked at **every** operation of the store — a read, a write, a
+delete and the names that are read from `secrets.json`. A name that is not
+allowed is an error and never reaches the keyring. The CLI checks the name
+**before** it asks for the value: a password that could not be stored is not
+typed in.
+
+```
+Invalid secret name "../escape": a name may contain only letters, numbers,
+dots, dashes and underscores
+```
+
 ## The backend
 
 The setting `credentialStorage` in the config file chooses the backend:
@@ -97,9 +108,33 @@ The platform limits:
 A store that was created before the keyring existed holds its values in
 `secrets.json`. The first run with the keyring moves them:
 
-1. every secret of the file is written into the keyring,
-2. every secret is read back and compared with the value of the file,
-3. only then the file is deleted.
+1. every secret of the file is **compared with the keyring**,
+2. the secrets that the keyring does not hold yet are written into it,
+3. every secret is read back and compared with the value of the file,
+4. only then the file is deleted.
+
+**The keyring is never overwritten by the file.** The keyring holds the
+credentials of the running system; the file may be an old copy of them. A
+secret that the keyring already holds is therefore never written again:
+
+| The keyring | The file | What happens |
+|---|---|---|
+| does not hold the secret | holds it | the secret is written into the keyring |
+| holds it with the **same** value | holds it | nothing is written — the values are equal |
+| holds it with **another** value | holds it | **the migration is refused** |
+
+A conflict is found **before the first write**: a conflict that is found
+halfway would leave the keyring half migrated and the file deleted in the end.
+The refused migration changes nothing — the keyring keeps its value, the file
+keeps its content — and the command fails with a message that names the
+secret, never its value:
+
+```
+The secrets of the file store could not be migrated into the system keyring:
+the keyring already holds a different value for "openai-key". The file is kept
+and the keyring is untouched — remove the secret from the keyring or update
+the file, then try again.
+```
 
 A migration that cannot be verified — a keyring that answers with a different
 value, a file that cannot be read — **keeps the file** and fails with a clear
@@ -207,16 +242,25 @@ The temporary file of a write is unique per operation, so two writers never
 share a name.
 
 The **migration into the keyring** takes the same lock for the whole cycle —
-read the file, write the keyring, read the values back, delete the file. Two
-processes that migrate at the same time would otherwise write the old values
-over the new ones: the second one waits for the lock and reads the file again
-inside it — by then the file is gone and there is nothing left to migrate.
+read the file, compare it with the keyring, write the missing secrets, read the
+values back, delete the file. Two processes that migrate at the same time
+would otherwise write the old values over the new ones: the second one waits
+for the lock and reads the file again inside it — by then the file is gone and
+there is nothing left to migrate.
 
 A broken store is an error, never an empty key:
 
 ```
 Secrets file ~/.10x-chat/secrets.json is corrupt — it cannot be parsed (…).
 Repair or delete the file, then set the secret again.
+```
+
+A file with a name that is not allowed is broken in the same way:
+
+```
+Secrets file ~/.10x-chat/secrets.json is corrupt — the secret name "bad name"
+is not allowed: a name may contain only letters, numbers, dots, dashes and
+underscores. Repair or delete the file, then set the secret again.
 ```
 
 ## Backup and migration

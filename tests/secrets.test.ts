@@ -60,6 +60,35 @@ describe('secrets store', () => {
     await expect(getSecretStore().set('../escape', SECRET)).rejects.toThrow(/Invalid secret name/);
   });
 
+  it('rejects an invalid secret name on a read and on a delete', async () => {
+    const store = getSecretStore();
+    await expect(store.get('../escape')).rejects.toThrow(/Invalid secret name/);
+    await expect(store.remove('../escape')).rejects.toThrow(/Invalid secret name/);
+  });
+
+  it('fails clearly on a file with an invalid secret name', async () => {
+    await writeFile(getSecretsPath(), JSON.stringify({ 'bad name': SECRET }), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+
+    await expect(getSecretStore().list()).rejects.toThrow(/corrupt/);
+    await expect(getSecretStore().get('openai-key')).rejects.toThrow(/not allowed/);
+  });
+
+  it('reads a secret whose name is a property of Object.prototype from the file', async () => {
+    // The name is written by hand — a literal `{'__proto__': …}` would set
+    // the prototype instead of an own property.
+    await writeFile(getSecretsPath(), `{"__proto__":"${SECRET}"}`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+
+    const store = getSecretStore();
+    expect(await store.get('__proto__')).toBe(SECRET);
+    expect(await store.list()).toEqual(['__proto__']);
+  });
+
   it('stores a secret whose name is a property of Object.prototype', async () => {
     // `__proto__` is a valid name (letters, dashes, underscores) and a plain
     // object would turn the assignment into a setter of the prototype.
