@@ -9,7 +9,9 @@ import { getAppDir } from '../paths.js';
 import { redactText } from './diagnostics.js';
 import { getChromium, getEngineName } from './engine.js';
 import { CHROMIUM_ARGS } from './process.js';
+import { proxyFingerprint } from './proxy.js';
 import { detectChromeChannel, STEALTH_INIT_SCRIPT } from './stealth.js';
+import { SwitchGate } from './switch-gate.js';
 
 function redactError(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
@@ -71,6 +73,8 @@ interface DaemonStateFile {
   port: number;
   token: string;
   headless: boolean;
+  /** Fingerprint of the proxy the browser was started with (no secrets). */
+  proxy?: string;
   createdAt: string;
 }
 
@@ -79,6 +83,7 @@ const STATE_PATH =
 const AUTH_TOKEN = randomUUID();
 const HEADLESS = process.env.TEN_X_CHAT_BROWSER_HEADLESS !== '0';
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const SWITCH_TIMEOUT_MS = 10_000;
 const MIN_PORT = 10_000;
 const MAX_PORT = 60_000;
 
@@ -86,6 +91,13 @@ let browser: Browser | null = null;
 let lastActivity = Date.now();
 let activePageCount = 0;
 let shuttingDown = false;
+
+/**
+ * The barrier of a switching daemon: while it is closed, no new session may
+ * start, so the daemon can be replaced without taking the browser away from a
+ * session that is just beginning.
+ */
+const switchGate = new SwitchGate();
 
 const contexts = new Map<string, BrowserContext>();
 const pages = new Map<string, { page: Page; contextId: string }>();
@@ -168,6 +180,7 @@ async function writeStateFile(port: number): Promise<void> {
     port,
     token: AUTH_TOKEN,
     headless: HEADLESS,
+    proxy: proxyFingerprint(),
     createdAt: new Date().toISOString(),
   };
 
@@ -290,14 +303,26 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
         throw new Error(`Unsupported browser method: ${body.method}`);
       }
 
-      const context = await browser.newContext((args[0] as Record<string, unknown>) ?? {});
-      // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
-      if (getEngineName() !== 'cloakbrowser') {
-        await context.addInitScript(STEALTH_INIT_SCRIPT);
+      if (switchGate.isClosed) {
+        throw new Error(
+          'The browser daemon is switching to another mode: the new session was refused. ' +
+            'Run the command again.',
+        );
       }
-      const contextId = randomUUID();
-      contexts.set(contextId, context);
-      return { ok: true, result: toContextHandle(contextId) };
+
+      switchGate.start();
+      try {
+        const context = await browser.newContext((args[0] as Record<string, unknown>) ?? {});
+        // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
+        if (getEngineName() !== 'cloakbrowser') {
+          await context.addInitScript(STEALTH_INIT_SCRIPT);
+        }
+        const contextId = randomUUID();
+        contexts.set(contextId, context);
+        return { ok: true, result: toContextHandle(contextId) };
+      } finally {
+        switchGate.finish();
+      }
     }
 
     case 'context': {
@@ -615,10 +640,44 @@ async function main(): Promise<void> {
           ok: true,
           activeContexts: contexts.size,
           activePages: activePageCount,
+          // A context that is being created is a session of another process
+          // too: it is not in `contexts` yet, but it must not be cut off.
+          pendingCreations: switchGate.pendingCreations,
+          switching: switchGate.isClosed,
           headless: HEADLESS,
           pid: process.pid,
         }),
       );
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/switch') {
+      // Close the gate, wait for the session creations that are running and
+      // report what is left: a session that started in the meantime is
+      // visible now.
+      switchGate.close();
+      const drained = await switchGate.waitForIdle(SWITCH_TIMEOUT_MS);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          ok: true,
+          activeContexts: contexts.size,
+          activePages: activePageCount,
+          pendingCreations: switchGate.pendingCreations,
+          // A wait that ran into its timeout does not mean "no work": a
+          // creation is still running and belongs to a session of another
+          // process.
+          drained,
+        }),
+      );
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/switch/abort') {
+      // The switch was refused — the daemon serves sessions again.
+      switchGate.open();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
 

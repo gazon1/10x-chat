@@ -23,7 +23,7 @@ export function createChatCommand(): Command {
     .option('--dry-run', 'Preview the bundle without sending')
     .option('--headed', 'Show browser window during chat')
     .option('--headless', 'Force headless browser even for providers that prefer headed')
-    .option('--timeout <ms>', 'Response timeout in milliseconds', '300000')
+    .option('--timeout <ms>', 'Response timeout in milliseconds (overrides the config)')
     .option('--save-images <dir>', 'Save generated images to directory')
     .option('--profile <name>', 'Use named browser profile')
     .option('--isolated-profile', 'Use per-provider browser profiles (backward compat)')
@@ -43,8 +43,15 @@ export function createChatCommand(): Command {
       }
 
       const timeoutMs = (() => {
+        if (options.timeout === undefined) return undefined;
         const t = Number.parseInt(options.timeout, 10);
-        return Number.isFinite(t) && t > 0 ? t : 300_000;
+        if (!Number.isFinite(t) || t <= 0) {
+          console.error(
+            chalk.red(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`),
+          );
+          process.exit(1);
+        }
+        return t;
       })();
 
       const commonOpts = {

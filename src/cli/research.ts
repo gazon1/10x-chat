@@ -15,8 +15,11 @@ export function createResearchCommand(): Command {
     .option('--provider <name>', `Provider (${RESEARCH_PROVIDERS.join(', ')})`, 'gemini')
     .option('--model <name>', 'Model/mode to select before starting research')
     .option('--headed', 'Show browser window')
-    .option('--timeout <ms>', 'Total timeout in milliseconds', '600000')
-    .option('--poll-interval <ms>', 'Progress check interval in milliseconds', '5000')
+    .option(
+      '--timeout <ms>',
+      'Total timeout in milliseconds (overrides the default of the command)',
+    )
+    .option('--poll-interval <ms>', 'Progress check interval in milliseconds')
     .option('--save-dir <dir>', 'Directory to save the research report')
     .option('-a, --attach <paths...>', 'Files to attach to the research prompt')
     .option('--profile <name>', 'Use named browser profile')
@@ -37,13 +40,29 @@ export function createResearchCommand(): Command {
       }
 
       const timeoutMs = (() => {
+        if (options.timeout === undefined) return undefined;
         const t = Number.parseInt(options.timeout, 10);
-        return Number.isFinite(t) && t > 0 ? t : 600_000;
+        if (!Number.isFinite(t) || t <= 0) {
+          console.error(
+            chalk.red(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`),
+          );
+          process.exit(1);
+        }
+        return t;
       })();
 
       const pollIntervalMs = (() => {
+        if (options.pollInterval === undefined) return undefined;
         const t = Number.parseInt(options.pollInterval, 10);
-        return Number.isFinite(t) && t > 0 ? t : 5_000;
+        if (!Number.isFinite(t) || t <= 0) {
+          console.error(
+            chalk.red(
+              `Invalid --poll-interval value: ${options.pollInterval} (expected a positive integer)`,
+            ),
+          );
+          process.exit(1);
+        }
+        return t;
       })();
 
       try {

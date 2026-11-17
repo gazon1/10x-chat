@@ -9,6 +9,8 @@ import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { buildBundle } from './bundle.js';
 import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
+import { chatModel } from './model.js';
+import { chatTimeoutMs } from './timeout.js';
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
 const CHAT_PROVIDERS: ProviderName[] = [
@@ -43,7 +45,11 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
   const config = await loadConfig();
   const providerName = options.provider ?? config.defaultProvider;
   const provider = getProvider(providerName);
-  const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
+  const timeoutMs = chatTimeoutMs(
+    options.timeoutMs,
+    config.defaultTimeoutMs,
+    provider.config.defaultTimeoutMs,
+  );
   const headless = resolveHeadlessMode(
     providerName,
     config.headless,
@@ -103,7 +109,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       );
     }
 
-    const modelName = options.model ?? provider.config.defaultModel;
+    const modelName = chatModel(options.model, config.defaultModel, provider.config.defaultModel);
     if (modelName && provider.actions.selectModel) {
       stage = 'select-model';
       console.log(chalk.dim(`Selecting model: ${modelName}`));

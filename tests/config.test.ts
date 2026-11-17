@@ -20,12 +20,11 @@ describe('Config Loading', () => {
     if (tempHome) await rm(tempHome, { recursive: true, force: true });
   });
 
+  const writeConfig = (content: string) =>
+    writeFile(path.join(tempHome, 'config.json'), content, 'utf8');
+
   it('loads JSON config from disk', async () => {
-    await writeFile(
-      path.join(tempHome, 'config.json'),
-      JSON.stringify({ profileMode: 'isolated', headless: false }, null, 2),
-      'utf8',
-    );
+    await writeConfig(JSON.stringify({ profileMode: 'isolated', headless: false }, null, 2));
 
     const { loadConfig } = await import('../src/config.js');
     const config = await loadConfig();
@@ -35,10 +34,8 @@ describe('Config Loading', () => {
   });
 
   it('loads JSON5 config from disk', async () => {
-    await writeFile(
-      path.join(tempHome, 'config.json'),
+    await writeConfig(
       '{\n        // provider profile mode\n        profileMode: "isolated",\n        headless: false,\n      }',
-      'utf8',
     );
 
     const { loadConfig } = await import('../src/config.js');
@@ -46,5 +43,88 @@ describe('Config Loading', () => {
 
     expect(config.profileMode).toBe('isolated');
     expect(config.headless).toBe(false);
+  });
+
+  it('falls back to the defaults without a config file', async () => {
+    const { CONFIG_KEYS, loadConfig } = await import('../src/config.js');
+    const config = await loadConfig();
+
+    expect(config.defaultProvider).toBe('chatgpt');
+    expect(config.profileMode).toBe('shared');
+    expect(config.headless).toBe(true);
+    expect(config.defaultTimeoutMs).toBeUndefined();
+    expect(CONFIG_KEYS).toContain('profileMode');
+  });
+
+  it('reports an unparsable config file with its path', async () => {
+    await writeConfig('{ profileMode: "isolated"');
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/Invalid config file .*config\.json/);
+  });
+
+  it('reports an unknown key instead of ignoring it', async () => {
+    await writeConfig(JSON.stringify({ profileMod: 'isolated' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/unknown key "profileMod"/);
+  });
+
+  it('reports an invalid provider', async () => {
+    await writeConfig(JSON.stringify({ defaultProvider: 'nope' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"defaultProvider" must be one of/);
+  });
+
+  it('reports an invalid profile mode', async () => {
+    await writeConfig(JSON.stringify({ profileMode: 'per-provider' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"profileMode" must be one of/);
+  });
+
+  it('reports an invalid headless value', async () => {
+    await writeConfig(JSON.stringify({ headless: 'yes' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"headless" must be true or false/);
+  });
+
+  it('reports an invalid timeout', async () => {
+    await writeConfig(JSON.stringify({ defaultTimeoutMs: -1 }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"defaultTimeoutMs" must be a positive number/);
+  });
+
+  it('saves and reloads a config', async () => {
+    const { loadConfig, saveConfig } = await import('../src/config.js');
+
+    await saveConfig({
+      defaultProvider: 'gemini',
+      defaultModel: 'pro',
+      defaultTimeoutMs: 60_000,
+      headless: false,
+      profileMode: 'isolated',
+    });
+
+    const config = await loadConfig();
+    expect(config.defaultProvider).toBe('gemini');
+    expect(config.defaultModel).toBe('pro');
+    expect(config.defaultTimeoutMs).toBe(60_000);
+    expect(config.profileMode).toBe('isolated');
+  });
+
+  it('refuses to save an invalid config', async () => {
+    const { saveConfig } = await import('../src/config.js');
+
+    await expect(
+      saveConfig({
+        defaultProvider: 'nope',
+        headless: true,
+        profileMode: 'shared',
+      }),
+    ).rejects.toThrow(/"defaultProvider" must be one of/);
   });
 });
