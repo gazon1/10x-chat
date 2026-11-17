@@ -32,6 +32,10 @@ const SELECTORS = {
   userPrompt: '.ds-collapsible-text',
   /** Container of the app's toasts (rate limits, network errors, ...). */
   notifications: '.ds-notification-container',
+  /** Chat area: the app renders the conversation in a virtual list. */
+  virtualList: '.ds-virtual-list',
+  /** Single item of the chat virtual list (a message or an error banner). */
+  virtualItem: '[data-virtual-list-item-key]',
   /** DeepThink toggle in the composer toolbar. */
   thinkToggle: '.ds-toggle-button:has-text("DeepThink"), .ds-toggle-button:has-text("深度思考")',
 } as const;
@@ -53,6 +57,7 @@ const FAILURE_PATTERNS: RegExp[] = [
   /Network Error\. Please check your network status\.?/i,
   /Check your internet connection and try again\.?/i,
   /The message you sent is too long\. Please modify it and resend\.?/i,
+  /Content is too long\. Please shorten it and try again\.?/i,
 ];
 
 /** Extract a DeepSeek service-error message from text rendered by the app. */
@@ -128,6 +133,8 @@ interface TurnSignals {
   errorText: string;
   /** Text of the app's toast containers. */
   toastText: string;
+  /** Text of the chat area outside the messages (inline error banners). */
+  bannerText: string;
 }
 
 /** What the page reports about a single chat message. */
@@ -153,13 +160,15 @@ export function pickAssistantErrorText(messages: MessageProbe[]): string {
 }
 
 async function readTurnSignals(page: Page): Promise<TurnSignals> {
-  const { messages, toastText } = await page.evaluate(
+  const { messages, toastText, bannerText } = await page.evaluate(
     ({
       messageSelector,
       answerSelector,
       thinkingSelector,
       userPromptSelector,
       notificationsSelector,
+      virtualListSelector,
+      virtualItemSelector,
     }) => {
       const messages = Array.from(document.querySelectorAll(messageSelector)).map((el) => {
         const clone = el.cloneNode(true) as HTMLElement;
@@ -177,7 +186,25 @@ async function readTurnSignals(page: Page): Promise<TurnSignals> {
         .join(' ')
         .trim();
 
-      return { messages, toastText };
+      // The app renders a service error as a banner next to the messages, i.e.
+      // inside the chat list but outside every message. Messages are dropped
+      // from the copy, so the banner text never mixes with a prompt or answer.
+      const lists = Array.from(document.querySelectorAll(virtualListSelector));
+      const chatList = lists.find((list) => list.querySelector(messageSelector));
+      const bannerText = chatList
+        ? Array.from(chatList.querySelectorAll(virtualItemSelector))
+            .map((item) => {
+              const clone = item.cloneNode(true) as HTMLElement;
+              for (const message of Array.from(clone.querySelectorAll(messageSelector)))
+                message.remove();
+              return (clone.textContent ?? '').trim();
+            })
+            .filter(Boolean)
+            .join(' ')
+            .trim()
+        : '';
+
+      return { messages, toastText, bannerText };
     },
     {
       messageSelector: SELECTORS.message,
@@ -185,10 +212,12 @@ async function readTurnSignals(page: Page): Promise<TurnSignals> {
       thinkingSelector: SELECTORS.thinking,
       userPromptSelector: SELECTORS.userPrompt,
       notificationsSelector: SELECTORS.notifications,
+      virtualListSelector: SELECTORS.virtualList,
+      virtualItemSelector: SELECTORS.virtualItem,
     },
   );
 
-  return { errorText: pickAssistantErrorText(messages), toastText };
+  return { errorText: pickAssistantErrorText(messages), toastText, bannerText };
 }
 
 /**
@@ -208,6 +237,11 @@ async function readTurnFailure(page: Page, baseline: TurnSignals): Promise<strin
 
   if (signals.toastText !== baseline.toastText) {
     const failure = extractDeepSeekFailureText(signals.toastText);
+    if (failure) return failure;
+  }
+
+  if (signals.bannerText !== baseline.bannerText) {
+    const failure = extractDeepSeekFailureText(signals.bannerText);
     if (failure) return failure;
   }
 
@@ -320,7 +354,7 @@ export const deepseekActions: ProviderActions = {
     const { timeoutMs, onChunk } = opts;
     const startTime = Date.now();
     const baseline = answerBaseline.get(page) ?? { count: 0, text: '', html: '' };
-    const turn = turnBaseline.get(page) ?? { errorText: '', toastText: '' };
+    const turn = turnBaseline.get(page) ?? { errorText: '', toastText: '', bannerText: '' };
 
     let html = '';
     const { text, truncated } = await pollUntilStable(page, {

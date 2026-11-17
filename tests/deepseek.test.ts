@@ -54,6 +54,12 @@ describe('DeepSeek Provider', () => {
       );
     });
 
+    it('detects the too-long-content failure of the web app', () => {
+      expect(
+        extractDeepSeekFailureText('Content is too long. Please shorten it and try again.'),
+      ).toBe('Content is too long. Please shorten it and try again.');
+    });
+
     it('detects unavailable-service failures', () => {
       expect(extractDeepSeekFailureText('System temporarily unavailable')).toBe(
         'System temporarily unavailable',
@@ -172,6 +178,8 @@ interface MockWorld {
   messages: MessageProbe[];
   /** Text of the app's toast containers. */
   toastText: string;
+  /** Text the chat area shows outside the messages (inline error banners). */
+  bannerText: string;
   /** DeepThink toggle state. */
   toggle: { visible: boolean; states: string[]; readFails: boolean };
 }
@@ -219,6 +227,7 @@ function createDeepSeekPage(world: MockWorld) {
       return {
         messages: world.messages.map((message) => ({ ...message })),
         toastText: world.toastText,
+        bannerText: world.bannerText,
       };
     }
     if ('answerSelector' in arg) {
@@ -252,6 +261,7 @@ function createWorld(overrides: Partial<MockWorld> = {}): MockWorld {
     blocks: [],
     messages: [],
     toastText: '',
+    bannerText: '',
     toggle: { visible: true, states: ['off'], readFails: false },
     ...overrides,
   };
@@ -432,6 +442,36 @@ describe('DeepSeek captureResponse', () => {
     await expect(
       deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 }),
     ).rejects.toThrow(/Too many requests/);
+  });
+
+  it('fails on an inline error banner of the current turn', async () => {
+    const world = createWorld();
+    const { page } = createDeepSeekPage(world);
+
+    await deepseekActions.submitPrompt(page as never, 'Привет');
+    // The app renders the service error as a banner next to the messages.
+    world.bannerText = 'Content is too long. Please shorten it and try again.';
+
+    await expect(
+      deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 }),
+    ).rejects.toThrow(/Content is too long\. Please shorten it and try again\./);
+  });
+
+  it('ignores an error banner left in the chat history', async () => {
+    const world = createWorld({
+      bannerText: 'Content is too long. Please shorten it and try again.',
+    });
+    const { page } = createDeepSeekPage(world);
+
+    await deepseekActions.submitPrompt(page as never, 'Привет');
+    world.messages = [
+      { hasUserMarker: true, hasAnswer: false, errorText: 'Привет' },
+      { hasUserMarker: false, hasAnswer: true, errorText: '' },
+    ];
+    world.blocks = [{ text: 'Привет', html: '<p>Привет</p>', insideThinking: false }];
+
+    const result = await deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 });
+    expect(result.text).toBe('Привет');
   });
 
   it('fails when the provider returns no answer', async () => {
