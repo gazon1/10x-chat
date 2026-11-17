@@ -62,7 +62,9 @@ const NO_PROXY_ENV_VARS = ['NO_PROXY', 'no_proxy'] as const;
  * answered by Playwright over CDP). `socks4`/`socks5` work without
  * credentials only — see `proxyLaunchOptions`.
  */
-const SUPPORTED_SCHEMES = new Set(['http', 'https', 'socks4', 'socks5']);
+export const SUPPORTED_PROXY_SCHEMES = ['http', 'https', 'socks4', 'socks5'] as const;
+
+const SUPPORTED_SCHEMES = new Set<string>(SUPPORTED_PROXY_SCHEMES);
 
 /** Percent-decoding that keeps a malformed escape as it is. */
 function decodeUserInfo(value: string): string {
@@ -143,6 +145,42 @@ export function splitProxyCredentials(raw: string): BrowserProxy {
 }
 
 /**
+ * Check a proxy URL that comes from the config file.
+ *
+ * The error names the problem, never the URL: the URL can carry the
+ * credentials, and an error message ends up in logs and in bug reports.
+ *
+ * @param server the proxy URL of the config file
+ * @throws an Error that names the problem without the URL
+ */
+export function validateProxyServer(server: string): string {
+  if (!server.includes('://')) {
+    throw new Error(`The proxy URL must have a scheme (${SUPPORTED_PROXY_SCHEMES.join(', ')}).`);
+  }
+
+  const scheme = schemeOf(server);
+  if (!SUPPORTED_SCHEMES.has(scheme)) {
+    throw new Error(
+      `Unsupported proxy scheme "${scheme}". ` +
+        `Supported schemes: ${[...SUPPORTED_SCHEMES].join(', ')}.`,
+    );
+  }
+
+  if (server.includes('@')) {
+    throw new Error(
+      `The proxy URL must not contain credentials — the user and the password belong ` +
+        `into the secrets file, not into the config file.`,
+    );
+  }
+
+  if (!parseProxyUrl(server)) {
+    throw new Error(`The proxy URL cannot be parsed as a URL.`);
+  }
+
+  return server;
+}
+
+/**
  * The proxy of the environment.
  *
  * Chromium ignores the standard proxy variables, so they have to be turned
@@ -150,10 +188,8 @@ export function splitProxyCredentials(raw: string): BrowserProxy {
  * (`HTTPS_PROXY` → `https_proxy` → `HTTP_PROXY` → `http_proxy` → `ALL_PROXY`
  * → `all_proxy`), `NO_PROXY`/`no_proxy` becomes the bypass list.
  *
- * The environment is the only source of the proxy: there is no config key and
- * no CLI flag for it, because the shared browser daemon is a separate process
- * that inherits the environment of the invocation that started it (see
- * `docs/config-contract.md`).
+ * The environment is the fallback: the config file can name a proxy of its own
+ * and can switch the proxy off completely (see `resolveEffectiveProxy()`).
  *
  * @param env the environment to read (the process environment by default)
  */
@@ -172,17 +208,20 @@ export function proxyFromEnv(env: NodeJS.ProcessEnv = process.env): BrowserProxy
 }
 
 /**
- * A fingerprint of the proxy of the environment.
+ * A fingerprint of a proxy.
  *
  * The shared browser daemon is started once and reused by every later
  * invocation, but the proxy is a property of the browser process: a daemon
  * that was started with another proxy would keep it. The fingerprint goes
  * into the state file of the daemon so that a changed proxy restarts it.
  *
- * The fingerprint is a hash — the password never leaves this function.
+ * Every effective field is part of the fingerprint — the server, the user, the
+ * password and the bypass list. The fingerprint is a hash: the password never
+ * leaves this function.
+ *
+ * @param proxy the effective proxy (`null` when there is none)
  */
-export function proxyFingerprint(env: NodeJS.ProcessEnv = process.env): string {
-  const proxy = proxyFromEnv(env);
+export function fingerprintProxy(proxy: BrowserProxy | null | undefined): string {
   if (!proxy) return 'none';
   return createHash('sha256')
     .update(
@@ -190,6 +229,15 @@ export function proxyFingerprint(env: NodeJS.ProcessEnv = process.env): string {
     )
     .digest('hex')
     .slice(0, 16);
+}
+
+/**
+ * A fingerprint of the proxy of the environment.
+ *
+ * @param env the environment to read (the process environment by default)
+ */
+export function proxyFingerprint(env: NodeJS.ProcessEnv = process.env): string {
+  return fingerprintProxy(proxyFromEnv(env));
 }
 
 /**

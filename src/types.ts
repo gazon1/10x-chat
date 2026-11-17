@@ -108,6 +108,30 @@ export interface SessionResult {
   responsePath?: string;
 }
 
+// ── Proxy Types ─────────────────────────────────────────────────
+
+/**
+ * The proxy of the config file.
+ *
+ * The credentials are not part of it: they live in the secrets file
+ * (`~/.10x-chat/secrets.json`), so they never end up in a config file that is
+ * copied around (see `docs/config-contract.md`).
+ */
+export interface ProxyConfig {
+  /**
+   * The explicit state of the proxy. `false` switches the proxy off and
+   * suppresses the fallback to the proxy of the environment.
+   */
+  enabled: boolean;
+  /**
+   * The proxy URL without credentials, e.g. `http://proxy.example:3128`.
+   * Required when `enabled` is `true`.
+   */
+  server?: string;
+  /** The hosts that bypass the proxy. */
+  bypass?: string[];
+}
+
 // ── Config Types ────────────────────────────────────────────────
 
 export interface AppConfig {
@@ -123,6 +147,11 @@ export interface AppConfig {
   headless: boolean;
   /** Profile mode: 'shared' (default, single profile) or 'isolated' (per-provider profiles). */
   profileMode: ProfileMode;
+  /**
+   * The proxy of the browser. Without this key the proxy of the environment is
+   * used; with `enabled: false` there is no proxy at all.
+   */
+  proxy?: ProxyConfig;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

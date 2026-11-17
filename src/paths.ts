@@ -41,3 +41,8 @@ export function getSessionDir(sessionId: string): string {
 export function getConfigPath(): string {
   return path.join(getAppDir(), 'config.json');
 }
+
+/** Secrets file path: ~/.10x-chat/secrets.json */
+export function getSecretsPath(): string {
+  return path.join(getAppDir(), 'secrets.json');
+}

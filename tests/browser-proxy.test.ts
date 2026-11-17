@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { isDaemonCompatible } from '../src/browser/daemon.js';
 import { buildLaunchOptions } from '../src/browser/engine.js';
 import {
   browserProcessEnv,
+  fingerprintProxy,
   proxyFingerprint,
   proxyFromEnv,
   proxyLaunchOptions,
@@ -279,6 +284,185 @@ describe('proxyFingerprint', () => {
   });
 });
 
+describe('the effective proxy', () => {
+  const originalEnv = process.env;
+  let tempHome = '';
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-proxy-'));
+    process.env = { ...originalEnv, TEN_X_CHAT_HOME: tempHome };
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    if (tempHome) await rm(tempHome, { recursive: true, force: true });
+  });
+
+  const writeConfig = (content: string) =>
+    writeFile(path.join(tempHome, 'config.json'), content, 'utf8');
+
+  const writeSecrets = async (content: string, mode = 0o600) => {
+    const secretsPath = path.join(tempHome, 'secrets.json');
+    await writeFile(secretsPath, content, { encoding: 'utf8', mode });
+    await chmod(secretsPath, mode);
+  };
+
+  const resolve = async (env: NodeJS.ProcessEnv = {}) => {
+    const { resolveEffectiveProxy } = await import('../src/config.js');
+    return resolveEffectiveProxy(env);
+  };
+
+  it('uses the config file over the environment', async () => {
+    await writeConfig(
+      JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
+    );
+
+    const proxy = await resolve({ HTTPS_PROXY: 'http://env.example.com:3128' });
+
+    expect(proxy?.server).toBe('http://config.example.com:3128');
+  });
+
+  it('takes the credentials from the secrets file', async () => {
+    await writeConfig(
+      JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
+    );
+    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+
+    const proxy = await resolve();
+
+    expect(proxy?.username).toBe(LOGIN);
+    expect(proxy?.password).toBe(SECRET);
+    expect(proxy?.server).not.toContain(SECRET);
+  });
+
+  it('keeps the credentials out of the server URL of the config file', async () => {
+    await writeConfig(
+      JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
+    );
+    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }));
+
+    const proxy = await resolve();
+
+    expect(proxy?.server).toBe('http://config.example.com:3128');
+    expect(proxy?.server).not.toContain('@');
+  });
+
+  it('takes the bypass list from the config file', async () => {
+    await writeConfig(
+      JSON.stringify({
+        proxy: {
+          enabled: true,
+          server: 'http://config.example.com:3128',
+          bypass: ['localhost', '127.0.0.1'],
+        },
+      }),
+    );
+
+    const proxy = await resolve({ NO_PROXY: 'other.example.com' });
+
+    expect(proxy?.bypass).toBe('localhost,127.0.0.1');
+  });
+
+  it('switches the proxy off and does not fall back to the environment', async () => {
+    await writeConfig(JSON.stringify({ proxy: { enabled: false } }));
+
+    const proxy = await resolve({ HTTPS_PROXY: 'http://env.example.com:3128' });
+
+    expect(proxy).toBeNull();
+  });
+
+  it('falls back to the environment without a proxy section', async () => {
+    await writeConfig(JSON.stringify({ headless: true }));
+
+    const proxy = await resolve({
+      HTTPS_PROXY: `http://${LOGIN}:${SECRET}@env.example.com:3128`,
+      NO_PROXY: 'localhost',
+    });
+
+    expect(proxy?.server).toBe('http://env.example.com:3128');
+    expect(proxy?.password).toBe(SECRET);
+    expect(proxy?.bypass).toBe('localhost');
+  });
+
+  it('refuses a secrets file that other users can read', async () => {
+    await writeConfig(
+      JSON.stringify({ proxy: { enabled: true, server: 'http://config.example.com:3128' } }),
+    );
+    await writeSecrets(JSON.stringify({ proxy: { username: LOGIN, password: SECRET } }), 0o644);
+
+    await expect(resolve()).rejects.toThrow(/must not be readable by other users/);
+  });
+
+  it('never puts the password into the error message', async () => {
+    await writeConfig(
+      JSON.stringify({
+        proxy: { enabled: true, server: `http://${LOGIN}:${SECRET}@config.example.com:3128` },
+      }),
+    );
+
+    const error = await resolve().then(
+      () => undefined,
+      (reason: unknown) => reason as Error,
+    );
+
+    expect(error?.message).toMatch(/must not contain credentials/);
+    expect(error?.message).not.toContain(SECRET);
+    expect(error?.message).not.toContain(LOGIN);
+  });
+});
+
+describe('fingerprintProxy', () => {
+  it('is stable for the same proxy', () => {
+    const proxy = { server: 'http://proxy.example.com:3128', username: LOGIN, password: SECRET };
+    expect(fingerprintProxy(proxy)).toBe(fingerprintProxy(proxy));
+  });
+
+  it('changes with every effective field', () => {
+    const base = { server: 'http://proxy.example.com:3128', username: LOGIN, password: SECRET };
+    const fingerprint = fingerprintProxy(base);
+
+    expect(fingerprintProxy({ ...base, server: 'http://other.example.com:3128' })).not.toBe(
+      fingerprint,
+    );
+    expect(fingerprintProxy({ ...base, username: 'other' })).not.toBe(fingerprint);
+    expect(fingerprintProxy({ ...base, password: 'other' })).not.toBe(fingerprint);
+    expect(fingerprintProxy({ ...base, bypass: 'localhost' })).not.toBe(fingerprint);
+  });
+
+  it('does not contain the credentials', () => {
+    const fingerprint = fingerprintProxy({
+      server: 'http://proxy.example.com:3128',
+      username: LOGIN,
+      password: SECRET,
+    });
+    expect(fingerprint).not.toContain(SECRET);
+    expect(fingerprint).not.toContain(LOGIN);
+  });
+
+  it('has a value without a proxy', () => {
+    expect(fingerprintProxy(null)).toBe('none');
+    expect(fingerprintProxy(undefined)).toBe('none');
+  });
+
+  it('makes the daemon switch when the effective proxy changes', () => {
+    const state = {
+      pid: 1,
+      port: 2,
+      token: 'token',
+      headless: true,
+      proxy: fingerprintProxy({ server: 'http://old.example.com:3128' }),
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(
+      isDaemonCompatible(state, true, fingerprintProxy({ server: 'http://new.example.com:3128' })),
+    ).toBe(false);
+    expect(
+      isDaemonCompatible(state, true, fingerprintProxy({ server: 'http://old.example.com:3128' })),
+    ).toBe(true);
+  });
+});
+
 describe('buildLaunchOptions', () => {
   const env = {
     HTTPS_PROXY: `http://${LOGIN}:${SECRET}@proxy.example.com:3128`,
@@ -334,5 +518,27 @@ describe('buildLaunchOptions', () => {
     const options = buildLaunchOptions({ headless: true }, {});
     expect(options.headless).toBe(true);
     expect(options.channel).toBeUndefined();
+  });
+
+  it('prefers the resolved proxy over the environment', () => {
+    const options = buildLaunchOptions({ headless: true }, env, {
+      server: 'http://config.example.com:3128',
+      username: LOGIN,
+      password: SECRET,
+    });
+    const launchOptions = options.launchOptions as {
+      proxy: { server: string; username: string; password: string };
+    };
+    expect(launchOptions.proxy.server).toBe('http://config.example.com:3128');
+    expect(launchOptions.proxy.password).toBe(SECRET);
+  });
+
+  it('uses no proxy at all when the proxy is switched off', () => {
+    // `null` is the proxy that is switched off: the environment must not be
+    // used as a fallback then.
+    const options = buildLaunchOptions({ headless: true }, env, null);
+    const launchOptions = options.launchOptions as { proxy?: unknown };
+    expect(launchOptions.proxy).toBeUndefined();
+    expect((launchOptions.env as Record<string, string>).HTTPS_PROXY).toBeUndefined();
   });
 });

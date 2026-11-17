@@ -4,10 +4,11 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } from 'playwright';
+import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { acquireProfileLock } from './lock.js';
 import { isProcessAlive } from './process.js';
-import { proxyFingerprint } from './proxy.js';
+import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
 
 const DAEMON_FILE = 'browser-daemon.json';
@@ -821,7 +822,7 @@ async function waitForDaemonReady(headless: boolean, proxy: string): Promise<Dae
   throw new Error('Timed out waiting for browser daemon to start');
 }
 
-async function startDaemon(headless: boolean): Promise<DaemonState> {
+async function startDaemon(headless: boolean, proxy: string): Promise<DaemonState> {
   const entry = getServerEntryPoint();
   const child = spawn(entry.command, entry.args, {
     detached: true,
@@ -833,7 +834,7 @@ async function startDaemon(headless: boolean): Promise<DaemonState> {
     },
   });
   child.unref();
-  return waitForDaemonReady(headless, proxyFingerprint());
+  return waitForDaemonReady(headless, proxy);
 }
 
 /**
@@ -885,7 +886,10 @@ export function decideDaemonSwitch(result: DaemonSwitchResult, reason: string): 
 }
 
 async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
-  const proxy = proxyFingerprint();
+  // The daemon runs the browser with the effective proxy: the config file
+  // first, the environment second. The fingerprint of it decides whether the
+  // running daemon can serve the request.
+  const proxy = fingerprintProxy(await resolveEffectiveProxy());
   const existing = await readDaemonState();
   if (existing && isDaemonCompatible(existing, headless, proxy) && (await pingDaemon(existing))) {
     return existing;
@@ -924,7 +928,7 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
 
         if (decision.action === 'restart') {
           await clearDaemonState();
-          return startDaemon(headless);
+          return startDaemon(headless, proxy);
         }
 
         if (decision.action === 'refuse') {
@@ -947,7 +951,7 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
       await clearDaemonState();
     }
 
-    return startDaemon(headless);
+    return startDaemon(headless, proxy);
   } finally {
     await lock.release();
   }

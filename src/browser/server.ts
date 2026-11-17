@@ -5,11 +5,12 @@ import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { Browser, BrowserContext, Download, FileChooser, Locator, Page } from 'playwright';
+import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { redactText } from './diagnostics.js';
 import { getChromium, getEngineName } from './engine.js';
 import { CHROMIUM_ARGS } from './process.js';
-import { proxyFingerprint } from './proxy.js';
+import { fingerprintProxy } from './proxy.js';
 import { detectChromeChannel, STEALTH_INIT_SCRIPT } from './stealth.js';
 import { SwitchGate } from './switch-gate.js';
 
@@ -174,13 +175,13 @@ function toDownloadHandle(eventId: string, download: Download): RemoteHandle {
   };
 }
 
-async function writeStateFile(port: number): Promise<void> {
+async function writeStateFile(port: number, proxy: string): Promise<void> {
   const state: DaemonStateFile = {
     pid: process.pid,
     port,
     token: AUTH_TOKEN,
     headless: HEADLESS,
-    proxy: proxyFingerprint(),
+    proxy,
     createdAt: new Date().toISOString(),
   };
 
@@ -601,6 +602,11 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 async function main(): Promise<void> {
   const channel = detectChromeChannel();
 
+  // The proxy of the daemon: the config file first, the environment second.
+  // The browser gets exactly this proxy, and its fingerprint goes into the
+  // state file — a client with another proxy switches the daemon.
+  const proxy = await resolveEffectiveProxy();
+
   const chromium = await getChromium();
   const engineName = getEngineName();
   console.log(`Browser engine: ${engineName}${channel ? ' (channel: chrome)' : ''}`);
@@ -719,7 +725,7 @@ async function main(): Promise<void> {
     server.listen(port, '127.0.0.1', () => resolve());
   });
 
-  await writeStateFile(port);
+  await writeStateFile(port, fingerprintProxy(proxy));
 
   const cleanup = () => {
     void shutdown(server);

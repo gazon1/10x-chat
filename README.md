@@ -72,11 +72,31 @@ Firefox/Camoufox was evaluated and rejected: the migration would invalidate ever
 
 ## Proxy
 
-The proxy comes from the environment only — there is no config key and no CLI flag, because the shared browser daemon is a separate process that inherits the environment of the invocation that started it.
+The proxy comes from the config file, from the environment, or from nowhere — in that order. A config file without a `proxy` section keeps using the environment; `proxy.enabled: false` switches the proxy off completely.
 
 ```bash
 HTTPS_PROXY=http://user:password@proxy.example:3128 10x-chat chat -p "…"
 NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
+```
+
+```json5
+// ~/.10x-chat/config.json
+{
+  proxy: {
+    enabled: true,
+    server: 'http://proxy.example:3128',
+    bypass: ['localhost', '127.0.0.1'],
+  },
+}
+```
+
+The credentials of the proxy are not part of the config file — they live in `~/.10x-chat/secrets.json` (`chmod 600`):
+
+```json5
+// ~/.10x-chat/secrets.json
+{
+  proxy: { username: 'proxy-user', password: '…' },
+}
 ```
 
 | Proxy | Supported |
@@ -86,7 +106,7 @@ NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
 | `socks5://` without credentials | yes |
 | `socks4://` / `socks5://` **with** credentials | **no** — rejected, because Chromium would have to authenticate through the URL in its command line |
 
-The full contract (order of the variables, where the credentials live, why SOCKS with credentials is refused) is in [docs/config-contract.md](docs/config-contract.md).
+The full contract (the order of the variables, where the credentials live, why SOCKS with credentials is refused) is in [docs/config-contract.md](docs/config-contract.md).
 
 ## Login and sessions
 

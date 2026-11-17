@@ -116,7 +116,7 @@ CloakBrowser (a patched Chromium) is the only supported engine — see `src/brow
 
 ## Config
 
-`~/.10x-chat/config.json` — user preferences (default provider, headless, profile mode, timeout).
+`~/.10x-chat/config.json` — user preferences (default provider, headless, profile mode, timeout, proxy).
 
 The order of the settings (CLI flag > config file > built-in default), the
 rules of the profiles and sessions and the proxy contract live in
@@ -127,3 +127,4 @@ error, not a fallback — only a *missing* file falls back to the defaults.
 
 `~/.10x-chat/sessions/<uuid>/` — per-session metadata, prompt bundle, captured response.
 `~/.10x-chat/profiles/` — browser profiles (shared default + per-provider isolated).
+`~/.10x-chat/secrets.json` — the credentials of the proxy (mode 600, never in the config file).
