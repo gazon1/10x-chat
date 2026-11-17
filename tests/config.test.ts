@@ -128,3 +128,123 @@ describe('Config Loading', () => {
     ).rejects.toThrow(/"defaultProvider" must be one of/);
   });
 });
+
+describe('The proxy section of the config', () => {
+  const originalEnv = process.env;
+  let tempHome = '';
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-config-proxy-'));
+    process.env = { ...originalEnv, TEN_X_CHAT_HOME: tempHome };
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    if (tempHome) await rm(tempHome, { recursive: true, force: true });
+  });
+
+  const writeConfig = (content: string) =>
+    writeFile(path.join(tempHome, 'config.json'), content, 'utf8');
+
+  it('loads a proxy section', async () => {
+    await writeConfig(
+      JSON.stringify({
+        proxy: {
+          enabled: true,
+          server: 'http://proxy.example.com:3128',
+          bypass: ['localhost'],
+        },
+      }),
+    );
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = await loadConfig();
+
+    expect(config.proxy).toEqual({
+      enabled: true,
+      server: 'http://proxy.example.com:3128',
+      bypass: ['localhost'],
+    });
+  });
+
+  it('loads a proxy that is switched off', async () => {
+    await writeConfig(JSON.stringify({ proxy: { enabled: false } }));
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = await loadConfig();
+
+    expect(config.proxy).toEqual({ enabled: false });
+  });
+
+  it('reports an unknown key in the proxy section', async () => {
+    await writeConfig(JSON.stringify({ proxy: { enabled: true, user: 'name' } }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/unknown key "proxy\.user"/);
+  });
+
+  it('reports a proxy without an explicit state', async () => {
+    await writeConfig(JSON.stringify({ proxy: { server: 'http://proxy.example.com:3128' } }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"proxy\.enabled" must be true or false/);
+  });
+
+  it('reports an enabled proxy without a server', async () => {
+    await writeConfig(JSON.stringify({ proxy: { enabled: true } }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"proxy\.server" is required/);
+  });
+
+  it('reports an unsupported scheme without naming the URL', async () => {
+    await writeConfig(
+      JSON.stringify({ proxy: { enabled: true, server: 'ftp://proxy.example.com:21' } }),
+    );
+
+    const { loadConfig } = await import('../src/config.js');
+    const error = await loadConfig().then(
+      () => undefined,
+      (reason: unknown) => reason as Error,
+    );
+
+    expect(error?.message).toMatch(/Unsupported proxy scheme "ftp"/);
+    expect(error?.message).not.toContain('proxy.example.com');
+  });
+
+  it('reports credentials in the server without naming them', async () => {
+    await writeConfig(
+      JSON.stringify({
+        proxy: { enabled: true, server: 'http://proxy-user:sup3r-s3cret@proxy.example.com:3128' },
+      }),
+    );
+
+    const { loadConfig } = await import('../src/config.js');
+    const error = await loadConfig().then(
+      () => undefined,
+      (reason: unknown) => reason as Error,
+    );
+
+    expect(error?.message).toMatch(/must not contain credentials/);
+    expect(error?.message).not.toContain('sup3r-s3cret');
+    expect(error?.message).not.toContain('proxy-user');
+  });
+
+  it('reports a bypass list that is not a list of strings', async () => {
+    await writeConfig(
+      JSON.stringify({
+        proxy: { enabled: true, server: 'http://proxy.example.com:3128', bypass: 5 },
+      }),
+    );
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"proxy\.bypass" must be an array of strings/);
+  });
+
+  it('reports a proxy that is not an object', async () => {
+    await writeConfig(JSON.stringify({ proxy: 'http://proxy.example.com:3128' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(/"proxy" must be an object/);
+  });
+});

@@ -9,7 +9,8 @@
  */
 
 import type { BrowserType } from 'playwright';
-import { browserProcessEnv, proxyFromEnv, proxyLaunchOptions } from './proxy.ts';
+import { resolveEffectiveProxy } from '../config.js';
+import { type BrowserProxy, browserProcessEnv, proxyFromEnv, proxyLaunchOptions } from './proxy.ts';
 
 let _chromium: BrowserType | undefined;
 let _engineName: 'cloakbrowser' | 'unknown' = 'unknown';
@@ -18,8 +19,8 @@ let _loaded = false;
 /**
  * The launch options of the browser.
  *
- * The proxy of the environment (HTTPS_PROXY / HTTP_PROXY, NO_PROXY) is handed
- * to Playwright through `launchOptions.proxy`: Playwright keeps the credentials
+ * The effective proxy (config file first, environment second) is handed to
+ * Playwright through `launchOptions.proxy`: Playwright keeps the credentials
  * in its own CDP session and authenticates the browser from there. CloakBrowser
  * would otherwise inline them into `--proxy-server=http://user:pass@host:port`,
  * which puts the password into the command line of every process of the browser.
@@ -27,18 +28,29 @@ let _loaded = false;
  * The proxy variables are dropped from the environment of the browser for the
  * same reason — the environment of a process is readable by every local
  * process, and Chromium does not need them.
+ *
+ * @param proxy the effective proxy; `undefined` takes the proxy of the
+ * environment, `null` means "no proxy at all" (a proxy that is switched off
+ * must not fall back to the environment)
  */
 export function buildLaunchOptions(
   options?: Record<string, unknown>,
   env: NodeJS.ProcessEnv = process.env,
+  proxy?: BrowserProxy | null,
 ): Record<string, unknown> {
   const { channel: _channel, ...rest } = options ?? {};
-  const proxy = proxyFromEnv(env);
 
   const launchOptions =
     rest.launchOptions && typeof rest.launchOptions === 'object'
-      ? (rest.launchOptions as Record<string, unknown>)
+      ? { ...(rest.launchOptions as Record<string, unknown>) }
       : {};
+
+  // A proxy that the caller put into the options is the explicit one.
+  const fromOptions = launchOptions.proxy as BrowserProxy | null | undefined;
+  delete launchOptions.proxy;
+
+  const effective =
+    proxy === undefined ? (fromOptions === undefined ? proxyFromEnv(env) : fromOptions) : proxy;
 
   return {
     ...rest,
@@ -49,7 +61,7 @@ export function buildLaunchOptions(
       // (e.g. `ALL_PROXY`), and the environment of a process is readable by
       // every local process of the machine.
       env: browserProcessEnv(env),
-      ...(proxy ? proxyLaunchOptions(proxy) : {}),
+      ...(effective ? proxyLaunchOptions(effective) : {}),
     },
   };
 }
@@ -64,12 +76,18 @@ async function loadEngine(): Promise<BrowserType> {
     const humanize = process.env.TEN_X_CHAT_CLOAK_HUMANIZE !== '0';
     _chromium = {
       launch: async (options?: Record<string, unknown>) => {
-        return cloakbrowser.launch({ ...buildLaunchOptions(options), humanize });
+        // The effective proxy: the config file first, the environment second.
+        const proxy = await resolveEffectiveProxy();
+        return cloakbrowser.launch({
+          ...buildLaunchOptions(options, process.env, proxy),
+          humanize,
+        });
       },
       launchPersistentContext: async (userDataDir: string, options?: Record<string, unknown>) => {
+        const proxy = await resolveEffectiveProxy();
         return cloakbrowser.launchPersistentContext({
           userDataDir,
-          ...buildLaunchOptions(options),
+          ...buildLaunchOptions(options, process.env, proxy),
           humanize,
         });
       },

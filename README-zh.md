@@ -72,11 +72,31 @@ Firefox/Camoufox 曾經評估過但被否決：遷移會讓所有提供者選擇
 
 ## 代理
 
-代理只來自環境變數——沒有設定項目，也沒有 CLI 參數，因為共用的瀏覽器 daemon 是獨立行程，會繼承啟動它的那次呼叫的環境。
+代理依序來自設定檔、環境變數，或哪裡都沒有。設定檔沒有 `proxy` 區段時，行為與過去相同（使用環境變數）；`proxy.enabled: false` 則會完全關閉代理。
 
 ```bash
 HTTPS_PROXY=http://user:password@proxy.example:3128 10x-chat chat -p "…"
 NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
+```
+
+```json5
+// ~/.10x-chat/config.json
+{
+  proxy: {
+    enabled: true,
+    server: 'http://proxy.example:3128',
+    bypass: ['localhost', '127.0.0.1'],
+  },
+}
+```
+
+代理的憑證不放在設定檔裡，而是放在 `~/.10x-chat/secrets.json`（`chmod 600`）：
+
+```json5
+// ~/.10x-chat/secrets.json
+{
+  proxy: { username: 'proxy-user', password: '…' },
+}
 ```
 
 | 代理                                   | 是否支援                                                     |

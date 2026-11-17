@@ -14,7 +14,8 @@ CLI flag  >  config file  >  built-in default
 
 The environment is **not** part of that chain: it only carries the two things
 that cannot live in a file — the root directory of the data (`TEN_X_CHAT_HOME`)
-and the proxy (§5).
+and the proxy (§5). The proxy is the one exception: the config file wins over
+the environment.
 
 | Setting | CLI | Config file | Default |
 |---|---|---|---|
@@ -23,7 +24,7 @@ and the proxy (§5).
 | Timeout | `--timeout` | `defaultTimeoutMs` (chat only) | the default of the command/provider |
 | Headless | `--headed` / `--headless` | `headless` | `true` (a provider that needs a visible browser always runs headed) |
 | Profile mode | `--profile` / `--isolated-profile` | `profileMode` | `shared` |
-| Proxy | — | — | the environment (§5) |
+| Proxy | — | `proxy` | the environment (§5) |
 
 A CLI flag that is **not given** does not shadow the config file. This is why
 `--timeout` has no default value: a flag with a default would always win over
@@ -62,11 +63,18 @@ change the other commands.
   defaultTimeoutMs: 300000,     // optional, positive number
   headless: true,               // boolean
   profileMode: 'shared',        // shared | isolated
+  proxy: {                      // optional, see §5
+    enabled: true,
+    server: 'http://proxy.example:3128',
+    bypass: ['localhost', '127.0.0.1'],
+  },
 }
 ```
 
 `10x-chat config set <key> <value>` writes the same keys:
-`provider`, `model`, `timeout`, `headless`, `profile-mode`.
+`provider`, `model`, `timeout`, `headless`, `profile-mode`. The proxy is not
+one of them: it is written into the config file by hand, because its
+credentials live in another file (§5).
 
 ### What is an error
 
@@ -179,14 +187,69 @@ be broken otherwise.
 
 ## 5. The proxy
 
-**The environment is the only source of the proxy.** There is no config key and
-no CLI flag for it: the shared browser daemon is a separate process that
-inherits the environment of the invocation that started it, so a proxy that
-lives in a file or in a flag would silently not apply to it.
+The proxy comes from the config file, from the environment, or from nowhere —
+in that order:
+
+```
+config file  >  environment  >  no proxy
+```
+
+There is no CLI flag for it. The three states of the config file are different
+and are tested as such:
+
+| Config file | The proxy |
+|---|---|
+| no `proxy` section | the proxy of the environment (the old behaviour) |
+| `proxy.enabled: false` | **no proxy at all** — the environment is *not* used as a fallback |
+| `proxy.enabled: true` | the proxy of the config file — the environment is ignored |
+
+The proxy of the config file reaches the browser in every mode: the shared
+daemon, the persistent context of the shared profile and the persistent
+context of an isolated or named profile. The daemon is a separate process, and
+it resolves the proxy itself — from the same config file and the same
+environment as the invocation that started it.
+
+### The config file
+
+```json5
+{
+  proxy: {
+    enabled: true,                          // required: true or false
+    server: 'http://proxy.example:3128',   // required when enabled
+    bypass: ['localhost', '127.0.0.1'],     // optional
+  },
+}
+```
+
+`server` is the proxy URL **without** credentials. A URL that carries them is
+rejected — the credentials belong into the secrets file. `bypass` is the list
+of the hosts that must not go through the proxy; it replaces `NO_PROXY` while
+the config file names a proxy.
+
+### The secrets file
+
+The credentials live in `~/.10x-chat/secrets.json` (JSON5), next to the config
+file:
+
+```json5
+{
+  proxy: {
+    username: 'proxy-user',
+    password: '…',
+  },
+}
+```
+
+The file must not be readable by other users of the machine (`chmod 600`): a
+secrets file that every local process can read is a password in the open. A
+missing file is not an error — a proxy without credentials works. A broken one
+is: a password that is silently dropped would send the browser through a proxy
+that cannot authenticate it. No error message ever names a value.
 
 ### The variables and their order
 
-The first variable with a value wins:
+Without a `proxy` section in the config file the environment decides. The
+first variable with a value wins:
 
 ```
 HTTPS_PROXY  >  https_proxy  >  HTTP_PROXY  >  http_proxy  >  ALL_PROXY  >  all_proxy
@@ -233,6 +296,8 @@ The userinfo of the proxy URL is split off the server URL:
   userinfo, in the command line and in the environment;
 - the **credentials** go to Playwright (`launchOptions.proxy`), which
   authenticates the proxy from its own CDP session;
+- the **config file** never carries the credentials — they live in the secrets
+  file, and a `server` with a userinfo in it is rejected;
 - the **proxy variables** are removed from the environment of the browser
   (`browserProcessEnv()`), because the environment of a process is as readable
   as its command line;
@@ -242,7 +307,10 @@ The userinfo of the proxy URL is split off the server URL:
 
 ### Changing the proxy
 
-The proxy is a property of the browser process. When the proxy of the
-environment changes, the daemon is restarted with the new one (the fingerprint
-of the proxy is part of its state file). A run in the isolated mode launches
-its own browser and always uses the current environment.
+The proxy is a property of the browser process. The fingerprint of the
+effective proxy — the server, the user, the password and the bypass list, all
+of them hashed — is part of the state file of the daemon, so a changed proxy
+restarts it: an idle daemon is stopped and started again with the new proxy,
+a daemon that still serves the session of another process is never stopped —
+the run fails with an error instead (§3). A run in the isolated mode launches
+its own browser and always uses the current proxy.
