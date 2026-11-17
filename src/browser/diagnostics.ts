@@ -47,7 +47,10 @@ export function redactText(value: string): string {
     '$1[REDACTED]',
   );
   out = out.replace(/(cookie\s*[:=]\s*)([^\s"']+)/gi, '$1[REDACTED]');
-  out = out.replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,"']+)/gi, '$1[REDACTED]');
+  out = out.replace(
+    /((?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,"']+)/gi,
+    '$1[REDACTED]',
+  );
   return out;
 }
 
@@ -93,7 +96,11 @@ function sanitizeCause(cause: unknown): unknown {
 export function browserError(message: string, op: BrowserOp, cause?: unknown): Error {
   const base = redactText(message);
   const causeMsg =
-    cause instanceof Error ? redactText(cause.message) : cause != null ? redactText(String(cause)) : '';
+    cause instanceof Error
+      ? redactText(cause.message)
+      : cause != null
+        ? redactText(String(cause))
+        : '';
   const detail = causeMsg && causeMsg !== base ? `: ${causeMsg}` : '';
   const err = new Error(`${base} (${formatOp(op)})${detail}`);
   const safeCause = sanitizeCause(cause);
@@ -123,7 +130,10 @@ export function createDebugCollector(): DebugCollector {
       });
       page.on('requestfailed', (req) => {
         const failure = req.failure()?.errorText ?? 'failed';
-        push(requestFailures, `${req.method()} ${sanitizeUrl(req.url()) ?? '[url]'} ${redactText(failure)}`);
+        push(
+          requestFailures,
+          `${req.method()} ${sanitizeUrl(req.url()) ?? '[url]'} ${redactText(failure)}`,
+        );
       });
     },
     async dump() {
@@ -137,7 +147,12 @@ export function createDebugCollector(): DebugCollector {
 }
 
 function safeSlug(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'op';
+  return (
+    value
+      .replace(/[^a-zA-Z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'op'
+  );
 }
 
 export async function saveDebugArtifacts(
@@ -164,10 +179,15 @@ export async function saveDebugArtifacts(
     };
     await writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
     if (collector) {
-      await writeFile(path.join(dir, 'events.json'), JSON.stringify(await collector.dump(), null, 2));
+      await writeFile(
+        path.join(dir, 'events.json'),
+        JSON.stringify(await collector.dump(), null, 2),
+      );
     }
     if (page) {
-      await page.screenshot({ path: path.join(dir, 'screenshot.png'), fullPage: true }).catch(() => {});
+      await page
+        .screenshot({ path: path.join(dir, 'screenshot.png'), fullPage: true })
+        .catch(() => {});
       const html = await page.content().catch(() => '');
       if (html) await writeFile(path.join(dir, 'page.html'), redactText(html).slice(0, 500_000));
     }

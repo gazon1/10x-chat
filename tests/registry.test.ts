@@ -9,7 +9,8 @@ describe('Provider Registry', () => {
     expect(providers).toContain('claude');
     expect(providers).toContain('grok');
     expect(providers).toContain('perplexity');
-    expect(providers).toHaveLength(5);
+    expect(providers).toContain('deepseek');
+    expect(providers).toHaveLength(6);
   });
 
   it('should get a provider by name', () => {
@@ -35,12 +36,21 @@ describe('Provider Registry', () => {
     expect(provider.actions).toBeDefined();
   });
 
+  it('should get deepseek provider by name', () => {
+    const provider = getProvider('deepseek');
+    expect(provider.config.name).toBe('deepseek');
+    expect(provider.config.displayName).toBe('DeepSeek');
+    expect(provider.config.url).toBe('https://chat.deepseek.com');
+    expect(provider.actions).toBeDefined();
+  });
+
   it('should validate provider names', () => {
     expect(isValidProvider('chatgpt')).toBe(true);
     expect(isValidProvider('gemini')).toBe(true);
     expect(isValidProvider('claude')).toBe(true);
     expect(isValidProvider('grok')).toBe(true);
     expect(isValidProvider('perplexity')).toBe(true);
+    expect(isValidProvider('deepseek')).toBe(true);
     expect(isValidProvider('notebooklm')).toBe(false);
     expect(isValidProvider('flow')).toBe(false);
     expect(isValidProvider('dreamina')).toBe(false);

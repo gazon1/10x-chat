@@ -11,7 +11,14 @@ import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
-const CHAT_PROVIDERS: ProviderName[] = ['chatgpt', 'gemini', 'claude', 'grok', 'perplexity'];
+const CHAT_PROVIDERS: ProviderName[] = [
+  'chatgpt',
+  'gemini',
+  'claude',
+  'grok',
+  'perplexity',
+  'deepseek',
+];
 
 export interface ChatResult {
   sessionId: string;

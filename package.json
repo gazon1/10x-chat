@@ -1,7 +1,7 @@
 {
   "name": "10x-chat",
   "version": "0.11.6",
-  "description": "CLI to chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity) via browser automation",
+  "description": "CLI to chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) via browser automation",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -43,6 +43,7 @@
     "claude",
     "grok",
     "perplexity",
+    "deepseek",
     "cli",
     "browser-automation",
     "playwright"

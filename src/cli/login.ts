@@ -9,7 +9,10 @@ import type { ProfileMode, ProviderName } from '../types.js';
 export function createLoginCommand(): Command {
   const cmd = new Command('login')
     .description('Login to an AI provider (opens browser for authentication)')
-    .argument('[provider]', 'Provider to login to (chatgpt, gemini, claude, grok, perplexity)')
+    .argument(
+      '[provider]',
+      'Provider to login to (chatgpt, gemini, claude, grok, perplexity, deepseek)',
+    )
     .option('--all', 'Login to all providers')
     .option('--tabs', 'Open all providers as tabs in one browser window (use with --all)')
     .option('--status', 'Check login status for all providers')
@@ -177,9 +180,10 @@ async function loginAllWithTabs(
     operation: 'login',
   });
 
-  const pages: Array<{ name: ProviderName; page: Awaited<ReturnType<typeof browser.context.newPage>> }> = [
-    { name: firstProvider, page: browser.page },
-  ];
+  const pages: Array<{
+    name: ProviderName;
+    page: Awaited<ReturnType<typeof browser.context.newPage>>;
+  }> = [{ name: firstProvider, page: browser.page }];
 
   try {
     for (const name of restProviders) {

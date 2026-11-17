@@ -6,7 +6,14 @@ import { loadConfig } from '../config.js';
 import { getProvider, isValidProvider } from '../providers/index.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 
-const HISTORY_PROVIDERS: ProviderName[] = ['chatgpt', 'gemini', 'claude', 'grok', 'perplexity'];
+const HISTORY_PROVIDERS: ProviderName[] = [
+  'chatgpt',
+  'gemini',
+  'claude',
+  'grok',
+  'perplexity',
+  'deepseek',
+];
 
 interface HistoryItem {
   title: string;
@@ -25,6 +32,7 @@ const HISTORY_URL_HINTS: Partial<Record<ProviderName, RegExp[]>> = {
   claude: [/claude\.ai\/chat\//],
   grok: [/grok\.com\/chat\//],
   perplexity: [/perplexity\.ai\/(?:search|thread)\//],
+  deepseek: [/deepseek\.com\/a\/chat\//],
 };
 
 const HISTORY_SELECTOR_HINTS: Partial<Record<ProviderName, string>> = {
@@ -33,6 +41,7 @@ const HISTORY_SELECTOR_HINTS: Partial<Record<ProviderName, string>> = {
   claude: 'nav a, a[href*="/chat/"], a',
   grok: 'nav a, a[href*="/chat/"], a',
   perplexity: 'nav a, a[href*="/search/"], a[href*="/thread/"], a',
+  deepseek: 'nav a, a[href*="/a/chat/"], a',
 };
 
 export function createHistoryCommand(): Command {

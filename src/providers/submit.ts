@@ -65,7 +65,8 @@ export async function submitPromptToComposer(
   prompt: string,
   opts: {
     composerSelector: string;
-    sendButtonSelector: string;
+    /** Optional — providers that submit with a keyboard shortcut can omit it. */
+    sendButtonSelector?: string;
     composerTimeout?: number;
     sendTimeout?: number;
     submit?: boolean;
@@ -141,19 +142,7 @@ export async function submitPromptToComposer(
 
   await page.waitForTimeout(300);
 
-  if (process.env.TEN_X_CHAT_DEBUG_SUBMIT === '1' && typeof page.evaluate === 'function') {
-    const state = await page.evaluate(() => {
-      const el = document.querySelector('#prompt-textarea, [data-testid="composer-input"]');
-      return {
-        text: el?.textContent ?? '',
-        active: document.activeElement?.id || document.activeElement?.tagName || '',
-        html: el instanceof HTMLElement ? el.innerHTML : '',
-      };
-    });
-    console.error(`submit-debug after insert: ${JSON.stringify(state).slice(0, 500)}`);
-  }
-
-  if (submit) {
+  if (submit && sendButtonSelector) {
     await clickSendButton(page, sendButtonSelector, sendTimeout);
   }
 }
