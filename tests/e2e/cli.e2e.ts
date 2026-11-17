@@ -115,6 +115,29 @@ describe('cli flows', () => {
     });
   });
 
+  it('refuses to store a secret when the config file is broken', async () => {
+    await withTempHome(async (home) => {
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+      await mkdir(home, { recursive: true });
+      await writeFile(path.join(home, 'config.json'), '{ not json');
+
+      // The command must not fall back to the plaintext file behind the back
+      // of the user — the config file chooses where the secrets live. The
+      // environment must not decide it either.
+      const result = await runCli(
+        ['secrets', 'set', 'openai-key'],
+        { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: undefined },
+        'value',
+      );
+      expect(result.code).toBe(1);
+      expect(result.output).toContain('Invalid config file');
+
+      const { access } = await import('node:fs/promises');
+      await expect(access(path.join(home, 'secrets.json'))).rejects.toThrow();
+    });
+  });
+
   it('refuses a config file that refers to a secret that does not exist', async () => {
     await withTempHome(async (home) => {
       const { mkdir, writeFile } = await import('node:fs/promises');

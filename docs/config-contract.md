@@ -346,3 +346,4 @@ and the rotation are documented in [docs/secrets.md](secrets.md).
 | The secret is not stored | `Invalid config file <path>: No secret named "…" (config key "…")` |
 | The store is broken | `Secrets file <path> is corrupt — …` — never an empty value |
 | The keyring is required but not reachable | `The system keyring (Secret Service) is not available: …` |
+| The config file is broken and a secret is stored or read | `Invalid config file <path>: cannot be parsed — …` (or `Cannot read config file <path>: …`) — the store of the secrets is **not** chosen behind the back of the user |

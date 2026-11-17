@@ -49,9 +49,11 @@ from the prototype.
 
 The name is checked at **every** operation of the store — a read, a write, a
 delete and the names that are read from `secrets.json`. A name that is not
-allowed is an error and never reaches the keyring. The CLI checks the name
-**before** it asks for the value: a password that could not be stored is not
-typed in.
+allowed is an error and never reaches the keyring. The check is the same for
+a name of the user and for an entry of the keyring: every character of the
+name has to be allowed, so a trailing line terminator (`\n`, `\r`, `\r\n`)
+never slips through. The CLI checks the name **before** it asks for the value:
+a password that could not be stored is not typed in.
 
 ```
 Invalid secret name "../escape": a name may contain only letters, numbers,
@@ -80,6 +82,26 @@ without a secret service and for the tests.
 `auto` falls back to the file **silently** — a server without a desktop
 session has no Secret Service. `10x-chat secrets list` shows which backend is
 in use; a run that must not write a secret to a file has to say `keyring`.
+
+### A broken config file
+
+The config file chooses the backend, so it has to be readable. **Only a
+missing config file** falls back to the default (`auto`). A config file that
+cannot be read, cannot be parsed or does not hold an object is an **error**:
+
+```
+Invalid config file ~/.10x-chat/config.json: cannot be parsed — JSON5: invalid
+character 'j' at 1:7. The store of the secrets is not chosen while the config
+file is broken — repair it, then try again.
+```
+
+The fallback is not a convenience here — it is a hole: a broken config file
+would switch the run to `auto`, and `auto` writes the secret to a plaintext
+file when the Secret Service is not reachable. `credentialStorage: "keyring"`
+is the promise that no secret ever reaches a file, and a promise that cannot
+be read is not a promise that may be broken quietly. The commands that touch
+the store (`secrets set`, `secrets list`, `secrets remove`) do not run
+`loadConfig()` — they read the setting themselves, with the same rule.
 
 ## The keyring
 
@@ -237,6 +259,11 @@ and both enter the critical section — one update would be lost. The socket has
 no such window, and it leaves no file behind: the lock of the store is the
 socket `ten-x-chat-lock-<user>-<hash of the path>`, visible in
 `ss -x | grep ten-x-chat-lock`.
+
+The lock has **no protocol** — a process that holds the lock does not talk to
+the other ones, it only holds the name. A connection to the socket is
+therefore destroyed at once: a stranger that connects and keeps the
+connection open cannot delay the release of the lock.
 
 The temporary file of a write is unique per operation, so two writers never
 share a name.

@@ -82,9 +82,13 @@ Provider actions implement:
   argument of a command, never in a log and never in the config file — see `docs/secrets.md`
 - **The backend of the secrets store**: `credentialStorage` in the config file (`auto` — the
   keyring when it is reachable, the file otherwise; `keyring` — the keyring only; `file` — the
-  file only), the environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. The secrets
-  of an old file store are migrated into the keyring on the first use — written, read back,
-  compared, and only then the file is deleted
+  file only), the environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. Only a
+  **missing** config file falls back to the default: a config file that cannot be read or parsed
+  is an error, so a broken file never switches the run to the plaintext file behind the back of
+  the user. The secrets of an old file store are migrated into the keyring on the first use —
+  compared with the keyring first, written, read back, compared, and only then the file is
+  deleted. The keyring is never overwritten by the file: a secret with another value in the
+  keyring refuses the migration
 - **The lock of the secrets store**: the read-modify-write cycle and the whole migration into the
   keyring (read the file, write the keyring, verify, delete the file) run under the lock of the
   store — the file is read again inside the lock
@@ -92,7 +96,8 @@ Provider actions implement:
   gives the name to exactly one process and takes it away when the holder dies. A file-based lock
   cannot hold it: taking a dead lock over means replacing the file at the path, and there is no
   atomic "replace it, but only if the dead lock is still there" — two processes would both enter
-  the critical section
+  the critical section. The lock has no protocol: an incoming connection is destroyed at once, so
+  a stranger cannot delay the release of the lock
 - **The privacy of the store**: the mode of the directory (`0700`) is enforced before every read
   and every write — a directory that cannot be made private refuses the read and the write
 - **The input of a secret**: a piped stdin is read as is, a terminal asks with the echo switched

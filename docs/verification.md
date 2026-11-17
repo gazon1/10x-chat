@@ -215,11 +215,14 @@ config file (`providerKeys`) instead of the values themselves.
 
 The backend is chosen by `credentialStorage` in the config file (`auto` — the keyring when it is
 reachable, the file otherwise; `keyring` — the keyring only; `file` — the file only); the
-environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. The secrets of a store that
-was created before the keyring existed are migrated on the first use: they are compared with the
-keyring first — a secret that the keyring already holds is **never** overwritten, and a secret
-with a different value refuses the migration — the missing ones are written into the keyring, read
-back and compared; only then the file is deleted.
+environment variable `TEN_X_CHAT_CREDENTIAL_STORAGE` overrides it. Only a **missing** config file
+falls back to the default: a config file that cannot be read, cannot be parsed or does not hold an
+object is an error — otherwise a broken config file would switch the run to `auto`, and `auto`
+writes the secret to a plaintext file when the Secret Service is not reachable. The secrets of a
+store that was created before the keyring existed are migrated on the first use: they are compared
+with the keyring first — a secret that the keyring already holds is **never** overwritten, and a
+secret with a different value refuses the migration — the missing ones are written into the keyring,
+read back and compared; only then the file is deleted.
 
 The store and the proxy settings of [#34](https://github.com/gazon1/10x-chat/pull/34) share one
 store: the proxy itself is configured in the config file (the section `proxy`), its credentials
@@ -250,6 +253,8 @@ behind.
 | The names of the secrets | **verified (unit)** | `tests/secrets.test.ts` — `__proto__` is stored and read back as a secret, an inherited property (`toString`, `constructor`) reads as missing |
 | The validation of the names | **verified (unit)** | `assertSecretName()` runs on **every** operation of the store — `get`, `set`, `remove` of the file and of the keyring — and on the names that are read from `secrets.json`; a file with a name that is not allowed is a corrupt store (`tests/secrets.test.ts`, `tests/keyring.test.ts`); `__proto__`, `constructor` and `toString` stay ordinary secrets |
 | The name before the value | **verified (unit)** | `tests/secrets-cli.test.ts` — the CLI checks the name **before** it asks for the value: a password that could not be stored is not typed in |
+| The name and a line terminator | **verified (unit)** | every character of a name is checked, so a trailing `\n`, `\r` or `\r\n` is refused — by the input of the user and by the listing of the keyring (`tests/secrets.test.ts`, `tests/keyring.test.ts`) |
+| A broken config file | **verified (unit + e2e)** | only a **missing** config file falls back to the default; a config file that cannot be read, cannot be parsed or does not hold an object is an error — `secrets set` refuses to run instead of switching the store to the plaintext file (`tests/secrets.test.ts`, `tests/e2e/cli.e2e.ts`) |
 | The proxy in a real browser | **not verified against a site** | the daemon and the isolated browser read the same store, but no run against a real proxy was made |
 | The permissions on Windows | **not applicable** | NTFS ignores the POSIX modes — the protection comes from the rights of the user profile (documented in [docs/secrets.md](secrets.md)) |
 | The system keyring | **verified (unit)** | `tests/keyring.test.ts` — the store keeps the names and the values in the keyring, the entries of another program are ignored, an invalid name is refused (`src/keyring.ts` pins the entries to the Secret Service — the kernel keyring is not used: it cannot enumerate its entries) |
@@ -261,6 +266,7 @@ behind.
 | The privacy of the directory on a read | **verified (unit)** | the mode of the directory is enforced before every read as well: a directory that cannot be made private refuses the read (`tests/secrets-directory.test.ts`), a wide directory is tightened before the secrets are read (`tests/secrets.test.ts`) |
 | The input of the value | **verified (unit + e2e)** | a piped stdin is read as is (only the trailing newline is dropped) — `tests/secrets-cli.test.ts` and `tests/e2e/cli.e2e.ts`; a terminal asks with the echo switched off (`@inquirer/prompts`, the same call is asserted in `tests/secrets-cli.test.ts`); in a real pty the value is stored and never appears in the output |
 | The lock of the store | **verified (unit, three processes)** | the lock is an abstract unix socket: three processes that take the same lock enter their critical sections one after the other (`tests/lock.test.ts`); a lock of a living process is not taken, and the lock of a killed holder is free at once — the kernel gives the name back |
+| A foreign connection to the lock | **verified (unit)** | the lock has no protocol: an incoming connection is destroyed at once, so a stranger that connects and keeps the connection open cannot delay the release of the lock (`tests/lock.test.ts` connects to the socket of the lock and proves that the release does not hang) |
 
-The check set of that change: typecheck, lint, test (39 files / **423 tests**), e2e (9 CLI
+The check set of that change: typecheck, lint, test (39 files / **431 tests**), e2e (10 CLI
 scenarios, the 7 live provider scenarios skipped) and build — all pass.

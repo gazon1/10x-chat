@@ -63,12 +63,22 @@ export const PROXY_PASSWORD_SECRET = 'proxy.password';
 /**
  * Whether a name may be used as the name of a secret.
  *
+ * Every character of the name is checked on its own: the whole name has to
+ * match, so a trailing line terminator (`\n`, `\r`, `\r\n`) can never slip
+ * through — the end of the name is not anchored by a regular expression
+ * alone. (In JavaScript `$` does not match before a trailing newline, but the
+ * name is compared character by character anyway.)
+ *
  * The names `__proto__`, `constructor` and `toString` are ordinary names: the
  * store keeps them as own properties of an object without a prototype, so
  * they are never confused with something inherited from `Object.prototype`.
  */
 export function isSecretName(name: string): boolean {
-  return SECRET_NAME_PATTERN.test(name) && name !== '.' && name !== '..';
+  if (name.length === 0) return false;
+  for (const character of name) {
+    if (!SECRET_NAME_PATTERN.test(character)) return false;
+  }
+  return name !== '.' && name !== '..';
 }
 
 /** Check a secret name — the name becomes a key of the secrets file. */
@@ -420,7 +430,9 @@ class KeyringSecretStore implements SecretStore {
     await this.ensureMigrated();
     const names = await this.backend.list();
     // Only our own names: the service may hold entries of another program.
-    return names.filter((name) => SECRET_NAME_PATTERN.test(name)).sort();
+    // The same validation as the one of a user-supplied name — one function,
+    // one contract.
+    return names.filter((name) => isSecretName(name)).sort();
   }
 
   async get(name: string): Promise<string | undefined> {
@@ -540,6 +552,14 @@ export function parseCredentialStorage(
  *
  * The environment wins over the config file, the config file over the default
  * (`auto` — the keyring when it is reachable, the file otherwise).
+ *
+ * A **missing** config file is the only case that falls back to the default.
+ * A config file that cannot be read, cannot be parsed or does not hold an
+ * object is an **error**: the store of the secrets is chosen by the config
+ * file, and a broken one must not silently switch the run to the plaintext
+ * file — `credentialStorage: "keyring"` is the promise that no secret ever
+ * reaches a file, and a promise that cannot be read is not a promise that can
+ * be broken quietly.
  */
 async function readCredentialStorage(): Promise<CredentialStorage> {
   const fromEnv = process.env[CREDENTIAL_STORAGE_ENV]?.trim().toLowerCase();
@@ -549,10 +569,12 @@ async function readCredentialStorage(): Promise<CredentialStorage> {
   let raw: string;
   try {
     raw = await readFile(configPath, 'utf-8');
-  } catch {
-    // No config file — the default. A broken config file is reported by
-    // `loadConfig`, which every command runs before it touches a secret.
-    return 'auto';
+  } catch (error) {
+    // No config file — the default. Every other error is a broken config
+    // file, and a broken config file is an error (`loadConfig` reports the
+    // same way — but the secrets commands do not run it).
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'auto';
+    throw new Error(`Cannot read config file ${configPath}: ${message(error)}`);
   }
 
   let parsed: unknown;
@@ -560,11 +582,22 @@ async function readCredentialStorage(): Promise<CredentialStorage> {
     const JSON5Module = await import('json5');
     const JSON5 = JSON5Module.default ?? JSON5Module;
     parsed = JSON5.parse(raw);
-  } catch {
-    return 'auto';
+  } catch (error) {
+    throw new Error(
+      `Invalid config file ${configPath}: cannot be parsed — ${message(error)}. ` +
+        `The store of the secrets is not chosen while the config file is broken — ` +
+        `repair it, then try again.`,
+    );
   }
 
-  if (typeof parsed !== 'object' || parsed === null) return 'auto';
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      `Invalid config file ${configPath}: expected an object at the top level. ` +
+        `The store of the secrets is not chosen while the config file is broken — ` +
+        `repair it, then try again.`,
+    );
+  }
+
   const value = (parsed as Record<string, unknown>).credentialStorage;
   if (value === undefined) return 'auto';
   return parseCredentialStorage(value, `"credentialStorage" in the config file ${configPath}`);

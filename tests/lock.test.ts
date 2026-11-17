@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { acquireLock } from '../src/core/lock.js';
+import { acquireLock, lockSocketName } from '../src/core/lock.js';
 
 const LOCK_FILENAME = 'test.lock';
 
@@ -111,6 +112,40 @@ describe('the lock', () => {
     await lock.release();
 
     expect(await readdir(tempDir)).toEqual([]);
+  });
+
+  it('does not let a foreign connection hold the lock', async () => {
+    const lock = await acquireLock(tempDir, LOCK_FILENAME);
+
+    // A stranger connects to the socket of the lock and keeps the connection.
+    // The lock has no protocol: the connection is destroyed at once, and the
+    // release of the lock does not wait for it.
+    const stranger = net.connect({ path: lockSocketName(tempDir, LOCK_FILENAME) });
+    stranger.on('error', () => {}); // the server destroys the connection
+    await new Promise<void>((resolve) => {
+      stranger.once('connect', () => resolve());
+      stranger.once('close', () => resolve());
+    });
+
+    // The connection was closed by the lock — the stranger did not close it.
+    await new Promise<void>((resolve) => {
+      if (stranger.destroyed) {
+        resolve();
+        return;
+      }
+      stranger.once('close', () => resolve());
+      setTimeout(resolve, 5_000);
+    });
+    expect(stranger.destroyed).toBe(true);
+
+    // The release does not hang on the stranger.
+    await Promise.race([
+      lock.release(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('the release of the lock hangs')), 10_000),
+      ),
+    ]);
+    stranger.destroy();
   });
 
   it('does not take the lock from a living process', async () => {

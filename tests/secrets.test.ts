@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, resolveEffectiveProxy } from '../src/config.js';
 import { getProviderApiKey } from '../src/core/credentials.js';
 import {
+  CREDENTIAL_STORAGE_ENV,
   getSecretStore,
   getSecretsPath,
   PROXY_PASSWORD_SECRET,
@@ -64,6 +65,17 @@ describe('secrets store', () => {
     const store = getSecretStore();
     await expect(store.get('../escape')).rejects.toThrow(/Invalid secret name/);
     await expect(store.remove('../escape')).rejects.toThrow(/Invalid secret name/);
+  });
+
+  it('rejects a name with a trailing line terminator', async () => {
+    const store = getSecretStore();
+    for (const name of ['openai-key\n', 'openai-key\r', 'openai-key\r\n']) {
+      await expect(store.set(name, SECRET)).rejects.toThrow(/Invalid secret name/);
+      await expect(store.get(name)).rejects.toThrow(/Invalid secret name/);
+      await expect(store.remove(name)).rejects.toThrow(/Invalid secret name/);
+    }
+    // Nothing was written.
+    expect(await store.list()).toEqual([]);
   });
 
   it('fails clearly on a file with an invalid secret name', async () => {
@@ -264,6 +276,85 @@ describe('secret references in the config file', () => {
 
     expect(await getProviderApiKey('chatgpt')).toBe(SECRET);
     expect(await getProviderApiKey('gemini')).toBeUndefined();
+  });
+});
+
+describe('a broken config file', () => {
+  const originalEnv = process.env;
+  let tempHome = '';
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-secrets-'));
+    process.env = { ...originalEnv, TEN_X_CHAT_HOME: tempHome };
+    // The config file chooses the store in this block — the environment must
+    // not decide it (`tests/setup.ts` forces the file store for the tests).
+    delete process.env[CREDENTIAL_STORAGE_ENV];
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    if (tempHome) await rm(tempHome, { recursive: true, force: true });
+  });
+
+  const writeConfig = (content: string) =>
+    writeFile(path.join(tempHome, 'config.json'), content, 'utf8');
+
+  const exists = async (filePath: string): Promise<boolean> => {
+    try {
+      await access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * The store of a run whose keyring is not reachable: the fallback of
+   * `auto` is the file. A secret that reaches the file is a failure of the
+   * test — and it never reaches the real keyring of the machine.
+   */
+  const store = () =>
+    getSecretStore({
+      backendFactory: async () => {
+        throw new Error('no secret service');
+      },
+    });
+
+  it('refuses to store a secret instead of falling back to the plaintext file', async () => {
+    await writeConfig('{ not json');
+
+    // The command that touches the store — not `loadConfig()`: the secrets
+    // commands do not run it, and the store must not fall back to the file
+    // behind the back of the user.
+    await expect(store().set('openai-key', SECRET)).rejects.toThrow(/Invalid config file/);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
+  it('refuses a config file that does not hold an object', async () => {
+    await writeConfig('["credentialStorage"]');
+
+    await expect(store().set('openai-key', SECRET)).rejects.toThrow(/expected an object/);
+    expect(await exists(getSecretsPath())).toBe(false);
+  });
+
+  it('refuses a config file that cannot be read', async () => {
+    if (process.platform === 'win32') return;
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return; // root reads anything
+    await writeConfig('{ "credentialStorage": "keyring" }');
+    await chmod(path.join(tempHome, 'config.json'), 0o000);
+
+    try {
+      await expect(store().set('openai-key', SECRET)).rejects.toThrow(/Cannot read config file/);
+      expect(await exists(getSecretsPath())).toBe(false);
+    } finally {
+      await chmod(path.join(tempHome, 'config.json'), 0o600);
+    }
+  });
+
+  it('uses the default when there is no config file at all', async () => {
+    await store().set('openai-key', SECRET);
+
+    expect(await store().get('openai-key')).toBe(SECRET);
   });
 });
 

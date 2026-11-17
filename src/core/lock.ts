@@ -110,6 +110,19 @@ function socketName(target: string): string {
 }
 
 /**
+ * The name of the socket of the lock of a directory.
+ *
+ * The name is public: the tests connect to it to prove that a foreign
+ * connection cannot hold the lock.
+ *
+ * @param dir the directory the lock belongs to
+ * @param filename the name of the lock
+ */
+export function lockSocketName(dir: string, filename: string): string {
+  return socketName(path.resolve(dir, filename));
+}
+
+/**
  * Bind the name of the lock — the kernel gives it to one process only.
  *
  * @param name the name of the abstract socket
@@ -131,14 +144,12 @@ async function bind(name: string, target: string, options: LockOptions): Promise
     if (!error) {
       // The name is ours. An error of the socket must not crash the process.
       server.on('error', () => {});
-      // Nobody talks to the lock — but a connection that came in would keep
-      // the server open.
-      const sockets = new Set<net.Socket>();
-      server.on('connection', (socket) => {
-        sockets.add(socket);
-        socket.on('close', () => sockets.delete(socket));
-      });
-      return handle(server, sockets, lockId);
+      // Nobody talks to the lock — it has no protocol. A connection that stays
+      // open would keep `server.close()` waiting at the release of the lock,
+      // and a stranger that connects at the wrong moment would delay it. The
+      // connection is destroyed at once.
+      server.on('connection', (socket) => socket.destroy());
+      return handle(server, lockId);
     }
 
     server.close(() => {});
@@ -156,14 +167,15 @@ async function bind(name: string, target: string, options: LockOptions): Promise
 }
 
 /** The handle of a lock that this process owns. */
-function handle(server: net.Server, sockets: Set<net.Socket>, lockId: string): Lock {
+function handle(server: net.Server, lockId: string): Lock {
   let released = false;
   return {
     lockId,
     release: async () => {
       if (released) return;
       released = true;
-      for (const socket of sockets) socket.destroy();
+      // Every connection of the server was destroyed when it came in — the
+      // close does not wait for a stranger.
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

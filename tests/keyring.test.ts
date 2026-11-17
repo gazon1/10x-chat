@@ -125,6 +125,27 @@ describe('the keyring store', () => {
     expect(await keyringStore().list()).toEqual(['openai-key']);
   });
 
+  it('ignores an entry whose name ends with a line terminator', async () => {
+    // The listing uses the same validation as the input of the user.
+    backend.entries.set('openai-key\n', 'value');
+    backend.entries.set('openai-key\r', 'value');
+    backend.entries.set('openai-key\r\n', 'value');
+    backend.entries.set('openai-key', SECRET);
+
+    expect(await keyringStore().list()).toEqual(['openai-key']);
+  });
+
+  it('rejects a name with a trailing line terminator', async () => {
+    const store = keyringStore();
+    for (const name of ['openai-key\n', 'openai-key\r', 'openai-key\r\n']) {
+      await expect(store.set(name, SECRET)).rejects.toThrow(/Invalid secret name/);
+      await expect(store.get(name)).rejects.toThrow(/Invalid secret name/);
+      await expect(store.remove(name)).rejects.toThrow(/Invalid secret name/);
+    }
+    // Nothing reached the keyring.
+    expect(backend.entries.size).toBe(0);
+  });
+
   it('migrates the secrets of the file store into the keyring', async () => {
     await writeFile(
       getSecretsPath(),
