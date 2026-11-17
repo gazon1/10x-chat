@@ -222,9 +222,12 @@ environment as the invocation that started it.
 ```
 
 `server` is the proxy URL **without** credentials. A URL that carries them is
-rejected — the credentials belong into the secrets file. `bypass` is the list
-of the hosts that must not go through the proxy; it replaces `NO_PROXY` while
-the config file names a proxy.
+rejected — the credentials belong into the secrets file. The check runs
+whenever the field is present, also when the proxy is switched off: a
+disabled proxy is not used, but its credentials would still sit in a
+plaintext config file. `bypass` is the list of the hosts that must not go
+through the proxy; it replaces `NO_PROXY` while the config file names a
+proxy.
 
 ### The secrets file
 

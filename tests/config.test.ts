@@ -230,6 +230,26 @@ describe('The proxy section of the config', () => {
     expect(error?.message).not.toContain('proxy-user');
   });
 
+  it('reports credentials in the server of a disabled proxy without naming them', async () => {
+    // `enabled: false` switches the proxy off — it must not make the
+    // credentials of a plaintext config file acceptable.
+    await writeConfig(
+      JSON.stringify({
+        proxy: { enabled: false, server: 'http://proxy-user:sup3r-s3cret@proxy.example.com:3128' },
+      }),
+    );
+
+    const { loadConfig } = await import('../src/config.js');
+    const error = await loadConfig().then(
+      () => undefined,
+      (reason: unknown) => reason as Error,
+    );
+
+    expect(error?.message).toMatch(/must not contain credentials/);
+    expect(error?.message).not.toContain('sup3r-s3cret');
+    expect(error?.message).not.toContain('proxy-user');
+  });
+
   it('reports a bypass list that is not a list of strings', async () => {
     await writeConfig(
       JSON.stringify({

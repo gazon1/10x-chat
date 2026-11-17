@@ -66,12 +66,13 @@ function validateProxyConfig(raw: unknown, configPath: string): ProxyConfig {
       throw configError(configPath, '"proxy.server" must be a non-empty string');
     }
     config.server = parsed.server.trim();
-    if (config.enabled) {
-      try {
-        validateProxyServer(config.server);
-      } catch (error) {
-        throw configError(configPath, `"proxy.server" is invalid — ${message(error)}`);
-      }
+    // The server is checked whenever it is present, not only when the proxy is
+    // enabled: `enabled` decides whether the proxy is used, the credentials of a
+    // disabled proxy are still credentials in a plaintext config file.
+    try {
+      validateProxyServer(config.server);
+    } catch (error) {
+      throw configError(configPath, `"proxy.server" is invalid — ${message(error)}`);
     }
   } else if (config.enabled) {
     throw configError(configPath, '"proxy.server" is required when "proxy.enabled" is true');
