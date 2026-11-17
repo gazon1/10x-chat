@@ -27,10 +27,21 @@ No system Chromium is needed: the `postinstall` step of the package downloads th
 ## Install
 
 ```bash
-npm install -g github:gazon1/10x-chat     # or: bun add -g github:gazon1/10x-chat
+npm install -g --install-links github:gazon1/10x-chat
 ```
 
 The install builds the CLI (`prepare`) and downloads the CloakBrowser build (`postinstall`). Every example below uses the `10x-chat` binary of a global install.
+
+> [!IMPORTANT]
+> `--install-links` is required with npm 11. npm installs a git dependency that carries build scripts as a **symlink** into a temporary clone and deletes that clone right after — the global install is left dangling. With the flag npm copies the prepared package instead. To keep the plain command working, set it once:
+>
+> ```bash
+> npm config set install-links true --location=user
+> ```
+>
+> Without a global install, run the CLI straight from the source: `npx github:gazon1/10x-chat chat -p "…"` (Bun needs `bun pm -g untrusted` first — it blocks the build scripts otherwise).
+>
+> npm 11.20+ additionally skips the `postinstall` that downloads the CloakBrowser build until the package is trusted: add `--allow-scripts=10x-chat` to the install command, or run `npx cloakbrowser install` once by hand.
 
 > [!NOTE]
 > The name `10x-chat` on npm belongs to the upstream project, which still ships the integrations that were removed here. This fork is therefore installed from the repository — it is not published to the registry yet.
@@ -337,7 +348,7 @@ The provider UIs change without notice — Grok in particular is the most fragil
 
 | Symptom | What to do |
 |---|---|
-| `CloakBrowser is not installed or failed to load` | `npm install -g github:gazon1/10x-chat` again, or run `npx cloakbrowser install` |
+| `CloakBrowser is not installed or failed to load` | `npm install -g --install-links github:gazon1/10x-chat` again, or run `npx cloakbrowser install` |
 | The browser does not start / no window | the build is missing: `npx cloakbrowser install` (it lands in `~/.cloakbrowser/`) |
 | `Not logged in` although you logged in | the session expired — `10x-chat login <provider>` again; `login --status` shows the state of every provider |
 | ChatGPT / Perplexity open a window even with headless | both are blocked by anti-bot protection and always run headed; `--headless` overrides it |

@@ -18,11 +18,13 @@ Use 10x-chat to send prompts to web-based AI agents via automated browser sessio
 ## Installation
 
 ```bash
-npm install -g github:gazon1/10x-chat   # or: bun add -g github:gazon1/10x-chat
+npm install -g --install-links github:gazon1/10x-chat
 10x-chat --version
 ```
 
 The npm registry name `10x-chat` belongs to the upstream project — install this fork from the repository.
+
+`--install-links` is required with npm 11: it installs the git dependency as a copy instead of a symlink into a temporary clone that npm deletes afterwards. Set it once with `npm config set install-links true --location=user`. npm 11.20+ also needs `--allow-scripts=10x-chat` (or a manual `npx cloakbrowser install`) to download the CloakBrowser build.
 
 ## When to use
 
