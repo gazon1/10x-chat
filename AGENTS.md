@@ -6,7 +6,7 @@
 
 | Path | What |
 |------|------|
-| `src/providers/` | One file per AI provider (chatgpt, gemini, claude, grok, perplexity) |
+| `src/providers/` | One file per AI provider (chatgpt, gemini, claude, grok, perplexity, deepseek) |
 | `src/providers/registry.ts` | Provider name → config + actions mapping |
 | `src/providers/submit.ts` | Shared prompt submission helper (composer → type → send) |
 | `src/core/orchestrator.ts` | Single + parallel chat execution (`runChat`, `runChatAll`) |

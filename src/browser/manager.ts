@@ -5,8 +5,8 @@ import { getIsolatedProfileDir, getSharedProfileDir } from '../paths.js';
 import type { ProfileMode, ProviderName } from '../types.js';
 import { launchSharedBrowserSession } from './daemon.js';
 import {
-  browserError,
   type BrowserOp,
+  browserError,
   createDebugCollector,
   type DebugCollector,
   isBrowserDebugEnabled,
@@ -88,8 +88,8 @@ async function attachDebug(
   const collector = createDebugCollector();
   if (page) collector.attach(page);
   context.on('page', (p) => collector.attach(p));
-  await context
-    .tracing?.start({ screenshots: true, snapshots: true, sources: false })
+  await context.tracing
+    ?.start({ screenshots: true, snapshots: true, sources: false })
     .catch(() => {});
   return collector;
 }
@@ -169,7 +169,11 @@ async function launchSharedBrowser(opts: LaunchOptions): Promise<BrowserSession>
       close,
     };
   } catch (error) {
-    throw browserError('Failed to launch shared browser session', { ...op, stage: 'launch-shared' }, error);
+    throw browserError(
+      'Failed to launch shared browser session',
+      { ...op, stage: 'launch-shared' },
+      error,
+    );
   }
 }
 
@@ -213,7 +217,13 @@ async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<Brows
       );
     }
   } catch (error) {
-    await finalizeDebug({ ...op, stage: 'launch-shared-persistent' }, context, page, collector, true);
+    await finalizeDebug(
+      { ...op, stage: 'launch-shared-persistent' },
+      context,
+      page,
+      collector,
+      true,
+    );
     await context?.close().catch(() => {});
     await lock.release();
     throw error;
@@ -232,7 +242,13 @@ async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<Brows
       failed = true;
       throw error;
     } finally {
-      await finalizeDebug({ ...op, stage: 'close-shared-persistent' }, context, page, collector, failed);
+      await finalizeDebug(
+        { ...op, stage: 'close-shared-persistent' },
+        context,
+        page,
+        collector,
+        failed,
+      );
       await lock.release();
     }
   };

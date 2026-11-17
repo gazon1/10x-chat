@@ -90,7 +90,7 @@ async function runMigration(options: { dryRun?: boolean; source?: string; keep?:
   }
 
   // Scan existing isolated profiles
-  const knownProviders = ['chatgpt', 'gemini', 'claude', 'grok', 'perplexity'];
+  const knownProviders = ['chatgpt', 'gemini', 'claude', 'grok', 'perplexity', 'deepseek'];
   const profiles: ProfileInfo[] = [];
 
   for (const name of knownProviders) {

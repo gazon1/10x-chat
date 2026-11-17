@@ -1,6 +1,6 @@
 # 10x-chat
 
-> 透過瀏覽器自動化，從終端機與網頁 AI 助手（ChatGPT、Gemini、Claude、Grok、Perplexity）對話。
+> 透過瀏覽器自動化，從終端機與網頁 AI 助手（ChatGPT、Gemini、Claude、Grok、Perplexity、DeepSeek）對話。
 
 10x-chat 使用 [Playwright](https://playwright.dev) 自動化瀏覽器工作階段，並保存登入設定。只需登入一次，即可從 CLI 或 AI 編碼助手發送提示——自動附帶檔案內容。
 
@@ -48,6 +48,7 @@ npx 10x-chat@latest login gemini         # 登入 Gemini
 npx 10x-chat@latest login claude         # 登入 Claude
 npx 10x-chat@latest login grok           # 登入 Grok
 npx 10x-chat@latest login perplexity     # 登入 Perplexity
+npx 10x-chat@latest login deepseek       # 登入 DeepSeek
 npx 10x-chat@latest login --status       # 檢查所有提供者的登入狀態
 ```
 
@@ -66,7 +67,7 @@ npx 10x-chat@latest chat -p "長時間任務" --timeout 600000 --headed  # 10 �
 | 參數 | 說明 |
 |------|------|
 | `-p, --prompt <text>` | **（必填）** 要發送的提示 |
-| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity`（預設：設定檔） |
+| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity`、`deepseek`（預設：設定檔） |
 | `--model <name>` | 要在 UI 中選擇的模型/模式（例如 Gemini：`Fast`、`Thinking`、`Deep Think`、`Pro`） |
 | `-f, --file <paths...>` | 要作為上下文打包的檔案/glob 模式 |
 | `--copy` | 將打包內容複製到剪貼簿而不發送 |
@@ -86,7 +87,7 @@ npx 10x-chat@latest history --provider chatgpt --json
 
 | 參數 | 說明 |
 |------|------|
-| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity` 或 `all`（預設：all） |
+| `--provider <name>` | 提供者：`chatgpt`、`gemini`、`claude`、`grok`、`perplexity`、`deepseek` 或 `all`（預設：all） |
 | `--limit <n>` | 每個提供者最多列出幾筆（預設：20） |
 | `--headed` | 顯示瀏覽器視窗 |
 | `--json` | 輸出 JSON |
@@ -174,6 +175,7 @@ npx 10x-chat@latest skill install
 | Claude | ✅ 對話 | — | claude.ai |
 | Grok | ✅ 對話 + 圖片 | — | grok.com |
 | Perplexity | ✅ | — | perplexity.ai |
+| DeepSeek | ✅ | deepseek-chat、deepseek-reasoner | chat.deepseek.com |
 
 ## 開發
 
