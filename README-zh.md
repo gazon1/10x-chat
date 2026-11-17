@@ -27,10 +27,21 @@ https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-cha
 ## 安裝
 
 ```bash
-npm install -g github:gazon1/10x-chat     # 或：bun add -g github:gazon1/10x-chat
+npm install -g --install-links github:gazon1/10x-chat
 ```
 
 安裝時會建置 CLI（`prepare`）並下載 CloakBrowser 的建置版本（`postinstall`）。下面所有範例都使用全域安裝的 `10x-chat` 執行檔。
+
+> [!IMPORTANT]
+> npm 11 需要 `--install-links`。npm 會把帶建置腳本的 git 相依安裝成指向暫存 clone 的**符號連結**，事後又刪掉該 clone，結果全域安裝變成懸空連結。加上這個旗標，npm 會改成複製已經建置好的套件。若想沿用原本的指令，先設定一次：
+>
+> ```bash
+> npm config set install-links true --location=user
+> ```
+>
+> 若不做全域安裝，可直接從原始碼執行：`npx github:gazon1/10x-chat chat -p "…"`（Bun 需要先執行 `bun pm -g untrusted`，否則會擋下建置腳本）。
+>
+> npm 11.20+ 還會在套件被信任前略過下載 CloakBrowser 建置版本的 `postinstall`：安裝指令加上 `--allow-scripts=10x-chat`，或手動執行一次 `npx cloakbrowser install`。
 
 > [!NOTE]
 > npm 上的名稱 `10x-chat` 屬於上游專案，而上游仍帶著這個分支已移除的整合。因此這個分支是從儲存庫安裝的——尚未發佈到套件庫。
@@ -333,7 +344,7 @@ ChatGPT 深度研究是從輸入框的 `+`（`Add files and more`）選單中選
 
 | 症狀                                              | 處理方式                                                                                      |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `CloakBrowser is not installed or failed to load` | 重新執行 `npm install -g github:gazon1/10x-chat`，或執行 `npx cloakbrowser install`             |
+| `CloakBrowser is not installed or failed to load` | 重新執行 `npm install -g --install-links github:gazon1/10x-chat`，或執行 `npx cloakbrowser install`             |
 | 瀏覽器無法啟動／沒有視窗                          | 缺少建置版本：執行 `npx cloakbrowser install`（會落在 `~/.cloakbrowser/`）                    |
 | 已登入卻出現 `Not logged in`                      | 工作階段已過期——再次執行 `10x-chat login <provider>`；`login --status` 會顯示每個提供者的狀態 |
 | 即使 headless，ChatGPT／Perplexity 仍開啟視窗     | 兩者都被反機器人防護阻擋，一律以有介面模式執行；`--headless` 可強制覆寫                       |
