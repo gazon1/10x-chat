@@ -25,6 +25,11 @@ const SELECTORS = {
   thinking: '.ds-think-content',
   /** Wrapper of a single chat message (user and assistant messages alike). */
   message: '.ds-message',
+  /**
+   * Marker of a user message: the app wraps the prompt of the user into a
+   * collapsible text block (assistant messages never use it).
+   */
+  userPrompt: '.ds-collapsible-text',
   /** Container of the app's toasts (rate limits, network errors, ...). */
   notifications: '.ds-notification-container',
   /** DeepThink toggle in the composer toolbar. */
@@ -125,34 +130,65 @@ interface TurnSignals {
   toastText: string;
 }
 
-async function readTurnSignals(page: Page): Promise<TurnSignals> {
-  return page.evaluate(
-    ({ messageSelector, answerSelector, thinkingSelector, notificationsSelector }) => {
-      const messages = Array.from(document.querySelectorAll(messageSelector));
-      const assistant = messages.filter((el) => el.querySelector(answerSelector)).pop();
+/** What the page reports about a single chat message. */
+export interface MessageProbe {
+  /** The message contains the user-prompt marker. */
+  hasUserMarker: boolean;
+  /** The message contains an answer block. */
+  hasAnswer: boolean;
+  /** Message text without the answer and the reasoning blocks. */
+  errorText: string;
+}
 
-      let errorText = '';
-      if (assistant) {
-        const clone = assistant.cloneNode(true) as HTMLElement;
-        for (const el of Array.from(clone.querySelectorAll(answerSelector))) el.remove();
-        for (const el of Array.from(clone.querySelectorAll(thinkingSelector))) el.remove();
-        errorText = (clone.textContent ?? '').trim();
-      }
+/**
+ * The error slot of the newest assistant message.
+ *
+ * Assistant messages are recognized by the absence of the user-prompt marker,
+ * so a message that carries only a service error (and therefore no answer
+ * block) is still found.
+ */
+export function pickAssistantErrorText(messages: MessageProbe[]): string {
+  const assistant = messages.filter((m) => !(m.hasUserMarker && !m.hasAnswer)).pop();
+  return assistant?.errorText ?? '';
+}
+
+async function readTurnSignals(page: Page): Promise<TurnSignals> {
+  const { messages, toastText } = await page.evaluate(
+    ({
+      messageSelector,
+      answerSelector,
+      thinkingSelector,
+      userPromptSelector,
+      notificationsSelector,
+    }) => {
+      const messages = Array.from(document.querySelectorAll(messageSelector)).map((el) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        for (const child of Array.from(clone.querySelectorAll(answerSelector))) child.remove();
+        for (const child of Array.from(clone.querySelectorAll(thinkingSelector))) child.remove();
+        return {
+          hasUserMarker: Boolean(el.querySelector(userPromptSelector)),
+          hasAnswer: Boolean(el.querySelector(answerSelector)),
+          errorText: (clone.textContent ?? '').trim(),
+        };
+      });
 
       const toastText = Array.from(document.querySelectorAll(notificationsSelector))
         .map((el) => (el.textContent ?? '').trim())
         .join(' ')
         .trim();
 
-      return { errorText, toastText };
+      return { messages, toastText };
     },
     {
       messageSelector: SELECTORS.message,
       answerSelector: SELECTORS.answer,
       thinkingSelector: SELECTORS.thinking,
+      userPromptSelector: SELECTORS.userPrompt,
       notificationsSelector: SELECTORS.notifications,
     },
   );
+
+  return { errorText: pickAssistantErrorText(messages), toastText };
 }
 
 /**

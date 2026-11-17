@@ -4,7 +4,9 @@ import {
   DEEPSEEK_CONFIG,
   deepseekActions,
   extractDeepSeekFailureText,
+  type MessageProbe,
   pickAnswer,
+  pickAssistantErrorText,
 } from '../src/providers/deepseek.js';
 
 describe('DeepSeek Provider', () => {
@@ -103,6 +105,51 @@ describe('DeepSeek Provider', () => {
     });
   });
 
+  describe('pickAssistantErrorText', () => {
+    const userMessage: MessageProbe = {
+      hasUserMarker: true,
+      hasAnswer: false,
+      errorText: 'Ответь одним словом: столица Франции?',
+    };
+
+    it('returns the error slot of the newest assistant message', () => {
+      const messages: MessageProbe[] = [
+        { hasUserMarker: false, hasAnswer: true, errorText: '' },
+        userMessage,
+        {
+          hasUserMarker: false,
+          hasAnswer: true,
+          errorText: 'Service error, please try again later.',
+        },
+      ];
+      expect(pickAssistantErrorText(messages)).toBe('Service error, please try again later.');
+    });
+
+    it('finds an assistant message that has no answer block', () => {
+      const messages: MessageProbe[] = [
+        { hasUserMarker: false, hasAnswer: true, errorText: '' },
+        {
+          hasUserMarker: false,
+          hasAnswer: false,
+          errorText: 'Server busy, please try again later.',
+        },
+      ];
+      expect(pickAssistantErrorText(messages)).toBe('Server busy, please try again later.');
+    });
+
+    it('skips the user message', () => {
+      const messages: MessageProbe[] = [
+        { hasUserMarker: false, hasAnswer: true, errorText: '' },
+        userMessage,
+      ];
+      expect(pickAssistantErrorText(messages)).toBe('');
+    });
+
+    it('returns an empty string without messages', () => {
+      expect(pickAssistantErrorText([])).toBe('');
+    });
+  });
+
   describe('deepseekActions', () => {
     it('should export all required action methods', () => {
       expect(deepseekActions.isLoggedIn).toBeTypeOf('function');
@@ -121,8 +168,10 @@ describe('DeepSeek Provider', () => {
 interface MockWorld {
   /** Rendered answer blocks. */
   blocks: AnswerBlock[];
-  /** Text the app rendered for the current turn. */
-  turn: { errorText: string; toastText: string };
+  /** Chat messages rendered by the app. */
+  messages: MessageProbe[];
+  /** Text of the app's toast containers. */
+  toastText: string;
   /** DeepThink toggle state. */
   toggle: { visible: boolean; states: string[]; readFails: boolean };
 }
@@ -167,7 +216,10 @@ function createDeepSeekPage(world: MockWorld) {
     if (!arg) return undefined;
     if ('messageSelector' in arg) {
       calls.push('evaluate:turn');
-      return { ...world.turn };
+      return {
+        messages: world.messages.map((message) => ({ ...message })),
+        toastText: world.toastText,
+      };
     }
     if ('answerSelector' in arg) {
       calls.push('evaluate:answers');
@@ -198,7 +250,8 @@ function createDeepSeekPage(world: MockWorld) {
 function createWorld(overrides: Partial<MockWorld> = {}): MockWorld {
   return {
     blocks: [],
-    turn: { errorText: '', toastText: '' },
+    messages: [],
+    toastText: '',
     toggle: { visible: true, states: ['off'], readFails: false },
     ...overrides,
   };
@@ -315,13 +368,23 @@ describe('DeepSeek captureResponse', () => {
 
   it('ignores a service error left in the chat history', async () => {
     const world = createWorld({
-      turn: { errorText: 'Server busy, please try again later.', toastText: '' },
+      messages: [
+        {
+          hasUserMarker: false,
+          hasAnswer: false,
+          errorText: 'Server busy, please try again later.',
+        },
+      ],
     });
     const { page } = createDeepSeekPage(world);
 
     await deepseekActions.submitPrompt(page as never, 'Привет');
     // The new turn renders a normal answer, the old error stays in the history.
-    world.turn = { errorText: '', toastText: '' };
+    world.messages = [
+      { hasUserMarker: false, hasAnswer: false, errorText: 'Server busy, please try again later.' },
+      { hasUserMarker: true, hasAnswer: false, errorText: 'Привет' },
+      { hasUserMarker: false, hasAnswer: true, errorText: '' },
+    ];
     world.blocks = [{ text: 'Привет', html: '<p>Привет</p>', insideThinking: false }];
 
     const result = await deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 });
@@ -333,7 +396,26 @@ describe('DeepSeek captureResponse', () => {
     const { page } = createDeepSeekPage(world);
 
     await deepseekActions.submitPrompt(page as never, 'Привет');
-    world.turn = { errorText: 'Server busy, please try again later.', toastText: '' };
+    world.messages = [
+      { hasUserMarker: true, hasAnswer: false, errorText: 'Привет' },
+      { hasUserMarker: false, hasAnswer: true, errorText: 'Server busy, please try again later.' },
+    ];
+
+    await expect(
+      deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 }),
+    ).rejects.toThrow(/Server busy, please try again later\./);
+  });
+
+  it('fails on an assistant message with an error but no answer block', async () => {
+    const world = createWorld();
+    const { page } = createDeepSeekPage(world);
+
+    await deepseekActions.submitPrompt(page as never, 'Привет');
+    // The app renders the service error in its own message, without an answer.
+    world.messages = [
+      { hasUserMarker: true, hasAnswer: false, errorText: 'Привет' },
+      { hasUserMarker: false, hasAnswer: false, errorText: 'Server busy, please try again later.' },
+    ];
 
     await expect(
       deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 }),
@@ -345,7 +427,7 @@ describe('DeepSeek captureResponse', () => {
     const { page } = createDeepSeekPage(world);
 
     await deepseekActions.submitPrompt(page as never, 'Привет');
-    world.turn = { errorText: '', toastText: 'Too many requests. Try again later.' };
+    world.toastText = 'Too many requests. Try again later.';
 
     await expect(
       deepseekActions.captureResponse(page as never, { timeoutMs: 1_000 }),
