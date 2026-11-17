@@ -15,6 +15,7 @@
 | `src/providers/api/` | The API transports of the providers (`registry.ts` maps a provider to its transport) |
 | `src/core/failures.ts` | Bot-challenge detection, failure kinds (`antibot`/`unauthorized`/`unavailable`) |
 | `src/core/polling.ts` | `pollUntilStable` — waits for streamed response to stop changing |
+| `src/core/conversations.ts` | Conversation reuse per git repo + branch: URL extraction, git context, `~/.10x-chat/conversations.json` |
 | `src/core/bundle.ts` | Assembles prompt + file context into a markdown bundle |
 | `src/browser/manager.ts` | Browser launch: shared (daemon), shared-persistent (login), isolated modes |
 | `src/browser/daemon.ts` | Long-running Chromium server for cross-invocation reuse |
@@ -29,6 +30,7 @@
 | `tests/e2e/` | End-to-end scenarios: CLI flows (always) and live provider round trips (opt-in) |
 | `docs/verification.md` | The result of the last full check run and the documented exceptions |
 | `docs/secrets.md` | The secrets store: CLI, permissions, backup, rotation |
+| `docs/usage.md` | Practical setup: proxy, models, headless/Xvfb, conversation reuse |
 
 ## Architecture
 
@@ -105,7 +107,8 @@ Provider actions implement:
   and every write — a directory that cannot be made private refuses the read and the write
 - **The input of a secret**: a piped stdin is read as is, a terminal asks with the echo switched
   off (`@inquirer/prompts`, `password()`) — no patching of the private fields of `readline`
-- **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro
+- **Conversation reuse**: `runChat` opens the conversation stored for the current git repo + branch + provider (`~/.10x-chat/conversations.json`), or a new chat when the provider no longer serves it. `--new-chat` forces a new conversation. Every provider baselines its existing turns in `submitPrompt` so the capture does not return the previous answer
+- **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro. ChatGPT's current UI has no picker; `selectModel` probes briefly and keeps the current model
 - **The transport**: `--transport browser|api` (the browser is the default). The API transport (`src/core/api-orchestrator.ts`) sends the prompt to the HTTP API of the provider with the key of `providerKeys.<provider>` — no browser, no login check, no profile. A capability the transport does not have (attachments, streaming, cancellation) is **rejected**, never ignored. The key never reaches an error message (`redactSecretValues`) — see `docs/transports.md`
 
 ## Pre-Commit Checklist

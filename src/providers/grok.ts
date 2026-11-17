@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import { waitForUrlChange } from '../browser/page-utils.js';
+import { conversationIdFromUrl } from '../core/conversations.js';
 import { pollUntilStable } from '../core/polling.js';
 import type {
   CapturedResponse,
@@ -170,6 +171,9 @@ async function clickVisibleModelOption(page: Page, model: string): Promise<boole
   );
 }
 
+/** The number of assistant responses before the current prompt was submitted. */
+const grokResponseBaseline = new WeakMap<Page, number>();
+
 export const grokActions: ProviderActions = {
   async selectModel(page: Page, model: string): Promise<void> {
     const picker = await getVisibleModelPickerState(page);
@@ -228,6 +232,8 @@ export const grokActions: ProviderActions = {
   },
 
   async submitPrompt(page: Page, prompt: string): Promise<void> {
+    // Baseline before the prompt: an existing conversation already has answers.
+    grokResponseBaseline.set(page, await page.locator('.response-content-markdown').count());
     await submitPromptToComposer(page, prompt, {
       composerSelector: SELECTORS.composer,
       // Grok needs :not([disabled]) on send button
@@ -243,16 +249,19 @@ export const grokActions: ProviderActions = {
     const startTime = Date.now();
 
     // Grok redirects to a new conversation URL (grok.com/c/...) after submit.
-    // The response may already be rendered by the time we start counting,
-    // so we wait for the URL change first, then look for response content.
+    // An existing conversation keeps its URL, so only wait for the redirect
+    // when the current page is not a conversation.
+    const baseline = grokResponseBaseline.get(page) ?? 0;
     const initialUrl = page.url();
-    const remainingForNav = Math.min(timeoutMs, 30_000);
-    await waitForUrlChange(page, initialUrl, remainingForNav).catch(() => {});
+    if (conversationIdFromUrl('grok', initialUrl) === undefined) {
+      const remainingForNav = Math.min(timeoutMs, 30_000);
+      await waitForUrlChange(page, initialUrl, remainingForNav).catch(() => {});
+    }
 
-    // After navigation, wait for at least one response-content-markdown (assistant response)
+    // Wait for the new assistant response (the next one after the baseline).
     await page
       .locator('.response-content-markdown')
-      .first()
+      .nth(baseline)
       .waitFor({ timeout: timeoutMs - (Date.now() - startTime) });
 
     // Poll until the response stops changing (streaming complete)

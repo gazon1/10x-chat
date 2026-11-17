@@ -32,6 +32,10 @@ export function createChatCommand(): Command {
     .option('--headless', 'Force headless browser even for providers that prefer headed')
     .option('--timeout <ms>', 'Response timeout in milliseconds (overrides the config)')
     .option('--transport <name>', 'Transport to use: browser (default) or api')
+    .option(
+      '--new-chat',
+      'Start a new conversation instead of reusing the one stored for this repo/branch',
+    )
     .option('--save-images <dir>', 'Save generated images to directory')
     .option('--profile <name>', 'Use named browser profile')
     .option('--isolated-profile', 'Use per-provider browser profiles (backward compat)')
@@ -82,6 +86,7 @@ export function createChatCommand(): Command {
         profile: options.profile,
         timeoutMs,
         transport: transport as TransportName | undefined,
+        newChat: options.newChat === true,
       };
 
       // Dry run: just show the bundle
@@ -150,7 +155,7 @@ function renderChatAllResult(results: ChatAllResult[], transport?: TransportName
       console.log(DIVIDER);
       console.log(
         chalk.dim(
-          `  Session: ${r.result.sessionId}  |  ${Math.round(r.result.durationMs / 1000)}s${r.result.truncated ? '  ⚠ truncated' : ''}`,
+          `  Session: ${r.result.sessionId}  |  ${Math.round(r.result.durationMs / 1000)}s${r.result.conversationId ? `  |  Chat: ${r.result.conversationId}` : ''}${r.result.truncated ? '  ⚠ truncated' : ''}`,
         ),
       );
     } else {
@@ -180,6 +185,9 @@ function renderChatResult(result: ChatResult): void {
 
   console.log('');
   console.log(chalk.dim(`Session: ${result.sessionId}`));
+  if (result.conversationId) {
+    console.log(chalk.dim(`Chat: ${result.conversationId}`));
+  }
   console.log(chalk.dim(`Duration: ${Math.round(result.durationMs / 1000)}s`));
   if (result.truncated) {
     console.log(chalk.yellow('⚠ Response may be truncated (timeout reached)'));

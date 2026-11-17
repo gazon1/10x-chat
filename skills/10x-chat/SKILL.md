@@ -64,6 +64,9 @@ The npm registry name `10x-chat` belongs to the upstream project — install thi
 10x-chat chat --provider gemini --file "path/to/prompt.md" -p "Complete this task"
 10x-chat chat --provider gemini --model Pro -p "Solve this math problem"
 10x-chat chat --all -p "Compare the answers"          # every chat provider in parallel
+# Chats are reused per git repo + branch and provider:
+10x-chat chat -p "Now add tests" --provider chatgpt    # same conversation
+10x-chat chat -p "Start over" --provider chatgpt --new-chat
 
 # Multi-step provider delegate for external AI callers (JSONL over stdin/stdout)
 10x-chat delegate gemini --model Pro

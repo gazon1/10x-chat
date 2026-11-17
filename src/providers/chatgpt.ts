@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import { conversationIdFromUrl } from '../core/conversations.js';
 import { AntibotChallengeError, isChallengeVisible } from '../core/failures.js';
 import type {
   CapturedResponse,
@@ -15,6 +16,8 @@ const chatgptSubmitBaseline = new WeakMap<
 const chatgptPendingFiles = new WeakMap<Page, string[]>();
 
 const ASSISTANT_TURN_FALLBACK_SELECTORS = [
+  '[data-conversation-role="assistant"]',
+  '[data-chatgpt-search-unit-key$=":assistant"]',
   'div.agent-turn',
   'article[data-testid^="conversation-turn-"]:has(.markdown)',
   'div[data-message-id]:has(.markdown)',
@@ -23,6 +26,8 @@ const ASSISTANT_TURN_FALLBACK_SELECTORS = [
 ] as const;
 
 const ASSISTANT_TURN_COUNT_SELECTORS = [
+  '[data-conversation-role="assistant"]',
+  '[data-chatgpt-search-unit-key$=":assistant"]',
   'div.agent-turn',
   'article[data-testid^="conversation-turn-"]:has(.markdown)',
   'div[data-message-id]:has(.markdown)',
@@ -30,6 +35,10 @@ const ASSISTANT_TURN_COUNT_SELECTORS = [
 ] as const;
 
 const ASSISTANT_CONTENT_FALLBACK_SELECTORS = [
+  '[data-markdown-text-style="assistant-message"]',
+  '[data-response-body]',
+  '[data-dil-response]',
+  '[class*="MarkdownRoot"]',
   'div.agent-turn .markdown',
   'article[data-testid^="conversation-turn-"]:has(.markdown) .markdown',
   'div[data-message-id]:has(.markdown) .markdown',
@@ -217,6 +226,32 @@ async function getVisibleModelPickerState(page: Page): Promise<{ found: boolean;
   );
 }
 
+const MODEL_PILL_SELECTOR =
+  'button.__composer-pill:has-text("Instant"), button.__composer-pill:has-text("Medium"), button.__composer-pill:has-text("High"), button.__composer-pill:has-text("Extra High"), button.__composer-pill:has-text("Pro"), button.__composer-pill:has-text("GPT-5")';
+
+const MODEL_UI_PROBE_ATTEMPTS = 12;
+
+/**
+ * Is any model control visible on the page?
+ *
+ * The current ChatGPT UI (including the free plan) may not render a model
+ * picker at all. Probing for it first keeps `selectModel` from blocking on the
+ * long waits of the old picker flow.
+ */
+async function isModelUiPresent(page: Page): Promise<boolean> {
+  const pill = page.locator(MODEL_PILL_SELECTOR).first();
+  if (await pill.isVisible().catch(() => false)) return true;
+  return Boolean((await getVisibleModelPickerState(page))?.found);
+}
+
+async function waitForModelUi(page: Page): Promise<boolean> {
+  for (let attempt = 0; attempt < MODEL_UI_PROBE_ATTEMPTS; attempt++) {
+    if (await isModelUiPresent(page)) return true;
+    if (attempt < MODEL_UI_PROBE_ATTEMPTS - 1) await page.waitForTimeout(250);
+  }
+  return false;
+}
+
 async function clickVisibleModelOption(page: Page, model: string): Promise<boolean> {
   return page.evaluate(
     ({ modelLabel, optionSelector, scopeSelectors, excludedSelector }) => {
@@ -363,17 +398,65 @@ async function dismissOverlays(page: Page): Promise<void> {
 }
 
 export const chatgptActions: ProviderActions = {
+  async newChat(page: Page): Promise<void> {
+    const debug = process.env.TEN_X_CHAT_DEBUG_NEWCHAT === '1';
+    const log = (...args: unknown[]): void => {
+      if (debug) console.error('[newchat]', ...args);
+    };
+
+    // `?new=1` asks the app for a blank chat even when the base URL would
+    // restore the last conversation. The unique parameter forces a document
+    // navigation instead of an in-app route change.
+    await page
+      .goto(`https://chatgpt.com/?new=1&t=${Date.now()}`, { waitUntil: 'domcontentloaded' })
+      .catch(() => {});
+    // Let the app settle: it can restore the last conversation after the
+    // initial DOM is ready, even when the URL is already `/`.
+    await page.waitForTimeout(5_000);
+    await dismissOverlays(page);
+
+    // A restored conversation can keep the URL at `/`, so the URL alone is not
+    // enough: the assistant turns must be gone too.
+    const isFresh = async (): Promise<boolean> =>
+      conversationIdFromUrl('chatgpt', page.url()) === undefined &&
+      (await getAssistantTurnCount(page)) === 0;
+
+    if (debug) log('after goto', page.url(), 'fresh', await isFresh());
+    if (await isFresh()) return;
+
+    // Fallback: the "New chat" control is both in the sidebar and in the mobile
+    // toolbar. Do not use `:visible` — the shared daemon does not proxy the
+    // Playwright selector engine reliably. Iterate the buttons instead.
+    const buttons = page.locator('button[aria-label="New chat"]');
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const count = await buttons.count().catch(() => 0);
+      log('buttons', count);
+      for (let index = 0; index < count; index++) {
+        const candidate = buttons.nth(index);
+        if (!(await candidate.isVisible().catch(() => false))) continue;
+        log('click', index);
+        await candidate.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(1_000);
+        const fresh = await isFresh();
+        log('after click', page.url(), 'fresh', fresh);
+        if (fresh) return;
+      }
+      await page.waitForTimeout(500);
+    }
+  },
+
   async selectModel(page: Page, model: string): Promise<void> {
     await dismissOverlays(page);
 
+    // The new UI (and the free plan) has no model picker at all. Probe briefly
+    // and keep the account's current model instead of waiting on the old one.
+    if (!(await waitForModelUi(page))) return;
+
     for (const targetModel of resolveChatGPTModelLabels(model)) {
       // Current ChatGPT UI shows the thinking/model level as a composer pill near Send.
-      const composerPill = page
-        .locator(
-          'button.__composer-pill:has-text("Instant"), button.__composer-pill:has-text("Medium"), button.__composer-pill:has-text("High"), button.__composer-pill:has-text("Extra High"), button.__composer-pill:has-text("Pro"), button.__composer-pill:has-text("GPT-5")',
-        )
-        .first();
-      await composerPill.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+      const composerPill = page.locator(MODEL_PILL_SELECTOR).first();
+      await composerPill.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => {});
       if (await composerPill.isVisible().catch(() => false)) {
         const current = (await composerPill.textContent().catch(() => '')) ?? '';
         if (normalizeModelLabel(current) === normalizeModelLabel(targetModel)) continue;
@@ -403,7 +486,7 @@ export const chatgptActions: ProviderActions = {
       await page
         .locator(SELECTORS.modelPicker)
         .first()
-        .waitFor({ state: 'visible', timeout: 15_000 })
+        .waitFor({ state: 'visible', timeout: 2_000 })
         .catch(() => {});
       await page.waitForTimeout(500);
       const picker = await getVisibleModelPickerState(page);
@@ -514,7 +597,9 @@ export const chatgptActions: ProviderActions = {
     await dismissOverlays(page);
     chatgptSubmitBaseline.set(page, {
       turnCount: await getAssistantTurnCount(page),
-      latestText: '',
+      // An existing conversation already has an assistant response. Without
+      // this baseline the capture would treat the old answer as the new one.
+      latestText: (await getLatestAssistantSnapshot(page)).text,
       url: page.url(),
     });
 

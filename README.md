@@ -141,6 +141,65 @@ The permissions, the platform limits, the backup and the rotation are in [docs/s
 - `migrate` merges the old per-provider profiles into the shared one.
 - Every run writes its own session (`meta.json`, `bundle.md`, `response.md`) into `~/.10x-chat/sessions/<uuid>/`; `status` lists them, `session <id>` shows one.
 
+## Conversation reuse
+
+A browser chat remembers the provider conversation of the current **git repository and branch**. The next `chat` run in the same repository and branch appends to that conversation instead of starting a new one — for every provider that exposes a stable conversation URL (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek).
+
+```bash
+cd ~/src/my-project          # branch: feature/login
+10x-chat chat -p "Implement the login form" --provider chatgpt
+10x-chat chat -p "Now add validation"       --provider chatgpt   # same chat
+10x-chat chat -p "Start over"               --provider chatgpt --new-chat
+```
+
+The cache lives in `~/.10x-chat/conversations.json`:
+
+```json5
+{
+  repos: {
+    "/home/me/src/my-project": {
+      "feature/login": {
+        chatgpt: { url: "https://chatgpt.com/c/…", id: "…", updatedAt: "…" },
+        claude:  { url: "https://claude.ai/chat/…", id: "…", updatedAt: "…" }
+      }
+    }
+  }
+}
+```
+
+- The key is the repository **root** (a run from a subdirectory finds the same chat) and the checked-out branch. A detached HEAD uses the short commit; outside git the working directory is used.
+- A conversation the provider no longer serves (deleted, expired, or redirected to a new chat) is dropped automatically and a new one is created.
+- `--new-chat` forces a fresh conversation and replaces the stored entry.
+- `chat --all` reuses one conversation per provider for the same repository and branch.
+- The API transport (`--transport api`) has no conversation — it is a single HTTP request.
+- `delegate` keeps one long-lived browser session; it does not use this cache.
+
+## Models and headless
+
+The model is chosen in this order: `--model` → `defaultModel` of the config file (chat and delegate only) → the default of the provider. `research` selects a model only when asked to; `image` has no model selection.
+
+```bash
+10x-chat config set model Pro
+10x-chat chat -p "…" --provider chatgpt --model Instant
+```
+
+ChatGPT's current UI (including the free plan) does not render a model picker. The CLI probes briefly and then keeps the account's current model; the `Selecting model: …` line is a no-op in that case.
+
+ChatGPT, Claude and Perplexity set `requiresHeaded` because their sites block headless Chromium. Add `--headless` to force a windowless browser:
+
+```bash
+10x-chat chat -p "…" --provider chatgpt --headless
+```
+
+A Cloudflare challenge cannot be solved in a headless window: run once headed (or `10x-chat login <provider>`) to refresh the clearance cookie. If you need a headed browser that does not open on your desktop, run it under Xvfb (`sudo dnf install xorg-x11-server-Xvfb` on Fedora):
+
+```bash
+xvfb-run -a -s "-screen 0 1280x900x24" env -u WAYLAND_DISPLAY \
+  10x-chat chat -p "…" --provider chatgpt
+```
+
+The full practical guide — proxy precedence, proxy credentials, models, headless and Xvfb — is in [docs/usage.md](docs/usage.md).
+
 ## Transports
 
 A prompt reaches a provider through the **browser** (the default — the web app is driven, a logged-in session is needed) or through the **HTTP API** of the provider (`--transport api` — an API key from the secrets store is needed, no browser is started).
@@ -193,6 +252,7 @@ Send a prompt to an AI provider via browser automation.
 | `--headless` | Force headless, also for the providers that normally run headed |
 | `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
 | `--transport <name>` | `browser` (default) or `api` — see [docs/transports.md](docs/transports.md) |
+| `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |
 | `--isolated-profile` | Use the per-provider browser profile |
@@ -373,6 +433,7 @@ Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically exc
 │       ├── meta.json        # Session metadata
 │       ├── bundle.md        # Prompt bundle sent
 │       └── response.md      # Captured response
+├── conversations.json       # Provider conversation per git repo + branch
 ├── debug/                   # Debug artifacts (only with TEN_X_CHAT_BROWSER_DEBUG=1)
 ├── browser-daemon.json      # State of the shared browser daemon
 └── config.json              # User configuration

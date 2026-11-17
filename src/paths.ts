@@ -46,3 +46,8 @@ export function getConfigPath(): string {
 export function getSecretsPath(): string {
   return path.join(getAppDir(), 'secrets.json');
 }
+
+/** Conversation cache path: ~/.10x-chat/conversations.json */
+export function getConversationsPath(): string {
+  return path.join(getAppDir(), 'conversations.json');
+}

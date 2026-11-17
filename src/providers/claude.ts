@@ -166,6 +166,9 @@ async function clickVisibleModelOption(page: Page, model: string): Promise<boole
   );
 }
 
+/** The number of response turns before the current prompt was submitted. */
+const claudeTurnBaseline = new WeakMap<Page, number>();
+
 export const claudeActions: ProviderActions = {
   async selectModel(page: Page, model: string): Promise<void> {
     const picker = await getVisibleModelPickerState(page);
@@ -216,6 +219,8 @@ export const claudeActions: ProviderActions = {
   },
 
   async submitPrompt(page: Page, prompt: string): Promise<void> {
+    // Baseline before the prompt: an existing conversation already has turns.
+    claudeTurnBaseline.set(page, await page.locator(SELECTORS.responseTurn).count());
     await submitPromptToComposer(page, prompt, {
       composerSelector: SELECTORS.composer,
       sendButtonSelector: SELECTORS.sendButton,
@@ -229,7 +234,8 @@ export const claudeActions: ProviderActions = {
     const { timeoutMs, onChunk } = opts;
     const startTime = Date.now();
 
-    const existingTurns = await page.locator(SELECTORS.responseTurn).count();
+    const existingTurns =
+      claudeTurnBaseline.get(page) ?? (await page.locator(SELECTORS.responseTurn).count());
 
     await page.locator(SELECTORS.responseTurn).nth(existingTurns).waitFor({ timeout: timeoutMs });
 

@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import { waitForUrlChange } from '../browser/page-utils.js';
+import { conversationIdFromUrl } from '../core/conversations.js';
 import { pollUntilStable } from '../core/polling.js';
 import type { CapturedResponse, ProviderActions, ProviderConfig } from '../types.js';
 
@@ -58,6 +59,9 @@ async function dismissOverlays(page: Page): Promise<void> {
   }
 }
 
+/** The number of response blocks before the current prompt was submitted. */
+const perplexityResponseBaseline = new WeakMap<Page, number>();
+
 export const perplexityActions: ProviderActions = {
   async isLoggedIn(page: Page): Promise<boolean> {
     try {
@@ -105,6 +109,9 @@ export const perplexityActions: ProviderActions = {
   },
 
   async submitPrompt(page: Page, prompt: string): Promise<void> {
+    // Baseline before the prompt: an existing conversation already has answers.
+    perplexityResponseBaseline.set(page, await page.locator(SELECTORS.responseTurn).count());
+
     // Dismiss sign-in popups before interacting with composer
     await dismissOverlays(page);
 
@@ -148,28 +155,31 @@ export const perplexityActions: ProviderActions = {
     const { timeoutMs, onChunk } = opts;
     const startTime = Date.now();
     const initialUrl = page.url();
+    const baseline = perplexityResponseBaseline.get(page) ?? 0;
 
     // Perplexity navigates from / to /search/<slug>-<id> after submit.
-    // Wait for the URL to change (indicates response page loaded).
-    await waitForUrlChange(page, initialUrl, Math.min(timeoutMs, 30_000)).catch(() => {});
+    // An existing conversation keeps its URL, so only wait for the redirect
+    // when the current page is not a conversation.
+    if (conversationIdFromUrl('perplexity', initialUrl) === undefined) {
+      await waitForUrlChange(page, initialUrl, Math.min(timeoutMs, 30_000)).catch(() => {});
+    }
 
-    // Wait for the prose response container to appear
-    await page
-      .locator(SELECTORS.responseTurn)
-      .first()
-      .waitFor({ timeout: Math.max(timeoutMs - (Date.now() - startTime), 10_000) });
+    // Wait for the new prose response container to appear
+    const responseTurn = page.locator(SELECTORS.responseTurn).nth(baseline);
+    await responseTurn.waitFor({
+      timeout: Math.max(timeoutMs - (Date.now() - startTime), 10_000),
+    });
 
     // Poll until the response stops changing (streaming complete)
     const remainingMs = Math.max(timeoutMs - (Date.now() - startTime), 5_000);
     const { text: lastText, truncated } = await pollUntilStable(page, {
       getText: async (p) =>
-        (await p.locator(SELECTORS.responseTurn).first().textContent())?.trim() ?? '',
+        (await p.locator(SELECTORS.responseTurn).nth(baseline).textContent())?.trim() ?? '',
       timeoutMs: remainingMs,
       onChunk,
     });
 
     // Extract the final HTML content
-    const responseTurn = page.locator(SELECTORS.responseTurn).first();
     const markdown = (await responseTurn.innerHTML({ timeout: 5_000 }).catch(() => '')) ?? '';
 
     const totalElapsed = Date.now() - startTime;

@@ -8,6 +8,15 @@ import { createSession, saveBundle, saveResponse, updateSession } from '../sessi
 import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
 import { buildBundle } from './bundle.js';
+import {
+  clearStoredConversation,
+  conversationIdFromUrl,
+  getStoredConversation,
+  isConversationGone,
+  resolveConversationContext,
+  type StoredConversation,
+  saveStoredConversation,
+} from './conversations.js';
 import type { FailureKind } from './failures.js';
 import { checkProviderSession, failureKind, reclassify } from './failures.js';
 import { resolveAttachPaths } from './files.js';
@@ -33,6 +42,8 @@ export interface ChatResult {
   durationMs: number;
   /** Images generated in the response (with local paths if saved). */
   images?: GeneratedImage[];
+  /** The provider conversation id, when the provider exposes one. */
+  conversationId?: string;
 }
 
 /**
@@ -80,6 +91,18 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
   console.log(chalk.dim(`Session: ${session.id}`));
   console.log(chalk.blue(`Provider: ${provider.config.displayName}`));
 
+  const conversationContext = await resolveConversationContext();
+  let storedConversation: StoredConversation | undefined;
+  if (options.newChat) {
+    // A new chat replaces the stored one, even if this run fails.
+    await clearStoredConversation(conversationContext, providerName).catch(() => {});
+  } else {
+    storedConversation = await getStoredConversation(conversationContext, providerName);
+  }
+  if (storedConversation) {
+    console.log(chalk.dim(`Reusing chat: ${storedConversation.id}`));
+  }
+
   // Determine profile mode: CLI flag overrides config
   const profileMode = options.profile || options.isolatedProfile ? 'isolated' : config.profileMode;
 
@@ -98,7 +121,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     browser = await launchBrowser({
       provider: providerName,
       headless,
-      url: provider.config.url,
+      url: storedConversation?.url ?? provider.config.url,
       profileMode,
       profile: options.profile,
       operation: 'chat',
@@ -108,11 +131,45 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     throw browserError('Failed to launch browser for chat', { ...op, stage }, error);
   }
 
-  const startTime = Date.now();
+  let usingStoredConversation = Boolean(storedConversation);
+  let freshRequired = !storedConversation;
 
-  try {
-    stage = 'login-check';
-    await checkProviderSession({
+  const startFreshConversation = async (): Promise<void> => {
+    if (provider.actions.newChat) {
+      await provider.actions.newChat(browser.page);
+      return;
+    }
+    await browser.page.goto(provider.config.url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  };
+
+  const startNewConversation = async (): Promise<boolean> => {
+    if (!usingStoredConversation) return false;
+    console.log(chalk.dim('The stored chat is no longer available — starting a new one.'));
+    usingStoredConversation = false;
+    freshRequired = true;
+    await clearStoredConversation(conversationContext, providerName).catch(() => {});
+    await startFreshConversation();
+    return true;
+  };
+
+  const ensureStoredConversation = async (): Promise<boolean> => {
+    if (!usingStoredConversation || !storedConversation) return false;
+    if (await isConversationGone(browser.page, providerName, storedConversation)) {
+      return startNewConversation();
+    }
+    return false;
+  };
+
+  // A landing page may restore the last conversation (ChatGPT does). A run
+  // without a stored conversation has to start a fresh one.
+  const ensureFreshConversation = async (): Promise<boolean> => {
+    if (!freshRequired || !provider.actions.newChat) return false;
+    await provider.actions.newChat(browser.page);
+    return true;
+  };
+
+  const sessionCheck = () =>
+    checkProviderSession({
       page: browser.page,
       context: browser.context,
       provider,
@@ -120,6 +177,32 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       headless,
       sharedState: browser.sharedState,
     });
+
+  const startTime = Date.now();
+
+  try {
+    stage = 'login-check';
+    await ensureStoredConversation();
+    try {
+      await sessionCheck();
+    } catch (error) {
+      const gone = Boolean(
+        usingStoredConversation &&
+          storedConversation &&
+          failureKind(error) === 'unauthorized' &&
+          (await isConversationGone(browser.page, providerName, storedConversation).catch(
+            () => false,
+          )),
+      );
+      if (!gone) throw error;
+      await startNewConversation();
+      await sessionCheck();
+    }
+
+    // A client-side redirect can happen while the session check waits.
+    if (await ensureStoredConversation()) {
+      await sessionCheck();
+    }
 
     const modelName = chatModel(options.model, config.defaultModel, provider.config.defaultModel);
     if (modelName && provider.actions.selectModel) {
@@ -145,6 +228,16 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       }
     }
 
+    // Do it after the model/files work and right before the prompt: the app
+    // has fully hydrated by now, and a provider may have dropped the stored
+    // conversation while the model picker was open.
+    const restarted = await ensureStoredConversation();
+    if (restarted) {
+      await sessionCheck();
+    } else {
+      await ensureFreshConversation();
+    }
+
     stage = 'submit-prompt';
     console.log(chalk.dim('Submitting prompt...'));
     await provider.actions.submitPrompt(browser.page, bundle);
@@ -157,6 +250,20 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     });
 
     const durationMs = Date.now() - startTime;
+    const conversationId = conversationIdFromUrl(providerName, browser.page.url());
+    if (conversationId) {
+      await saveStoredConversation(conversationContext, providerName, {
+        url: browser.page.url(),
+        id: conversationId,
+        updatedAt: new Date().toISOString(),
+      }).catch((error) => {
+        console.warn(
+          chalk.dim(
+            `Could not save the conversation: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      });
+    }
 
     stage = 'save-response';
     await saveResponse(session.id, captured.text);
@@ -185,6 +292,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       truncated: captured.truncated,
       durationMs,
       ...(savedImages && savedImages.length > 0 ? { images: savedImages } : {}),
+      ...(conversationId ? { conversationId } : {}),
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;

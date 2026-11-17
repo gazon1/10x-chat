@@ -50,11 +50,16 @@ describe('Model selection uses Playwright locator clicks to open the menu', () =
   });
 
   it('selects a ChatGPT model through the composer model picker', async () => {
-    const page = createModelPage([{ found: true, text: 'Pro' }, true, true]);
+    const page = createModelPage([
+      { found: true, text: 'Pro' },
+      { found: true, text: 'Pro' },
+      true,
+      true,
+    ]);
 
     await chatgptActions.selectModel(page as never, 'Instant');
 
-    expect(page.evaluate).toHaveBeenCalledTimes(3);
+    expect(page.evaluate).toHaveBeenCalledTimes(4);
     expect(page.waitForTimeout).toHaveBeenCalledWith(750);
     expect(page.waitForTimeout).toHaveBeenCalledWith(500);
     expect(page.keyboard.press).not.toHaveBeenCalled();

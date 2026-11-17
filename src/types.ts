@@ -66,6 +66,12 @@ export interface ProviderActions {
   /** Select a specific model if the provider has a model picker UI. */
   selectModel?(page: Page, model: string): Promise<void>;
 
+  /**
+   * Start a new conversation. The landing page of some providers restores the
+   * last chat instead of starting a new one; this action forces a fresh one.
+   */
+  newChat?(page: Page): Promise<void>;
+
   /** Submit a prompt (type into composer, click send). */
   submitPrompt(page: Page, prompt: string): Promise<void>;
 
@@ -282,6 +288,8 @@ export interface ChatOptions {
   profile?: string;
   /** The transport to use: 'browser' (the default) or 'api'. */
   transport?: TransportName;
+  /** Start a new conversation instead of reusing the stored one. */
+  newChat?: boolean;
 }
 
 // ── Research Types ──────────────────────────────────────────────

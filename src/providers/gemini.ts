@@ -373,6 +373,9 @@ async function waitForImages(page: Page, timeoutMs: number): Promise<void> {
   }
 }
 
+/** The number of response turns before the current prompt was submitted. */
+const geminiTurnBaseline = new WeakMap<Page, number>();
+
 export const geminiActions: ProviderActions = {
   async selectModel(page: Page, model: string): Promise<void> {
     const targetModel = resolveGeminiModeLabel(model);
@@ -652,6 +655,8 @@ export const geminiActions: ProviderActions = {
     // Dismiss it before focusing the composer, otherwise Playwright click is intercepted.
     await page.keyboard.press('Escape').catch(() => {});
     await page.waitForTimeout(300);
+    // Baseline before the prompt: an existing conversation already has turns.
+    geminiTurnBaseline.set(page, await page.locator(SELECTORS.responseTurn).count());
     await submitPromptToComposer(page, prompt, {
       composerSelector: SELECTORS.composer,
       sendButtonSelector: SELECTORS.sendButton,
@@ -665,7 +670,8 @@ export const geminiActions: ProviderActions = {
     const { timeoutMs, onChunk } = opts;
     const startTime = Date.now();
 
-    const existingTurns = await page.locator(SELECTORS.responseTurn).count();
+    const existingTurns =
+      geminiTurnBaseline.get(page) ?? (await page.locator(SELECTORS.responseTurn).count());
 
     await page.locator(SELECTORS.responseTurn).nth(existingTurns).waitFor({ timeout: timeoutMs });
 
