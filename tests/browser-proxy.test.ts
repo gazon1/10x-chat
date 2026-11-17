@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildLaunchOptions } from '../src/browser/engine.js';
 import {
   browserProcessEnv,
+  proxyFingerprint,
   proxyFromEnv,
   proxyLaunchOptions,
   splitProxyCredentials,
@@ -75,12 +76,43 @@ describe('proxyFromEnv', () => {
     expect(proxy?.server).toBe('http://127.0.0.1:3128');
   });
 
+  it('falls back to the lowercase variables', () => {
+    expect(proxyFromEnv({ https_proxy: 'http://lower.example.com:3128' })?.server).toBe(
+      'http://lower.example.com:3128',
+    );
+    expect(proxyFromEnv({ http_proxy: 'http://lower.example.com:3128' })?.server).toBe(
+      'http://lower.example.com:3128',
+    );
+  });
+
+  it('falls back to ALL_PROXY', () => {
+    const proxy = proxyFromEnv({ ALL_PROXY: 'http://all.example.com:3128' });
+    expect(proxy?.server).toBe('http://all.example.com:3128');
+  });
+
+  it('uses the first variable of the precedence list', () => {
+    const proxy = proxyFromEnv({
+      HTTPS_PROXY: 'http://first.example.com:3128',
+      https_proxy: 'http://second.example.com:3128',
+      HTTP_PROXY: 'http://third.example.com:3128',
+    });
+    expect(proxy?.server).toBe('http://first.example.com:3128');
+  });
+
   it('turns NO_PROXY into a bypass list', () => {
     const proxy = proxyFromEnv({
       HTTPS_PROXY: 'http://127.0.0.1:3128',
       NO_PROXY: 'localhost, 127.0.0.1 ,',
     });
     expect(proxy?.bypass).toBe('localhost,127.0.0.1');
+  });
+
+  it('reads the lowercase bypass list', () => {
+    const proxy = proxyFromEnv({
+      HTTPS_PROXY: 'http://127.0.0.1:3128',
+      no_proxy: 'localhost',
+    });
+    expect(proxy?.bypass).toBe('localhost');
   });
 
   it('has no proxy without the environment variables', () => {
@@ -142,6 +174,109 @@ describe('proxyLaunchOptions', () => {
     expect(options.proxy.server).toBe('socks5://proxy.example.com:1080');
     expect(options.proxy.username).toBeUndefined();
   });
+
+  it('refuses SOCKS4 proxies with credentials', () => {
+    expect(() =>
+      proxyLaunchOptions({
+        server: 'socks4://proxy.example.com:1080',
+        username: LOGIN,
+        password: SECRET,
+      }),
+    ).toThrow(/SOCKS proxy authentication/);
+  });
+
+  it('refuses an unsupported scheme', () => {
+    expect(() => proxyLaunchOptions({ server: 'ftp://proxy.example.com:21' })).toThrow(
+      /Unsupported proxy scheme "ftp"/,
+    );
+  });
+
+  it('never puts the credentials into the error message', () => {
+    try {
+      proxyLaunchOptions({
+        server: 'socks5://proxy.example.com:1080',
+        username: LOGIN,
+        password: SECRET,
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain(SECRET);
+    }
+  });
+
+  it('never puts the credentials of a malformed URL into the error message', () => {
+    for (const raw of [
+      `ftp://${LOGIN}:${SECRET}@host:badport`,
+      `http://${LOGIN}:${SECRET}@host:badport`,
+      `${LOGIN}:${SECRET}@host:badport`,
+    ]) {
+      try {
+        proxyLaunchOptions(splitProxyCredentials(raw));
+        expect.unreachable();
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).not.toContain(LOGIN);
+        expect(message).not.toContain(SECRET);
+        expect(message).not.toContain(raw);
+      }
+    }
+  });
+
+  it('names the scheme of a malformed URL, not the URL', () => {
+    try {
+      proxyLaunchOptions(splitProxyCredentials(`ftp://${LOGIN}:${SECRET}@host:badport`));
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).toMatch(/Unsupported proxy scheme "ftp"/);
+    }
+  });
+
+  it('reports a URL that cannot be parsed without naming it', () => {
+    try {
+      proxyLaunchOptions(splitProxyCredentials(`http://${LOGIN}:${SECRET}@host:badport`));
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).toMatch(/Invalid proxy URL/);
+    }
+  });
+
+  it('keeps the credentials out of the server URL of a malformed URL', () => {
+    const proxy = splitProxyCredentials(`ftp://${LOGIN}:${SECRET}@host:badport`);
+    expect(proxy.server).not.toContain(LOGIN);
+    expect(proxy.server).not.toContain(SECRET);
+  });
+});
+
+describe('proxyFingerprint', () => {
+  it('is stable for the same proxy', () => {
+    const env = { HTTPS_PROXY: `http://${LOGIN}:${SECRET}@proxy.example.com:3128` };
+    expect(proxyFingerprint(env)).toBe(proxyFingerprint(env));
+  });
+
+  it('changes with the proxy', () => {
+    const a = proxyFingerprint({ HTTPS_PROXY: 'http://a.example.com:3128' });
+    const b = proxyFingerprint({ HTTPS_PROXY: 'http://b.example.com:3128' });
+    const c = proxyFingerprint({
+      HTTPS_PROXY: `http://${LOGIN}:${SECRET}@proxy.example.com:3128`,
+    });
+    const d = proxyFingerprint({
+      HTTPS_PROXY: `http://${LOGIN}:other@proxy.example.com:3128`,
+    });
+    expect(a).not.toBe(b);
+    expect(c).not.toBe(d);
+  });
+
+  it('does not contain the credentials', () => {
+    const fingerprint = proxyFingerprint({
+      HTTPS_PROXY: `http://${LOGIN}:${SECRET}@proxy.example.com:3128`,
+    });
+    expect(fingerprint).not.toContain(SECRET);
+    expect(fingerprint).not.toContain(LOGIN);
+  });
+
+  it('has a value without a proxy', () => {
+    expect(proxyFingerprint({})).toBe('none');
+  });
 });
 
 describe('buildLaunchOptions', () => {
@@ -191,7 +326,6 @@ describe('buildLaunchOptions', () => {
       env: Record<string, string>;
       proxy?: unknown;
     };
-    expect(launchOptions.proxy).toBeUndefined();
     expect(launchOptions.env.ALL_PROXY).toBeUndefined();
     expect(JSON.stringify(launchOptions.env)).not.toContain(SECRET);
   });

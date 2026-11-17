@@ -24,12 +24,27 @@ describe('browser diagnostics redaction', () => {
     expect(redactText('AUTHORIZATION=Bearer mixedCaseSecret')).not.toContain('mixedCaseSecret');
   });
 
+  it('redacts the credentials of a proxy URL', () => {
+    const redacted = redactText('proxy http://proxy-user:sup3r-s3cret@proxy.example.com:3128');
+    expect(redacted).not.toContain('sup3r-s3cret');
+    expect(redacted).not.toContain('proxy-user');
+    expect(redacted).toContain('proxy.example.com:3128');
+  });
+
+  it('keeps a URL without credentials readable', () => {
+    expect(redactText('https://chatgpt.com/c/123')).toBe('https://chatgpt.com/c/123');
+  });
+
   it('redacts secret object keys recursively', () => {
     const value = redactValue({
       authorization: 'Bearer secret',
       nested: { cookie: 'a=b', prompt: 'private prompt', ok: 'safe' },
       path: `${process.env.HOME ?? '/home/test'}/file`,
-    }) as { authorization: string; nested: { cookie: string; prompt: string; ok: string }; path: string };
+    }) as {
+      authorization: string;
+      nested: { cookie: string; prompt: string; ok: string };
+      path: string;
+    };
     expect(value.authorization).toBe('[REDACTED]');
     expect(value.nested.cookie).toBe('[REDACTED]');
     expect(value.nested.prompt).toBe('[REDACTED]');

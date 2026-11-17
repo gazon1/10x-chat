@@ -185,7 +185,12 @@ npx 10x-chat@latest config show
 npx 10x-chat@latest config set provider gemini
 npx 10x-chat@latest config set timeout 600000
 npx 10x-chat@latest config set headless false
+npx 10x-chat@latest config set profile-mode isolated
 ```
+
+The order of the settings (CLI flag > config file > default), the rules of the
+profiles and the proxy contract are documented in
+[docs/config-contract.md](docs/config-contract.md).
 
 ### `skill`
 

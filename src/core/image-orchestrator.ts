@@ -8,6 +8,7 @@ import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { GeneratedImage, ImageGenOptions, ImageGenResult, ProviderName } from '../types.js';
 import { downloadImages } from './images.js';
+import { commandTimeoutMs, IMAGE_TIMEOUT_MS } from './timeout.js';
 
 /**
  * Provider-specific image generation polling config.
@@ -240,7 +241,7 @@ export async function runImageGen(options: ImageGenOptions): Promise<ImageGenRes
     );
   }
 
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  const timeoutMs = commandTimeoutMs(options.timeoutMs, IMAGE_TIMEOUT_MS);
   const headless = resolveHeadlessMode(providerName, config.headless, options.headed === true);
   const profileMode = options.isolatedProfile ? 'isolated' : config.profileMode;
 

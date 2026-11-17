@@ -5,6 +5,8 @@ import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
 import { resolveAttachPaths } from '../core/files.js';
+import { chatModel } from '../core/model.js';
+import { chatTimeoutMs } from '../core/timeout.js';
 import { getProvider, isValidProvider, listProviders } from '../providers/index.js';
 import type { CapturedResponse, ProviderName } from '../types.js';
 
@@ -84,7 +86,7 @@ export function createDelegateCommand(): Command {
     .argument('<provider>', `Provider to delegate (${listProviders().join(', ')})`)
     .option('--model <model>', 'Select a model/mode after opening')
     .option('--headed', 'Force a visible browser window')
-    .option('--timeout <ms>', 'Default capture timeout in ms', (value) => Number(value))
+    .option('--timeout <ms>', 'Default capture timeout in ms')
     .option('--isolated-profile', 'Use per-provider browser profile (backward compat)')
     .option('--no-login-check', 'Do not fail startup when provider is not logged in')
     .action(
@@ -93,7 +95,7 @@ export function createDelegateCommand(): Command {
         options: {
           model?: string;
           headed?: boolean;
-          timeout?: number;
+          timeout?: string;
           isolatedProfile?: boolean;
           loginCheck?: boolean;
         },
@@ -107,9 +109,21 @@ export function createDelegateCommand(): Command {
         const providerName = providerArg;
         const config = await loadConfig();
         const provider = getProvider(providerName);
-        const timeoutMs = Number.isFinite(options.timeout)
-          ? Number(options.timeout)
-          : provider.config.defaultTimeoutMs || config.defaultTimeoutMs;
+        const flagTimeoutMs = (() => {
+          if (options.timeout === undefined) return undefined;
+          const t = Number.parseInt(options.timeout, 10);
+          if (!Number.isFinite(t) || t <= 0) {
+            throw new Error(
+              `Invalid --timeout value: ${options.timeout} (expected a positive integer)`,
+            );
+          }
+          return t;
+        })();
+        const timeoutMs = chatTimeoutMs(
+          flagTimeoutMs,
+          config.defaultTimeoutMs,
+          provider.config.defaultTimeoutMs,
+        );
         const headless = resolveHeadlessMode(
           providerName,
           config.headless,
@@ -151,8 +165,9 @@ export function createDelegateCommand(): Command {
             process.exit(1);
           }
 
-          if (options.model && provider.actions.selectModel) {
-            await provider.actions.selectModel(browser.page, options.model);
+          const model = chatModel(options.model, config.defaultModel, undefined);
+          if (model && provider.actions.selectModel) {
+            await provider.actions.selectModel(browser.page, model);
           }
 
           writeJsonLine({

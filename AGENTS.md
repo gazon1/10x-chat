@@ -53,7 +53,7 @@ Provider actions implement:
 - **Browser daemon**: `chromium.launchServer` persisted to disk for cross-CLI reuse
 - **Tab ref-counting**: Multiple CLI invocations share one Chromium; last tab stops the daemon
 - **Force-click**: Some providers need `click({ force: true })` to bypass overlay interception
-- **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `provider.config.defaultModel`. Gemini supports modes: Fast, Thinking (default), Pro
+- **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro
 
 ## Pre-Commit Checklist
 
@@ -86,6 +86,11 @@ CI pipeline (GitHub Actions): checkout → install → typecheck → lint → **
 ## Config
 
 `~/.10x-chat/config.json` — user preferences (default provider, headless, profile mode, timeout).
+
+The order of the settings (CLI flag > config file > built-in default), the
+rules of the profiles and sessions and the proxy contract live in
+[docs/config-contract.md](docs/config-contract.md). A broken config file is an
+error, not a fallback — only a *missing* file falls back to the defaults.
 
 ## Data
 

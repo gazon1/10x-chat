@@ -78,8 +78,9 @@ export function createSessionCommand(): Command {
         } else {
           console.log(chalk.dim('No response captured yet.'));
         }
-      } catch {
-        console.error(chalk.red(`Session not found: ${id}`));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(message));
         process.exit(1);
       }
     });

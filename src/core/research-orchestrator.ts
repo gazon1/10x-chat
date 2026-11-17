@@ -12,6 +12,7 @@ import { activateGeminiTool } from '../providers/gemini.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ProviderName, ResearchOptions, ResearchResult } from '../types.js';
+import { commandTimeoutMs, RESEARCH_TIMEOUT_MS } from './timeout.js';
 
 /**
  * Provider-specific deep research selectors and logic.
@@ -586,7 +587,7 @@ export async function runResearch(options: ResearchOptions): Promise<ResearchRes
     );
   }
 
-  const timeoutMs = options.timeoutMs ?? 600_000; // 10 minutes default
+  const timeoutMs = commandTimeoutMs(options.timeoutMs, RESEARCH_TIMEOUT_MS);
   const pollIntervalMs = options.pollIntervalMs ?? 5_000;
   const headless = resolveHeadlessMode(providerName, config.headless, options.headed === true);
   const profileMode = options.profile || options.isolatedProfile ? 'isolated' : config.profileMode;

@@ -51,6 +51,8 @@ export function redactText(value: string): string {
     /((?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,"']+)/gi,
     '$1[REDACTED]',
   );
+  // The credentials of a proxy URL: http://user:pass@host:3128
+  out = out.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@');
   return out;
 }
 

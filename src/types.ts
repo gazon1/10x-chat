@@ -107,7 +107,13 @@ export interface SessionResult {
 export interface AppConfig {
   defaultProvider: ProviderName;
   defaultModel?: string;
-  defaultTimeoutMs: number;
+  /**
+   * Timeout of a chat (`chat`, `delegate`), in milliseconds. Unset means "use
+   * the default of the provider". The commands `image` and `research` have
+   * their own defaults and are not changed by it (see
+   * `docs/config-contract.md`).
+   */
+  defaultTimeoutMs?: number;
   headless: boolean;
   /** Profile mode: 'shared' (default, single profile) or 'isolated' (per-provider profiles). */
   profileMode: ProfileMode;
@@ -115,7 +121,6 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   defaultProvider: 'chatgpt',
-  defaultTimeoutMs: 5 * 60 * 1000, // 5 minutes
   headless: true,
   profileMode: 'shared',
 };

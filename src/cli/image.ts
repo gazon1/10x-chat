@@ -14,7 +14,10 @@ export function createImageCommand(): Command {
     .requiredOption('-p, --prompt <text>', 'The image generation prompt')
     .option('--provider <name>', `Provider (${IMAGE_PROVIDERS.join(', ')})`, 'chatgpt')
     .option('--headed', 'Show browser window')
-    .option('--timeout <ms>', 'Generation timeout in milliseconds', '120000')
+    .option(
+      '--timeout <ms>',
+      'Generation timeout in milliseconds (overrides the default of the command)',
+    )
     .option('--save-dir <dir>', 'Directory to save generated images')
     .option('--isolated-profile', 'Use per-provider browser profiles')
     .action(async (options) => {
@@ -33,8 +36,15 @@ export function createImageCommand(): Command {
       }
 
       const timeoutMs = (() => {
+        if (options.timeout === undefined) return undefined;
         const t = Number.parseInt(options.timeout, 10);
-        return Number.isFinite(t) && t > 0 ? t : 120_000;
+        if (!Number.isFinite(t) || t <= 0) {
+          console.error(
+            chalk.red(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`),
+          );
+          process.exit(1);
+        }
+        return t;
       })();
 
       try {

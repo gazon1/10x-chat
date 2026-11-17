@@ -7,12 +7,15 @@ import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } fro
 import { getAppDir } from '../paths.js';
 import { acquireProfileLock } from './lock.js';
 import { isProcessAlive } from './process.js';
+import { proxyFingerprint } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
 
 const DAEMON_FILE = 'browser-daemon.json';
 const DAEMON_LOCK_DIR = path.join(getAppDir(), 'browser-daemon-lock');
 const STARTUP_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 3_000;
+/** The time the daemon may need to finish the session creations that run. */
+const SWITCH_TIMEOUT_MS = 15_000;
 
 type JsonPrimitive = boolean | number | string | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -69,6 +72,8 @@ export interface DaemonState {
   port: number;
   token: string;
   headless: boolean;
+  /** Fingerprint of the proxy the daemon was started with (no secrets). */
+  proxy?: string;
   createdAt: string;
 }
 
@@ -147,8 +152,22 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isDaemonCompatible(state: DaemonState, requestedHeadless: boolean): boolean {
-  return !state.headless || state.headless === requestedHeadless;
+/**
+ * Whether a running daemon can serve the request.
+ *
+ * The headless mode is a property of the browser process: a daemon that runs
+ * headed must not serve a headless request (the user would get a visible
+ * window) and a headless daemon must not serve a headed request.
+ */
+export function isDaemonCompatible(
+  state: DaemonState,
+  requestedHeadless: boolean,
+  requestedProxy: string,
+): boolean {
+  if (state.headless !== requestedHeadless) return false;
+  // The proxy is a property of the browser process: a daemon that runs with
+  // another proxy cannot be reused.
+  return state.proxy === requestedProxy;
 }
 
 function serializeValue(value: unknown): SerializedValue {
@@ -464,6 +483,7 @@ async function readDaemonState(): Promise<DaemonState | null> {
       port: state.port,
       token: state.token,
       headless: Boolean(state.headless),
+      proxy: typeof state.proxy === 'string' ? state.proxy : undefined,
       createdAt: typeof state.createdAt === 'string' ? state.createdAt : new Date().toISOString(),
     };
   } catch {
@@ -471,7 +491,26 @@ async function readDaemonState(): Promise<DaemonState | null> {
   }
 }
 
-async function pingDaemon(state: DaemonState): Promise<boolean> {
+/** What the daemon tells about its own work. */
+export interface DaemonHealth {
+  /** The browser contexts that are still open. */
+  activeContexts: number;
+  /** The pages that are still open. */
+  activePages: number;
+  /**
+   * The session creations that are still running. A context that is being
+   * created is not in `activeContexts` yet, but it is a session of another
+   * process that must not lose its browser.
+   */
+  pendingCreations: number;
+}
+
+/**
+ * Ask the daemon how much work it still has.
+ *
+ * @returns the health of the daemon, or `undefined` when it does not answer
+ */
+export async function fetchDaemonHealth(state: DaemonState): Promise<DaemonHealth | undefined> {
   try {
     const response = await fetch(`http://127.0.0.1:${state.port}/health`, {
       method: 'GET',
@@ -480,10 +519,136 @@ async function pingDaemon(state: DaemonState): Promise<boolean> {
       },
       signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
     });
-    return response.ok;
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as {
+      activeContexts?: number;
+      activePages?: number;
+      pendingCreations?: number;
+    };
+    return {
+      activeContexts: body.activeContexts ?? 0,
+      activePages: body.activePages ?? 0,
+      pendingCreations: body.pendingCreations ?? 0,
+    };
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/**
+ * Whether a daemon still has the work of another process.
+ *
+ * Such a daemon must not be stopped: it would end the session of that
+ * process. A creation that is still running counts as work — the context
+ * does not exist yet, but the session does.
+ */
+export function daemonIsBusy(health: DaemonHealth | undefined): boolean {
+  return (
+    health !== undefined &&
+    (health.activeContexts > 0 || health.activePages > 0 || health.pendingCreations > 0)
+  );
+}
+
+/**
+ * Whether the daemon may be stopped after the switch barrier.
+ *
+ * Only a daemon that is idle and whose session creations all finished may be
+ * stopped: a creation that is still running belongs to a session of another
+ * process, and a wait that ran into its timeout is not an idle daemon.
+ */
+export function daemonMayBeStopped(drained: DaemonHealth & { drained: boolean }): boolean {
+  return drained.drained && !daemonIsBusy(drained);
+}
+
+/**
+ * The error for a daemon that cannot be switched while it is busy.
+ *
+ * @param reason why the daemon does not fit the request (headless mode, proxy)
+ */
+export function daemonBusyError(reason: string, health: DaemonHealth): Error {
+  const load =
+    health.pendingCreations > 0
+      ? `${health.pendingCreations} pending creation(s)`
+      : `${health.activePages} active page(s)`;
+  return new Error(
+    `The shared browser daemon is busy with another session ` +
+      `(${load}) and cannot be switched to ${reason}: ` +
+      `stopping it would end that session. Wait for the other session to finish, ` +
+      `then run the command again.`,
+  );
+}
+
+/**
+ * The error for a daemon whose session creations did not finish in time.
+ *
+ * The daemon still has the creation of another process running: it is not
+ * idle, it is slow. Stopping it would end that session.
+ */
+export function daemonSwitchTimeoutError(reason: string, health: DaemonHealth): Error {
+  return new Error(
+    `The shared browser daemon could not be switched to ${reason}: ` +
+      `a session of another process is still being created and did not finish in time ` +
+      `(${health.pendingCreations} pending creation(s)). Stopping the daemon would end that session. ` +
+      `Wait for the other session to finish, then run the command again.`,
+  );
+}
+
+/**
+ * Ask the daemon to stop accepting new sessions and report what work it has
+ * left.
+ *
+ * The daemon waits for the session creations that are already running, so a
+ * session that starts in the meantime is visible in the answer — the switch
+ * must not overtake it.
+ *
+ * @returns the remaining work, or `undefined` when the daemon does not answer
+ */
+export async function beginDaemonSwitch(
+  state: DaemonState,
+): Promise<(DaemonHealth & { drained: boolean }) | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${state.port}/switch`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+      signal: AbortSignal.timeout(SWITCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as {
+      activeContexts?: number;
+      activePages?: number;
+      pendingCreations?: number;
+      drained?: boolean;
+    };
+    return {
+      activeContexts: body.activeContexts ?? 0,
+      activePages: body.activePages ?? 0,
+      pendingCreations: body.pendingCreations ?? 0,
+      // A daemon that does not report the state is treated as drained: the
+      // load it reports is the load that counts.
+      drained: body.drained ?? true,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Release the daemon: it accepts new sessions again. */
+export async function abortDaemonSwitch(state: DaemonState): Promise<void> {
+  await fetch(`http://127.0.0.1:${state.port}/switch/abort`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+    },
+    signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+  }).catch(() => {
+    // best effort
+  });
+}
+
+async function pingDaemon(state: DaemonState): Promise<boolean> {
+  return (await fetchDaemonHealth(state)) !== undefined;
 }
 
 async function acquireDaemonStartLock() {
@@ -513,12 +678,12 @@ function getServerEntryPoint(): { command: string; args: string[] } {
   };
 }
 
-async function waitForDaemonReady(headless: boolean): Promise<DaemonState> {
+async function waitForDaemonReady(headless: boolean, proxy: string): Promise<DaemonState> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const state = await readDaemonState();
-    if (state && isDaemonCompatible(state, headless)) {
+    if (state && isDaemonCompatible(state, headless, proxy)) {
       const healthy = await pingDaemon(state);
       if (healthy) return state;
     }
@@ -540,12 +705,13 @@ async function startDaemon(headless: boolean): Promise<DaemonState> {
     },
   });
   child.unref();
-  return waitForDaemonReady(headless);
+  return waitForDaemonReady(headless, proxyFingerprint());
 }
 
 async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
+  const proxy = proxyFingerprint();
   const existing = await readDaemonState();
-  if (existing && isDaemonCompatible(existing, headless) && (await pingDaemon(existing))) {
+  if (existing && isDaemonCompatible(existing, headless, proxy) && (await pingDaemon(existing))) {
     return existing;
   }
 
@@ -553,12 +719,51 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
   try {
     const current = await readDaemonState();
     if (current) {
-      const healthy = await pingDaemon(current);
-      if (healthy && isDaemonCompatible(current, headless)) {
+      const health = await fetchDaemonHealth(current);
+      const healthy = health !== undefined;
+      if (healthy && isDaemonCompatible(current, headless, proxy)) {
         return current;
       }
 
       if (healthy) {
+        // The daemon does not fit the request: it runs in another headless
+        // mode or with another proxy. It may only be stopped when it has no
+        // session of another process any more — otherwise that session would
+        // lose its browser.
+        const reason =
+          current.headless !== headless
+            ? `a different headless mode (${current.headless ? 'headless' : 'headed'} → ` +
+              `${headless ? 'headless' : 'headed'})`
+            : 'a different proxy';
+
+        if (daemonIsBusy(health)) {
+          throw daemonBusyError(reason, health);
+        }
+
+        // Barrier: the daemon stops accepting new sessions and waits for the
+        // session creations that are already running. A session that starts
+        // in the meantime is then visible — the check above and the stop
+        // cannot be overtaken any more.
+        const drained = await beginDaemonSwitch(current);
+        if (drained === undefined) {
+          // The daemon died in the meantime — start a new one.
+          await clearDaemonState();
+          return startDaemon(headless);
+        }
+
+        // A wait that ran into its timeout does not mean "no work": a
+        // creation is still running and belongs to a session of another
+        // process. The switch is refused in that case.
+        if (!drained.drained) {
+          await abortDaemonSwitch(current);
+          throw daemonSwitchTimeoutError(reason, drained);
+        }
+
+        if (!daemonMayBeStopped(drained)) {
+          await abortDaemonSwitch(current);
+          throw daemonBusyError(reason, drained);
+        }
+
         await new BrowserDaemonHttpClient(current).stop();
 
         if (isProcessAlive(current.pid)) {
