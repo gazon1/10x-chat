@@ -309,6 +309,104 @@ describe('the barrier of a switching daemon', () => {
 
     expect(result.outcome).toBe('failed');
   });
+
+  it('reports a failed switch when the answer is empty', async () => {
+    // An empty answer is not an idle daemon: it is an answer that says
+    // nothing about the sessions of the daemon.
+    const port = await startSwitchServer(jsonServer({}));
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+    expect(result.outcome === 'failed' && result.reason).toMatch(/did not confirm/);
+  });
+
+  it('reports a failed switch when the answer does not confirm the request', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('reports a failed switch when the state is missing', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 0,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+    expect(result.outcome === 'failed' && result.reason).toMatch(/incomplete result/);
+  });
+
+  it('reports a failed switch when a counter is missing', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('reports a failed switch when a counter is not a number', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: '0',
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('reports a failed switch when a counter is negative', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: -1,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
+
+  it('reports a failed switch when the state is not a boolean', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: 'yes',
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
 });
 
 describe('what the switch result means', () => {

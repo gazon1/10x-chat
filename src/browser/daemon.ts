@@ -607,6 +607,16 @@ interface DaemonSwitchResponse {
 }
 
 /**
+ * Whether a reported load can be counted.
+ *
+ * A missing, negative or endless number is no load at all — it must not be
+ * read as "no session".
+ */
+function isDaemonLoad(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
  * The outcome of a switch request.
  *
  * The three states are not the same and must not be treated as such:
@@ -615,7 +625,7 @@ interface DaemonSwitchResponse {
  * - `unavailable`: the daemon does not answer at all — it is really gone.
  * - `failed`: the daemon answered, but not with the result of the switch: the
  *   endpoint does not exist (a daemon of an older version), the daemon refused
- *   the request, or the answer could not be read.
+ *   the request, the answer could not be read, or the answer is incomplete.
  *
  * A `failed` switch says nothing about the sessions of the daemon. It is not
  * a proof that the daemon is dead.
@@ -718,22 +728,36 @@ export async function beginDaemonSwitch(state: DaemonState): Promise<DaemonSwitc
     };
   }
 
-  if (body.ok === false) {
+  if (body.ok !== true) {
     return {
       outcome: 'failed',
-      reason: body.error ?? 'the daemon refused the switch request',
+      reason: body.error ?? 'the daemon did not confirm the switch request',
+    };
+  }
+
+  // The answer must be complete: a missing counter would look like "no
+  // session", and a missing `drained` would look like "idle". Both would
+  // allow the daemon to be stopped while it still serves another session.
+  const { activeContexts, activePages, pendingCreations, drained } = body;
+  if (
+    !isDaemonLoad(activeContexts) ||
+    !isDaemonLoad(activePages) ||
+    !isDaemonLoad(pendingCreations) ||
+    typeof drained !== 'boolean'
+  ) {
+    return {
+      outcome: 'failed',
+      reason: 'the daemon answered the switch request with an incomplete result',
     };
   }
 
   return {
     outcome: 'switched',
     health: {
-      activeContexts: body.activeContexts ?? 0,
-      activePages: body.activePages ?? 0,
-      pendingCreations: body.pendingCreations ?? 0,
-      // A daemon that does not report the state is treated as drained: the
-      // load it reports is the load that counts.
-      drained: body.drained ?? true,
+      activeContexts,
+      activePages,
+      pendingCreations,
+      drained,
     },
   };
 }

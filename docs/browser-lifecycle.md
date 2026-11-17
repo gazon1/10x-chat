@@ -16,9 +16,11 @@ The answer of the barrier is read as three different states, because they are no
 
 - **switched** — the daemon reported its remaining work. Only this answer allows the daemon to be stopped.
 - **unavailable** — nothing listens on the port: the daemon is really gone and a new one may start.
-- **failed** — the daemon answered, but not with the result of the switch (unknown endpoint, refused request, unreadable body). It may still serve the session of another process, so it is left running and the switch is refused.
+- **failed** — the daemon answered, but not with the result of the switch (unknown endpoint, refused request, unreadable body, incomplete answer). It may still serve the session of another process, so it is left running and the switch is refused.
 
 A failed switch is never read as "the daemon is dead": a second daemon would take the state file away from the old one and break the session it still serves.
+
+The answer of the barrier is only used when it is complete: `ok: true`, all three counters are finite non-negative numbers, and `drained` is a boolean. A missing counter would look like "no session" and a missing `drained` would look like "idle" — both would allow a daemon with a foreign session to be stopped.
 
 ## Ownership and cleanup
 
