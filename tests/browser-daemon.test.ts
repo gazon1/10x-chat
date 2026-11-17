@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   abortDaemonSwitch,
@@ -8,7 +8,9 @@ import {
   daemonBusyError,
   daemonIsBusy,
   daemonMayBeStopped,
+  daemonSwitchFailedError,
   daemonSwitchTimeoutError,
+  decideDaemonSwitch,
   fetchDaemonHealth,
   isDaemonCompatible,
 } from '../src/browser/daemon.js';
@@ -24,6 +26,17 @@ function state(headless: boolean): DaemonState {
     proxy: PROXY,
     createdAt: new Date().toISOString(),
   };
+}
+
+/** A port that nothing listens on: the daemon is really gone. */
+async function closedPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (typeof address === 'string' || address === null) throw new Error('no port');
+  const port = address.port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
 }
 
 describe('isDaemonCompatible', () => {
@@ -159,11 +172,10 @@ describe('the barrier of a switching daemon', () => {
     );
   });
 
-  async function startSwitchServer(body: unknown): Promise<number> {
+  async function startSwitchServer(answer: (res: ServerResponse) => void): Promise<number> {
     const server = createServer((req, res) => {
       paths.push(req.url ?? '');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      answer(res);
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -172,17 +184,27 @@ describe('the barrier of a switching daemon', () => {
     return address.port;
   }
 
-  it('asks the daemon to refuse new sessions and reads what is left', async () => {
-    const port = await startSwitchServer({
-      ok: true,
-      activeContexts: 0,
-      activePages: 0,
-      pendingCreations: 0,
-      drained: true,
-    });
-    const drained = await beginDaemonSwitch({ ...state(true), port });
+  function jsonServer(body: unknown) {
+    return (res: ServerResponse) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+  }
 
-    expect(drained).toEqual({
+  it('asks the daemon to refuse new sessions and reads what is left', async () => {
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('switched');
+    expect(result.outcome === 'switched' && result.health).toEqual({
       activeContexts: 0,
       activePages: 0,
       pendingCreations: 0,
@@ -192,56 +214,183 @@ describe('the barrier of a switching daemon', () => {
   });
 
   it('sees the session that started in the meantime', async () => {
-    const port = await startSwitchServer({
-      ok: true,
-      activeContexts: 1,
-      activePages: 1,
-      pendingCreations: 0,
-      drained: true,
-    });
-    const drained = await beginDaemonSwitch({ ...state(true), port });
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 1,
+        activePages: 1,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
 
-    expect(daemonIsBusy(drained)).toBe(true);
+    expect(daemonIsBusy(result.outcome === 'switched' ? result.health : undefined)).toBe(true);
   });
 
   it('sees the creation that did not finish in time', async () => {
     // The daemon waited for the running creation and ran into its timeout:
     // the switch must be refused, the daemon must not be stopped.
-    const port = await startSwitchServer({
-      ok: true,
-      activeContexts: 0,
-      activePages: 0,
-      pendingCreations: 1,
-      drained: false,
-    });
-    const drained = await beginDaemonSwitch({ ...state(true), port });
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 1,
+        drained: false,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
 
-    expect(drained?.drained).toBe(false);
-    expect(daemonIsBusy(drained)).toBe(true);
-    expect(drained && daemonMayBeStopped(drained)).toBe(false);
+    expect(result.outcome === 'switched' && result.health.drained).toBe(false);
+    expect(result.outcome === 'switched' && daemonIsBusy(result.health)).toBe(true);
+    expect(result.outcome === 'switched' && daemonMayBeStopped(result.health)).toBe(false);
   });
 
   it('may stop a daemon that is idle and drained', async () => {
-    const port = await startSwitchServer({
-      ok: true,
-      activeContexts: 0,
-      activePages: 0,
-      pendingCreations: 0,
-      drained: true,
-    });
-    const drained = await beginDaemonSwitch({ ...state(true), port });
+    const port = await startSwitchServer(
+      jsonServer({
+        ok: true,
+        activeContexts: 0,
+        activePages: 0,
+        pendingCreations: 0,
+        drained: true,
+      }),
+    );
+    const result = await beginDaemonSwitch({ ...state(true), port });
 
-    expect(drained && daemonMayBeStopped(drained)).toBe(true);
+    expect(result.outcome === 'switched' && daemonMayBeStopped(result.health)).toBe(true);
   });
 
   it('releases the daemon when the switch is refused', async () => {
-    const port = await startSwitchServer({ ok: true });
+    const port = await startSwitchServer(jsonServer({ ok: true }));
     await abortDaemonSwitch({ ...state(true), port });
 
     expect(paths).toEqual(['/switch/abort']);
   });
 
-  it('reports no daemon when it does not answer', async () => {
-    expect(await beginDaemonSwitch({ ...state(true), port: 1 })).toBeUndefined();
+  it('reports an unavailable daemon when nothing listens on the port', async () => {
+    const port = await closedPort();
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('unavailable');
+  });
+
+  it('reports a failed switch when the daemon does not know the endpoint', async () => {
+    // A daemon of an older version answers 404 — it is alive, but it cannot
+    // be switched. That is not a proof that it has no session.
+    const port = await startSwitchServer((res) => {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+    });
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+    expect(result.outcome === 'failed' && result.httpStatus).toBe(404);
+  });
+
+  it('reports a failed switch when the daemon refuses the request', async () => {
+    const port = await startSwitchServer((res) => {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Unauthorized' }));
+    });
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+    expect(result.outcome === 'failed' && result.httpStatus).toBe(401);
+  });
+
+  it('reports a failed switch when the answer cannot be read', async () => {
+    const port = await startSwitchServer((res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('not json');
+    });
+    const result = await beginDaemonSwitch({ ...state(true), port });
+
+    expect(result.outcome).toBe('failed');
+  });
+});
+
+describe('what the switch result means', () => {
+  const reason = 'a different headless mode (headed → headless)';
+
+  it('replaces a daemon that is really gone', () => {
+    const decision = decideDaemonSwitch({ outcome: 'unavailable', reason: 'gone' }, reason);
+
+    expect(decision.action).toBe('restart');
+  });
+
+  it('refuses the switch when the daemon does not answer with a result', () => {
+    const decision = decideDaemonSwitch(
+      { outcome: 'failed', reason: 'HTTP 404', httpStatus: 404 },
+      reason,
+    );
+
+    // A second daemon would break the session the old daemon may still serve.
+    expect(decision.action).toBe('refuse');
+    expect(decision.action === 'refuse' && decision.error.message).toMatch(/HTTP 404/);
+  });
+
+  it('explains that a daemon of an older version cannot be switched', () => {
+    const decision = decideDaemonSwitch(
+      { outcome: 'failed', reason: 'HTTP 404', httpStatus: 404 },
+      reason,
+    );
+
+    expect(decision.action === 'refuse' && decision.error.message).toMatch(
+      /older version of 10x-chat/,
+    );
+  });
+
+  it('refuses the switch when a session of another process is still running', () => {
+    const decision = decideDaemonSwitch(
+      {
+        outcome: 'switched',
+        health: { activeContexts: 1, activePages: 1, pendingCreations: 0, drained: true },
+      },
+      reason,
+    );
+
+    expect(decision.action).toBe('refuse');
+    expect(decision.action === 'refuse' && decision.error.message).toMatch(
+      /busy with another session/,
+    );
+  });
+
+  it('refuses the switch when a creation did not finish in time', () => {
+    const decision = decideDaemonSwitch(
+      {
+        outcome: 'switched',
+        health: { activeContexts: 0, activePages: 0, pendingCreations: 1, drained: false },
+      },
+      reason,
+    );
+
+    expect(decision.action).toBe('refuse');
+    expect(decision.action === 'refuse' && decision.error.message).toMatch(/still being created/);
+  });
+
+  it('stops a daemon that is idle and drained', () => {
+    const decision = decideDaemonSwitch(
+      {
+        outcome: 'switched',
+        health: { activeContexts: 0, activePages: 0, pendingCreations: 0, drained: true },
+      },
+      reason,
+    );
+
+    expect(decision.action).toBe('stop');
+  });
+
+  it('says that the daemon was left running', () => {
+    const error = daemonSwitchFailedError(reason, {
+      outcome: 'failed',
+      reason: 'the daemon answered the switch request with HTTP 404',
+      httpStatus: 404,
+    });
+
+    expect(error.message).toMatch(/left running/);
+    expect(error.message).toMatch(/session of another process/);
+    expect(error.message).toMatch(/headed → headless/);
   });
 });

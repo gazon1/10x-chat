@@ -8,6 +8,18 @@ Single owner: `src/browser/manager.ts` (`launchBrowser`) creates and closes `Bro
 - **Shared persistent** (`login` in shared mode): `manager` acquires the shared profile lock, launches a local persistent context in `profiles/default`, exports shared storage state on close, then releases the lock. Used for interactive login so cookies persist and can be reused by daemon sessions.
 - **Isolated/named persistent** (`--isolated-profile`, `--profile <name>`): `manager` acquires the target profile lock, launches a local persistent context in `profiles/<name|provider>`, and releases the lock on close.
 
+## Switching a running daemon
+
+A daemon is only replaced when it does not fit the request (another headless mode or another proxy) and has no session of another process any more. The replacement runs through a barrier: the daemon stops accepting new sessions, waits for the running session creations, and reports what is left.
+
+The answer of the barrier is read as three different states, because they are not the same:
+
+- **switched** — the daemon reported its remaining work. Only this answer allows the daemon to be stopped.
+- **unavailable** — nothing listens on the port: the daemon is really gone and a new one may start.
+- **failed** — the daemon answered, but not with the result of the switch (unknown endpoint, refused request, unreadable body). It may still serve the session of another process, so it is left running and the switch is refused.
+
+A failed switch is never read as "the daemon is dead": a second daemon would take the state file away from the old one and break the session it still serves.
+
 ## Ownership and cleanup
 
 - Each caller owns the returned `BrowserSession` and must `await close()` (orchestrators/CLI do this in `finally`).

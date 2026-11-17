@@ -593,6 +593,82 @@ export function daemonSwitchTimeoutError(reason: string, health: DaemonHealth): 
   );
 }
 
+/** The load of a daemon that answered the switch request. */
+export type DaemonSwitchHealth = DaemonHealth & { drained: boolean };
+
+/** The answer of the daemon to a switch request. */
+interface DaemonSwitchResponse {
+  ok?: boolean;
+  error?: string;
+  activeContexts?: number;
+  activePages?: number;
+  pendingCreations?: number;
+  drained?: boolean;
+}
+
+/**
+ * The outcome of a switch request.
+ *
+ * The three states are not the same and must not be treated as such:
+ *
+ * - `switched`: the daemon answered and told what work it has left.
+ * - `unavailable`: the daemon does not answer at all — it is really gone.
+ * - `failed`: the daemon answered, but not with the result of the switch: the
+ *   endpoint does not exist (a daemon of an older version), the daemon refused
+ *   the request, or the answer could not be read.
+ *
+ * A `failed` switch says nothing about the sessions of the daemon. It is not
+ * a proof that the daemon is dead.
+ */
+export type DaemonSwitchResult =
+  | { outcome: 'switched'; health: DaemonSwitchHealth }
+  | { outcome: 'unavailable'; reason: string }
+  | { outcome: 'failed'; reason: string; httpStatus?: number };
+
+/**
+ * Whether the request never reached the daemon: nothing listens on the port.
+ *
+ * Only this error proves that the daemon is gone. Every other error (a
+ * timeout, a broken connection) leaves the daemon in an unknown state.
+ */
+function isConnectionRefused(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
+    if ((current as NodeJS.ErrnoException).code === 'ECONNREFUSED') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * The error for a daemon that could not be switched and did not tell why.
+ *
+ * The daemon is left running: it may still serve the session of another
+ * process, and a second daemon would break that session. An unknown answer is
+ * never a proof that there is no session.
+ *
+ * @param reason why the daemon does not fit the request (headless mode, proxy)
+ */
+export function daemonSwitchFailedError(
+  reason: string,
+  failed: Extract<DaemonSwitchResult, { outcome: 'failed' }>,
+): Error {
+  const detail =
+    failed.httpStatus === 404
+      ? `${failed.reason} — the daemon does not know the switch endpoint; ` +
+        `it was started by an older version of 10x-chat`
+      : failed.httpStatus === 401
+        ? `${failed.reason} — the daemon does not accept this client; ` +
+          `its token does not match the state file`
+        : failed.reason;
+
+  return new Error(
+    `The shared browser daemon could not be switched to ${reason}: ${detail}. ` +
+      `The daemon was left running, because it may still serve the session of another process. ` +
+      `Stop it (the pid is in ${getDaemonStatePath()}) and run the command again.`,
+  );
+}
+
 /**
  * Ask the daemon to stop accepting new sessions and report what work it has
  * left.
@@ -601,37 +677,65 @@ export function daemonSwitchTimeoutError(reason: string, health: DaemonHealth): 
  * session that starts in the meantime is visible in the answer — the switch
  * must not overtake it.
  *
- * @returns the remaining work, or `undefined` when the daemon does not answer
+ * @returns what the daemon answered; the outcome tells whether the daemon
+ * still has the sessions of other processes
  */
-export async function beginDaemonSwitch(
-  state: DaemonState,
-): Promise<(DaemonHealth & { drained: boolean }) | undefined> {
+export async function beginDaemonSwitch(state: DaemonState): Promise<DaemonSwitchResult> {
+  let response: Response;
   try {
-    const response = await fetch(`http://127.0.0.1:${state.port}/switch`, {
+    response = await fetch(`http://127.0.0.1:${state.port}/switch`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${state.token}`,
       },
       signal: AbortSignal.timeout(SWITCH_TIMEOUT_MS),
     });
-    if (!response.ok) return undefined;
-    const body = (await response.json()) as {
-      activeContexts?: number;
-      activePages?: number;
-      pendingCreations?: number;
-      drained?: boolean;
-    };
+  } catch (error) {
+    if (isConnectionRefused(error)) {
+      return { outcome: 'unavailable', reason: getErrorMessage(error) };
+    }
     return {
+      outcome: 'failed',
+      reason: `the daemon did not answer the switch request: ${getErrorMessage(error)}`,
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      outcome: 'failed',
+      httpStatus: response.status,
+      reason: `the daemon answered the switch request with HTTP ${response.status}`,
+    };
+  }
+
+  let body: DaemonSwitchResponse;
+  try {
+    body = (await response.json()) as DaemonSwitchResponse;
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      reason: `the daemon answered the switch request with an unreadable body: ${getErrorMessage(error)}`,
+    };
+  }
+
+  if (body.ok === false) {
+    return {
+      outcome: 'failed',
+      reason: body.error ?? 'the daemon refused the switch request',
+    };
+  }
+
+  return {
+    outcome: 'switched',
+    health: {
       activeContexts: body.activeContexts ?? 0,
       activePages: body.activePages ?? 0,
       pendingCreations: body.pendingCreations ?? 0,
       // A daemon that does not report the state is treated as drained: the
       // load it reports is the load that counts.
       drained: body.drained ?? true,
-    };
-  } catch {
-    return undefined;
-  }
+    },
+  };
 }
 
 /** Release the daemon: it accepts new sessions again. */
@@ -708,6 +812,54 @@ async function startDaemon(headless: boolean): Promise<DaemonState> {
   return waitForDaemonReady(headless, proxyFingerprint());
 }
 
+/**
+ * What to do with a daemon after the switch request.
+ *
+ * Only an answered switch tells whether the daemon may be stopped. Every
+ * other answer leaves the daemon alone: a second daemon would break the
+ * session of another process that the old daemon may still serve.
+ */
+export type DaemonSwitchAction =
+  | { action: 'stop' }
+  | { action: 'restart' }
+  | { action: 'refuse'; error: Error };
+
+/**
+ * Read the switch result and decide what happens to the daemon.
+ *
+ * @param reason why the daemon does not fit the request (headless mode, proxy)
+ */
+export function decideDaemonSwitch(result: DaemonSwitchResult, reason: string): DaemonSwitchAction {
+  if (result.outcome === 'unavailable') {
+    // The daemon does not answer at all: it is really gone and cannot serve
+    // a session any more.
+    return { action: 'restart' };
+  }
+
+  if (result.outcome === 'failed') {
+    // The daemon answered, but not with the result of the switch: it does
+    // not know the endpoint, refused the request, or answered something
+    // unreadable. It may still serve the session of another process, so it
+    // is neither stopped nor replaced by a second daemon.
+    return { action: 'refuse', error: daemonSwitchFailedError(reason, result) };
+  }
+
+  const drained = result.health;
+
+  // A wait that ran into its timeout does not mean "no work": a creation is
+  // still running and belongs to a session of another process. The switch is
+  // refused in that case.
+  if (!drained.drained) {
+    return { action: 'refuse', error: daemonSwitchTimeoutError(reason, drained) };
+  }
+
+  if (!daemonMayBeStopped(drained)) {
+    return { action: 'refuse', error: daemonBusyError(reason, drained) };
+  }
+
+  return { action: 'stop' };
+}
+
 async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
   const proxy = proxyFingerprint();
   const existing = await readDaemonState();
@@ -744,24 +896,17 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
         // session creations that are already running. A session that starts
         // in the meantime is then visible — the check above and the stop
         // cannot be overtaken any more.
-        const drained = await beginDaemonSwitch(current);
-        if (drained === undefined) {
-          // The daemon died in the meantime — start a new one.
+        const decision = decideDaemonSwitch(await beginDaemonSwitch(current), reason);
+
+        if (decision.action === 'restart') {
           await clearDaemonState();
           return startDaemon(headless);
         }
 
-        // A wait that ran into its timeout does not mean "no work": a
-        // creation is still running and belongs to a session of another
-        // process. The switch is refused in that case.
-        if (!drained.drained) {
+        if (decision.action === 'refuse') {
+          // The daemon keeps running and serves sessions again.
           await abortDaemonSwitch(current);
-          throw daemonSwitchTimeoutError(reason, drained);
-        }
-
-        if (!daemonMayBeStopped(drained)) {
-          await abortDaemonSwitch(current);
-          throw daemonBusyError(reason, drained);
+          throw decision.error;
         }
 
         await new BrowserDaemonHttpClient(current).stop();
