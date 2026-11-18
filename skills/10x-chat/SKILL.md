@@ -119,7 +119,7 @@ git add <path> … && git commit -m "<message>" && git push origin <branch>
 BASE=$(git rev-parse "origin/$BASE_REF")
 HEAD=$(git rev-parse HEAD)
 gh pr view --json number,url >/dev/null 2>&1 \
-  || gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"
+  || echo "no pull request yet — ask the user before opening one"
 PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
@@ -131,7 +131,9 @@ PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
      Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
 ```
 
-- The **pull request** is the reviewer's entry point — create it before asking, and put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
+- The **pull request** is the reviewer's entry point — put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
+- **The pull request is opened only with the user's word.** If no pull request exists yet, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes `gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"`. Without that answer the review is `UNAVAILABLE` and the report says so.
+- **Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in a leftover file, a local config, a `.env` with credentials. Read `git status --short`, add the paths of the change by name, and read the staged diff before the commit.
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
 - `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.

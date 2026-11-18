@@ -30,18 +30,26 @@ Then make the change reachable for the reviewers — **commit, push and open the
 
 ```bash
 git status --short                 # read it: only the files of this change
-git add <path> …                   # add those paths — never `git add -A`
+git add <path> …                   # add those paths by name — never everything at once
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD          # the SHA the reviewers get
 
-# The pull request is the reviewer's entry point — open it if it does not exist
+# Does the pull request exist? Opening one is a publication — the user's word
 gh pr view --json number,url >/dev/null 2>&1 \
-  || gh pr create --base <base> --head <branch> --title "<title>" --body "<what changed and why>"
+  || echo "no pull request yet — ask the user before opening one"
 gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
-**Never commit what you did not read.** `git add -A` sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the change by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
+**The pull request is opened only with the user's word.** If the check above says that no pull request exists, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:
+
+```bash
+gh pr create --base <base> --head <branch> --title "<title>" --body "<what changed and why>"
+```
+
+Without that answer the review of an unpublished change is `UNAVAILABLE`, and the report says so.
+
+**Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the change by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
 
 **The prompt carries the pull request number and URL.** A reviewer that only gets a branch name does not find the change; the PR page carries the diff, the discussion and the head SHA. Without a pull request there is nothing to review — create it first, if the user asked for it; otherwise ask the user.
 

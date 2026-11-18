@@ -72,18 +72,24 @@ A review needs a target the reviewer can open, so the checkpoint goes to `origin
 
 ```bash
 git status --short                 # read it: only the files of this checkpoint
-git add <path> …                   # add those paths — never `git add -A`
+git add <path> …                   # add those paths by name — never everything at once
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD
 
-# The pull request is the reviewer's entry point — open it if it does not exist
+# Does the pull request exist? Opening one is a publication — the user's word
 gh pr view --json number,url >/dev/null 2>&1 \
-  || gh pr create --base <base> --head <branch> --title "<title>" --body "<what this branch changes>"
+  || echo "no pull request yet — ask the user before opening one"
 gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
-**Never commit what you did not read.** `git add -A` sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the checkpoint by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
+**The pull request is opened only with the user's word.** If the check above says that no pull request exists, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:
+
+```bash
+gh pr create --base <base> --head <branch> --title "<title>" --body "<what this branch changes>"
+```
+
+**Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the checkpoint by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
 
 The reviewer reads the change at the pull request: the diff, the discussion, the head SHA, in its real context. If the push or the pull request cannot be created — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
 
