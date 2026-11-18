@@ -394,18 +394,28 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
         // close it: a context that arrives late is closed instead of being
         // registered.
         const context = await withLateResultCleanup(
-          (async () => {
-            const created = await browser!.newContext((args[0] as Record<string, unknown>) ?? {});
-            // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
-            if (getEngineName() !== 'cloakbrowser') {
-              await created.addInitScript(STEALTH_INIT_SCRIPT);
-            }
-            return created;
-          })(),
+          browser!.newContext((args[0] as Record<string, unknown>) ?? {}),
           'browser.newContext',
           OPERATION_TIMEOUT_MS,
           (late) => withOperationTimeout(late.close(), 'context.close', CLOSE_TIMEOUT_MS),
         );
+        // The context exists now: the initialization must not leave it
+        // behind when it fails.
+        try {
+          // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
+          if (getEngineName() !== 'cloakbrowser') {
+            await withOperationTimeout(
+              context.addInitScript(STEALTH_INIT_SCRIPT),
+              'context.addInitScript',
+              OPERATION_TIMEOUT_MS,
+            );
+          }
+        } catch (error) {
+          await withOperationTimeout(context.close(), 'context.close', CLOSE_TIMEOUT_MS).catch(
+            () => undefined,
+          );
+          throw error;
+        }
         const contextId = randomUUID();
         contexts.set(contextId, context);
         return { ok: true, result: toContextHandle(contextId) };

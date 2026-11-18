@@ -11,6 +11,19 @@ export const OPERATION_TIMEOUT_MS = 60_000;
 /** The bound of a whole RPC. */
 export const RPC_TIMEOUT_MS = 180_000;
 
+/**
+ * The margin between the bound of the server and the bound of the client.
+ *
+ * The client must wait longer than the server: the server answers the
+ * timeout with an error and invalidates the session — the client has to be
+ * able to read that answer. The margin covers the time the server needs for
+ * the answer.
+ */
+export const CLIENT_TIMEOUT_MARGIN_MS = 60_000;
+
+/** The bound of the client request of an RPC. */
+export const CLIENT_TIMEOUT_MS = RPC_TIMEOUT_MS + CLIENT_TIMEOUT_MARGIN_MS;
+
 /** The bound of a close that must not outlive the invalidation. */
 export const CLOSE_TIMEOUT_MS = 5_000;
 

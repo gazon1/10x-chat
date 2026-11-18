@@ -1,12 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CLIENT_TIMEOUT_MS,
   InvalidatedHandles,
   invalidatedHandle,
   invalidateOnTimeout,
   OperationTimeoutError,
+  RPC_TIMEOUT_MS,
   withLateResultCleanup,
   withOperationTimeout,
 } from '../src/browser/operation-timeout.js';
+
+describe('the bound of the client', () => {
+  it('is longer than the bound of the server', () => {
+    // The server answers a hung call with an error and invalidates the
+    // session: the client has to wait long enough to read that answer.
+    expect(CLIENT_TIMEOUT_MS).toBeGreaterThan(RPC_TIMEOUT_MS);
+  });
+});
 
 describe('withOperationTimeout', () => {
   it('answers with the result of the operation', async () => {

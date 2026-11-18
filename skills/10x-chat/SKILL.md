@@ -86,7 +86,7 @@ The fork is published under the scoped name `@gazon1/10x-chat`, because the unsc
 
 Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
 
-**Never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed — and the push happens when the user asked for that publication: a request to review is not a request to publish.
+**In the playbooks below, never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed — and the push happens when the user asked for that publication: a request to review is not a request to publish. Outside the playbooks, `--file` and `--attach` stay available: an ordinary chat about a local file is a normal use of the CLI.
 
 ## Playbooks
 
@@ -165,7 +165,7 @@ The reviewer opens the failing file on GitHub itself — paste only the failing 
 
 ## Agent rules
 
-- **Never send files.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first, when the user asked for that publication — nothing that is not on GitHub can be reviewed.
+- **Never send files in the playbooks.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first, when the user asked for that publication — nothing that is not on GitHub can be reviewed. In an ordinary chat, `--file` and `--attach` are still the way to show a local file to the model.
 - **Check login first.** `login --status` before a batch of runs; a failed run wastes minutes.
 - **Keep the brief short.** The prompt carries coordinates, the role and the expected output format — not the code. Use `--dry-run` when unsure what will be sent.
 - **Timeout deliberately.** Defaults are in seconds-to-minutes; research and reasoning models need `--timeout 600000`–`900000`. A truncated answer prints a warning — re-run with a larger timeout rather than trusting it.

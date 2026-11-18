@@ -8,6 +8,7 @@ import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } fro
 import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { acquireProfileLock } from './lock.js';
+import { CLIENT_TIMEOUT_MS } from './operation-timeout.js';
 import { isProcessAlive } from './process.js';
 import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
@@ -102,9 +103,10 @@ class BrowserDaemonHttpClient {
   async request(request: RpcRequest): Promise<RpcSuccess> {
     let response: Response;
     try {
-      // No client-side timeout: a request is aborted by the operation itself
-      // (the composer, the send button, the answer capture). A fixed deadline
-      // here killed long prompts in the middle of the submission.
+      // The bound of the client is longer than the bound of the server: the
+      // server answers a hung call with an error and invalidates the session,
+      // and the client has to be able to read that answer. The bound is still
+      // there — a daemon that never answers must not hang the run forever.
       response = await fetch(`http://127.0.0.1:${this.state.port}/rpc`, {
         method: 'POST',
         headers: {
@@ -112,6 +114,7 @@ class BrowserDaemonHttpClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
+        signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),
       });
     } catch (error) {
       throw new Error(`Browser daemon request failed: ${getErrorMessage(error)}`);
