@@ -18,11 +18,16 @@ import {
   saveStoredConversation,
 } from './conversations.js';
 import type { FailureKind } from './failures.js';
-import { checkProviderSession, failureKind, reclassify } from './failures.js';
+import {
+  checkProviderSession,
+  failureKind,
+  ProviderGenerationError,
+  reclassify,
+} from './failures.js';
 import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
 import { chatModel } from './model.js';
-import { chatTimeoutMs } from './timeout.js';
+import { chatTimeoutMs, isResponseTimeout } from './timeout.js';
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
 const CHAT_PROVIDERS: ProviderName[] = [
@@ -242,16 +247,39 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       await ensureFreshConversation();
     }
 
-    stage = 'submit-prompt';
-    console.log(chalk.dim('Submitting prompt...'));
-    await provider.actions.submitPrompt(browser.page, bundle);
+    const submitAndCapture = async () => {
+      stage = 'submit-prompt';
+      console.log(chalk.dim('Submitting prompt...'));
+      await provider.actions.submitPrompt(browser.page, bundle);
 
-    stage = 'capture-response';
-    console.log(chalk.dim('Waiting for response...'));
-    const captured = await provider.actions.captureResponse(browser.page, {
-      timeoutMs,
-      onChunk: (chunk) => process.stdout.write(chalk.dim(chunk)),
-    });
+      stage = 'capture-response';
+      console.log(chalk.dim('Waiting for response...'));
+      return provider.actions.captureResponse(browser.page, {
+        timeoutMs,
+        onChunk: (chunk) => process.stdout.write(chalk.dim(chunk)),
+      });
+    };
+
+    // One retry: the answer was cut off by the timeout, or the provider showed
+    // a streaming/network error instead of the answer. Ask the same question
+    // again in the same conversation. With attachments there is nothing to
+    // attach the second time, so a partial answer is all the run can return.
+    const hasAttachments = Boolean(options.attach && options.attach.length > 0);
+    const askWithRetry = async () => {
+      let retried = false;
+      for (;;) {
+        try {
+          const captured = await submitAndCapture();
+          if (!captured.truncated || retried || hasAttachments) return captured;
+          console.log(chalk.dim('The response was cut off — asking again.'));
+        } catch (error) {
+          if (retried || hasAttachments || !(error instanceof ProviderGenerationError)) throw error;
+          console.log(chalk.dim('The provider reported an error while generating — asking again.'));
+        }
+        retried = true;
+      }
+    };
+    const captured = await askWithRetry();
 
     const durationMs = Date.now() - startTime;
     const conversationId = conversationIdFromUrl(providerName, browser.page.url());
@@ -300,7 +328,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
-    const isTimeout = error instanceof Error && error.message.toLowerCase().includes('timeout');
+    const isTimeout = isResponseTimeout(error);
     await updateSession(session.id, {
       status: isTimeout ? 'timeout' : 'failed',
       durationMs,

@@ -10,7 +10,12 @@ import type { Provider, ProviderName, TransportName } from '../types.js';
  * site block the browser, is the session gone, or is the site not there at
  * all?
  */
-export type FailureKind = 'antibot' | 'unauthorized' | 'unavailable' | 'missing-credential';
+export type FailureKind =
+  | 'antibot'
+  | 'unauthorized'
+  | 'unavailable'
+  | 'missing-credential'
+  | 'generation';
 
 /** The site answered with a bot challenge (Cloudflare) instead of the app. */
 export class AntibotChallengeError extends Error {
@@ -33,6 +38,18 @@ export class SiteUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SiteUnavailableError';
+  }
+}
+
+/**
+ * The provider failed while generating the answer (a streaming or network
+ * error shown in the page). The answer never arrived, so the run may ask the
+ * same question again.
+ */
+export class ProviderGenerationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderGenerationError';
   }
 }
 
@@ -76,6 +93,7 @@ export function failureKind(error: unknown): FailureKind | undefined {
   if (error instanceof UnauthorizedError) return 'unauthorized';
   if (error instanceof SiteUnavailableError) return 'unavailable';
   if (error instanceof MissingCredentialError) return 'missing-credential';
+  if (error instanceof ProviderGenerationError) return 'generation';
   return undefined;
 }
 
@@ -90,6 +108,8 @@ export function reclassify(kind: FailureKind, message: string): Error {
       return new SiteUnavailableError(message);
     case 'missing-credential':
       return new MissingCredentialError(message);
+    case 'generation':
+      return new ProviderGenerationError(message);
   }
 }
 
@@ -112,6 +132,8 @@ export function failureHint(kind: FailureKind, transport?: TransportName): strin
       return 'The site did not load. Check the network and the proxy.';
     case 'missing-credential':
       return 'No API key is configured for the provider. Create one with: 10x-chat secrets set <name> (see docs/secrets.md).';
+    case 'generation':
+      return 'The provider failed while generating the answer. The question was asked again once; if it still failed, run the command again — the session and the conversation are kept.';
   }
 }
 

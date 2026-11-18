@@ -1,6 +1,10 @@
 import type { Page } from 'playwright';
 import { conversationIdFromUrl } from '../core/conversations.js';
-import { AntibotChallengeError, isChallengeVisible } from '../core/failures.js';
+import {
+  AntibotChallengeError,
+  isChallengeVisible,
+  ProviderGenerationError,
+} from '../core/failures.js';
 import type {
   CapturedResponse,
   GeneratedImage,
@@ -11,7 +15,7 @@ import { clickSendButton, submitPromptToComposer } from './submit.js';
 
 const chatgptSubmitBaseline = new WeakMap<
   Page,
-  { turnCount: number; latestText: string; url: string }
+  { turnCount: number; latestText: string; errorText: string; url: string }
 >();
 const chatgptPendingFiles = new WeakMap<Page, string[]>();
 
@@ -103,7 +107,11 @@ const SELECTORS = {
     '#prompt-textarea.ProseMirror[contenteditable="true"][role="textbox"], #prompt-textarea[contenteditable="true"], [data-testid="composer-input"], div.ProseMirror[contenteditable="true"], textarea, .wcDTda_fallbackTextarea',
   sendButton:
     '#composer-submit-button, button[aria-label="Send prompt"], [data-testid="send-button"]',
-  stopButton: 'button[aria-label="Stop streaming"]',
+  // The composer button is "Stop" while the answer is generated (it becomes
+  // the voice/record button when idle). The old labels are kept for the other
+  // UI variants.
+  stopButton:
+    'button[aria-label="Stop"], button[aria-label="Stop streaming"], button[aria-label="Stop generating"], button[data-testid="stop-button"]',
   assistantTurn: ASSISTANT_TURN_FALLBACK_SELECTORS.join(', '),
   loginPage: 'button:has-text("Log in"), button:has-text("Sign up")',
   /** Hidden file input — exclude the dedicated photo/camera inputs */
@@ -144,11 +152,63 @@ async function getAssistantTurnCount(page: Page): Promise<number> {
     .catch(() => 0);
 }
 
+/**
+ * The labels ChatGPT renders in the assistant node while it works ("Thinking",
+ * "Reviewed potential bugs"). They can stay unchanged for longer than the
+ * stability window, so a stable label must never be taken for the answer.
+ */
+const ACTIVITY_TEXT =
+  /^\s*(?:pro\s+)?(?:thinking|reasoning|searching|analyzing|processing|working|responding|finalizing|reviewing|assessing|reading|browsing|running|checking|listing|considering|drafting|writing|inspecting|examining|summarizing|reviewed|assessed|analyzed|read|searched|browsed|ran|checked|listed|considered|drafted|wrote|inspected|examined|thought|summarized)(?:\s+[^.!?\n]{0,160})?(?:\.\.\.|…)?\.?\s*$/i;
+
+/** The text ChatGPT shows when the answer generation failed. */
+const GENERATION_ERROR_TEXT =
+  /\b(?:streaming error|error (?:in|while) (?:the )?(?:message )?(?:stream|response)|there was an error (?:generating|while generating)|failed to generate (?:a )?response|network error|connection (?:lost|failed)|something (?:went|seems to have gone) wrong)\b/i;
+
+/** An unknown error message still starts with a failure word. */
+const GENERATION_ERROR_START =
+  /^\s*(?:error|failed|failure|unable|couldn'?t|can'?t|network|connection|oops|something)\b/i;
+
+/**
+ * How many polls a short activity-like text may stay stable before it is taken
+ * for the answer. A real label ends when the generation ends; a very short
+ * answer ("Read the PR description.") must not wait for the whole timeout.
+ */
+const ACTIVITY_GRACE_POLLS = 20;
+
+/**
+ * The error the page reports instead of the answer, if any.
+ *
+ * An error element is trusted even with an unknown wording; an unknown error
+ * in the answer text is recognized by the failure word it starts with.
+ */
+function generationErrorOf(
+  snapshot: { text: string; errorText: string },
+  baseline: { latestText: string; errorText: string },
+): string | undefined {
+  const errorText = snapshot.errorText !== baseline.errorText ? snapshot.errorText.trim() : '';
+  const text = snapshot.text !== baseline.latestText ? snapshot.text.trim() : '';
+
+  const known = GENERATION_ERROR_TEXT.exec(`${errorText} ${text}`);
+  if (known) return known[0];
+  if (errorText) return errorText.slice(0, 200);
+  if (text.length <= 200 && GENERATION_ERROR_START.test(text)) return text;
+  return undefined;
+}
+
 async function getLatestAssistantSnapshot(
   page: Page,
-): Promise<{ found: boolean; text: string; html: string }> {
+): Promise<{ found: boolean; text: string; html: string; errorText: string }> {
   return page.evaluate(
     (selectors: readonly string[]) => {
+      const errorText = Array.from(
+        document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
+      )
+        .map((element) => (element as HTMLElement).innerText || element.textContent || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 400);
+
       const isVisible = (element: Element | null): element is HTMLElement => {
         if (!(element instanceof HTMLElement)) return false;
         if (element.hidden) return false;
@@ -171,10 +231,10 @@ async function getLatestAssistantSnapshot(
             ? (last.innerText || last.textContent || '').trim()
             : (last.textContent || '').trim();
         const html = 'innerHTML' in last ? (last as HTMLElement).innerHTML || '' : '';
-        return { found: true, text, html };
+        return { found: true, text, html, errorText };
       }
 
-      return { found: false, text: '', html: '' };
+      return { found: false, text: '', html: '', errorText };
     },
     [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
   );
@@ -595,11 +655,15 @@ export const chatgptActions: ProviderActions = {
   async submitPrompt(page: Page, prompt: string): Promise<void> {
     // Dismiss onboarding/welcome modals that block the composer
     await dismissOverlays(page);
+    const snapshot = await getLatestAssistantSnapshot(page);
     chatgptSubmitBaseline.set(page, {
       turnCount: await getAssistantTurnCount(page),
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
-      latestText: (await getLatestAssistantSnapshot(page)).text,
+      latestText: snapshot.text,
+      // An error banner can outlive the run that showed it; only a new one
+      // belongs to this answer.
+      errorText: snapshot.errorText,
       url: page.url(),
     });
 
@@ -632,10 +696,31 @@ export const chatgptActions: ProviderActions = {
     opts: { timeoutMs: number; onChunk?: (chunk: string) => void },
   ): Promise<CapturedResponse> {
     const { timeoutMs, onChunk } = opts;
+
+    // While the answer is generated the composer shows a Stop button. The
+    // assistant node can hold a short activity label ("Reviewed potential
+    // bugs") for a long time before the text streams in, so a stable label
+    // must never end the capture. Do not use `:visible` in the selector — the
+    // shared daemon does not proxy the Playwright selector engine reliably.
+    const isGenerating = async (): Promise<boolean> => {
+      const stops = page.locator(SELECTORS.stopButton);
+      const count = await stops.count().catch(() => 0);
+      for (let index = 0; index < count; index++) {
+        if (
+          await stops
+            .nth(index)
+            .isVisible()
+            .catch(() => false)
+        )
+          return true;
+      }
+      return false;
+    };
     const startTime = Date.now();
     const baseline = chatgptSubmitBaseline.get(page) ?? {
       turnCount: await getAssistantTurnCount(page),
       latestText: '',
+      errorText: '',
       url: page.url(),
     };
 
@@ -643,19 +728,23 @@ export const chatgptActions: ProviderActions = {
     let lastText = baseline.latestText;
     let emittedText = '';
     let stableCount = 0;
+    let activityPolls = 0;
     let truncated = true;
     while (Date.now() - startTime < timeoutMs) {
       const snapshot = await getLatestAssistantSnapshot(page);
       const text = snapshot.text;
-      const streaming = await page
-        .locator(SELECTORS.stopButton)
-        .first()
-        .isVisible()
-        .catch(() => false);
-      const placeholder =
-        /^\s*(?:pro\s+)?(?:thinking|reasoning|searching|finalizing answer|listing files in data directory|reading (?:file|document)s?|analyzing|processing)\s*$/i.test(
-          text,
+
+      // The previous turn's answer is the last node until the new one appears;
+      // only an error that is new since the prompt belongs to this run.
+      const generationError = generationErrorOf(snapshot, baseline);
+      if (generationError) {
+        throw new ProviderGenerationError(
+          `ChatGPT reported an error while generating the answer: ${generationError}`,
         );
+      }
+
+      const streaming = await isGenerating();
+      const activity = ACTIVITY_TEXT.test(text);
 
       if (text && text !== baseline.latestText) {
         if (text !== emittedText) {
@@ -665,14 +754,28 @@ export const chatgptActions: ProviderActions = {
           emittedText = text;
         }
 
-        if (text === lastText && !streaming && !placeholder) {
-          stableCount++;
-          if (stableCount >= 3) {
-            truncated = false;
-            break;
+        if (text === lastText && !streaming) {
+          if (activity) {
+            // A real label is followed by the answer when the generation ends;
+            // a short answer that only looks like a label is accepted after
+            // the grace window instead of waiting for the whole timeout.
+            activityPolls++;
+            if (activityPolls >= ACTIVITY_GRACE_POLLS) {
+              truncated = false;
+              break;
+            }
+            stableCount = 0;
+          } else {
+            activityPolls = 0;
+            stableCount++;
+            if (stableCount >= 3) {
+              truncated = false;
+              break;
+            }
           }
         } else {
           stableCount = 0;
+          activityPolls = 0;
         }
         lastText = text;
       }

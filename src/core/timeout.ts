@@ -29,6 +29,15 @@ export function chatTimeoutMs(
 }
 
 /**
+ * Is the error the timeout of the answer capture (the provider never finished
+ * streaming)? A Playwright wait ("Timeout 15000ms exceeded") is a failure of
+ * the interaction, not a slow answer, so it must not be reported as a timeout.
+ */
+export function isResponseTimeout(error: unknown): boolean {
+  return error instanceof Error && /^timed out waiting/i.test(error.message);
+}
+
+/**
  * The timeout of a command with its own default (`image`, `research`).
  *
  * There is no config value here on purpose: `defaultTimeoutMs` is the timeout

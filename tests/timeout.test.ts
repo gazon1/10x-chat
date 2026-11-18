@@ -5,6 +5,7 @@ import {
   chatTimeoutMs,
   commandTimeoutMs,
   IMAGE_TIMEOUT_MS,
+  isResponseTimeout,
   RESEARCH_TIMEOUT_MS,
 } from '../src/core/timeout.js';
 
@@ -30,6 +31,22 @@ describe('timeout of the commands with their own default', () => {
   it('falls back to the default of the command', () => {
     expect(commandTimeoutMs(undefined, IMAGE_TIMEOUT_MS)).toBe(IMAGE_TIMEOUT_MS);
     expect(commandTimeoutMs(undefined, RESEARCH_TIMEOUT_MS)).toBe(RESEARCH_TIMEOUT_MS);
+  });
+});
+
+describe('isResponseTimeout', () => {
+  it('recognizes the timeout of the answer capture', () => {
+    expect(isResponseTimeout(new Error('Timed out waiting for ChatGPT assistant response'))).toBe(
+      true,
+    );
+  });
+
+  it('does not call a Playwright wait a response timeout', () => {
+    expect(isResponseTimeout(new Error('locator.waitFor: Timeout 15000ms exceeded.'))).toBe(false);
+  });
+
+  it('ignores a non-error value', () => {
+    expect(isResponseTimeout('timeout')).toBe(false);
   });
 });
 

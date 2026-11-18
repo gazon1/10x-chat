@@ -13,6 +13,7 @@ import {
   failureKind,
   isChallengeTitle,
   isChallengeVisible,
+  ProviderGenerationError,
   printFailureHint,
   reclassify,
   SiteUnavailableError,
@@ -237,6 +238,7 @@ describe('failure classification', () => {
     expect(failureKind(new AntibotChallengeError())).toBe('antibot');
     expect(failureKind(new UnauthorizedError('no session'))).toBe('unauthorized');
     expect(failureKind(new SiteUnavailableError('down'))).toBe('unavailable');
+    expect(failureKind(new ProviderGenerationError('stream failed'))).toBe('generation');
     expect(failureKind(new Error('something else'))).toBeUndefined();
   });
 
@@ -250,6 +252,13 @@ describe('failure classification', () => {
     expect(failureHint('antibot')).toMatch(/--headed/);
     expect(failureHint('unauthorized')).toMatch(/login/);
     expect(failureHint('unavailable')).toMatch(/proxy/);
+    expect(failureHint('generation')).toMatch(/generating/);
+  });
+
+  it('keeps the generation kind when the error is wrapped', () => {
+    const wrapped = reclassify('generation', 'Chat operation failed (provider=chatgpt)');
+    expect(wrapped).toBeInstanceOf(ProviderGenerationError);
+    expect(failureKind(wrapped)).toBe('generation');
   });
 
   it('prints the hint of a classified failure and nothing else', () => {
