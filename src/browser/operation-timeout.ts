@@ -50,6 +50,35 @@ export async function withOperationTimeout<T>(
   }
 }
 
+/**
+ * Run an operation with a bound, and clean up its result if it arrives late.
+ *
+ * The creation of a browser context (or of a page) can outlast the bound of
+ * the operation. The client never learns the id of such a context, so nobody
+ * can close it any more — it stays in the browser for good. The late result
+ * is closed instead of being used.
+ */
+export async function withLateResultCleanup<T>(
+  creation: Promise<T>,
+  label: string,
+  timeoutMs: number,
+  cleanup: (value: T) => Promise<void>,
+): Promise<T> {
+  try {
+    return await withOperationTimeout(creation, label, timeoutMs);
+  } catch (error) {
+    void creation.then(
+      (value) => {
+        void Promise.resolve()
+          .then(() => cleanup(value))
+          .catch(() => undefined);
+      },
+      () => undefined,
+    );
+    throw error;
+  }
+}
+
 /** The handle of the session that an operation works on. */
 export interface SessionHandle {
   pageId?: string;

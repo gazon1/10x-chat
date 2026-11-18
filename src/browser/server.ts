@@ -15,6 +15,7 @@ import {
   invalidateOnTimeout,
   OPERATION_TIMEOUT_MS,
   RPC_TIMEOUT_MS,
+  withLateResultCleanup,
   withOperationTimeout,
 } from './operation-timeout.js';
 import { CHROMIUM_ARGS } from './process.js';
@@ -388,11 +389,23 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
 
       switchGate.start();
       try {
-        const context = await browser.newContext((args[0] as Record<string, unknown>) ?? {});
-        // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
-        if (getEngineName() !== 'cloakbrowser') {
-          await context.addInitScript(STEALTH_INIT_SCRIPT);
-        }
+        // The creation of a context can outlast the bound of the operation.
+        // The client never learns the id of such a context, so nobody can
+        // close it: a context that arrives late is closed instead of being
+        // registered.
+        const context = await withLateResultCleanup(
+          (async () => {
+            const created = await browser!.newContext((args[0] as Record<string, unknown>) ?? {});
+            // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
+            if (getEngineName() !== 'cloakbrowser') {
+              await created.addInitScript(STEALTH_INIT_SCRIPT);
+            }
+            return created;
+          })(),
+          'browser.newContext',
+          OPERATION_TIMEOUT_MS,
+          (late) => withOperationTimeout(late.close(), 'context.close', CLOSE_TIMEOUT_MS),
+        );
         const contextId = randomUUID();
         contexts.set(contextId, context);
         return { ok: true, result: toContextHandle(contextId) };
@@ -405,7 +418,14 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
       const context = getContext(body.target?.contextId);
 
       if (body.method === 'newPage') {
-        const page = await context.newPage();
+        // A page that arrives after the bound is closed: the client never
+        // learns its id, and a page of nobody stays in the browser.
+        const page = await withLateResultCleanup(
+          context.newPage(),
+          'context.newPage',
+          OPERATION_TIMEOUT_MS,
+          (late) => withOperationTimeout(late.close(), 'page.close', CLOSE_TIMEOUT_MS),
+        );
         const pageId = attachPage(page, body.target?.contextId ?? '');
         return {
           ok: true,

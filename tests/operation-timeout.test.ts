@@ -4,6 +4,7 @@ import {
   invalidatedHandle,
   invalidateOnTimeout,
   OperationTimeoutError,
+  withLateResultCleanup,
   withOperationTimeout,
 } from '../src/browser/operation-timeout.js';
 
@@ -82,6 +83,56 @@ describe('invalidateOnTimeout', () => {
 
     expect(handle).toBeNull();
     expect(invalidate).not.toHaveBeenCalled();
+  });
+});
+
+describe('withLateResultCleanup', () => {
+  it('answers with the created object when it arrives in time', async () => {
+    const created = { id: 'c1' };
+    const cleanup = vi.fn(async () => {});
+
+    await expect(
+      withLateResultCleanup(Promise.resolve(created), 'browser.newContext', 1_000, cleanup),
+    ).resolves.toBe(created);
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it('closes a context that arrives after the timeout', async () => {
+    // The creation of a context outlasts the bound of the operation: the
+    // client never learns its id, and nobody can close it any more.
+    let resolveCreation: (value: { id: string }) => void = () => {};
+    const creation = new Promise<{ id: string }>((resolve) => {
+      resolveCreation = resolve;
+    });
+    const closed: string[] = [];
+    const cleanup = vi.fn(async (context: { id: string }) => {
+      closed.push(context.id);
+    });
+
+    await expect(
+      withLateResultCleanup(creation, 'browser.newContext', 20, cleanup),
+    ).rejects.toThrow(OperationTimeoutError);
+    expect(cleanup).not.toHaveBeenCalled();
+
+    // The context arrives after the timeout: it is closed, not registered.
+    resolveCreation({ id: 'c1' });
+    await vi.waitFor(() => expect(closed).toEqual(['c1']));
+  });
+
+  it('does not fail when the creation fails after the timeout', async () => {
+    let rejectCreation: (error: Error) => void = () => {};
+    const creation = new Promise<{ id: string }>((_resolve, reject) => {
+      rejectCreation = reject;
+    });
+    const cleanup = vi.fn(async () => {});
+
+    await expect(
+      withLateResultCleanup(creation, 'browser.newContext', 20, cleanup),
+    ).rejects.toThrow(OperationTimeoutError);
+
+    rejectCreation(new Error('the browser is gone'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(cleanup).not.toHaveBeenCalled();
   });
 });
 
