@@ -35,6 +35,8 @@ function createSubmitPage(options: {
   contenteditable: boolean;
   insertFails?: boolean;
   insertDoesNotLand?: boolean;
+  /** The typing fallback does not land either. */
+  typeDoesNotLand?: boolean;
   /** The first insertion lands only half of the prompt. */
   insertLandsHalf?: boolean;
   /** A hidden composer sits in front of the visible one. */
@@ -44,6 +46,7 @@ function createSubmitPage(options: {
     contenteditable,
     insertFails = false,
     insertDoesNotLand = false,
+    typeDoesNotLand = false,
     insertLandsHalf = false,
     hiddenFirst = false,
   } = options;
@@ -102,6 +105,7 @@ function createSubmitPage(options: {
     locator,
     keyboard: {
       type: vi.fn(async (value: string) => {
+        if (typeDoesNotLand) return;
         raw += value;
       }),
       insertText: insertFails
@@ -251,6 +255,25 @@ describe('submitPromptToComposer', () => {
     expect(hiddenComposer.waitFor).not.toHaveBeenCalled();
     expect(composer.waitFor).toHaveBeenCalled();
     expect(composer.click).toHaveBeenCalled();
+  });
+
+  it('fails when the editor accepts neither the insertion nor the typing', async () => {
+    // A prompt that is not in the editor must not be sent: the provider would
+    // answer something else.
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      insertFails: true,
+      typeDoesNotLand: true,
+    });
+
+    await expect(
+      submitPromptToComposer(page as never, 'Hello from ProseMirror', {
+        composerSelector: '#composer',
+        sendButtonSelector: '#send',
+      }),
+    ).rejects.toThrow('could not be entered into the composer');
+
+    expect(sendButton.click).not.toHaveBeenCalled();
   });
 
   it('still uses fill for textarea-style composers', async () => {

@@ -174,13 +174,11 @@ export async function submitPromptToComposer(
       inserted = await landed();
     }
     if (!inserted) {
-      await composer.evaluate((element, text) => {
-        if (!(element instanceof HTMLElement)) return;
-        element.focus();
-        element.textContent = text;
-        element.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
-      }, prompt);
+      // The editor refused the text. A mutation of the DOM is not an input:
+      // the rich editor keeps the prompt in its own state, and it would send
+      // an empty or stale prompt. A failed insertion is reported instead —
+      // a wrong prompt is worse than a failed run.
+      throw new Error('The prompt could not be entered into the composer of the chat.');
     }
   } else {
     try {
