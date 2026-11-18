@@ -99,6 +99,9 @@ class BrowserDaemonHttpClient {
   async request(request: RpcRequest): Promise<RpcSuccess> {
     let response: Response;
     try {
+      // No client-side timeout: a request is aborted by the operation itself
+      // (the composer, the send button, the answer capture). A fixed deadline
+      // here killed long prompts in the middle of the submission.
       response = await fetch(`http://127.0.0.1:${this.state.port}/rpc`, {
         method: 'POST',
         headers: {
@@ -106,7 +109,6 @@ class BrowserDaemonHttpClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(60_000),
       });
     } catch (error) {
       throw new Error(`Browser daemon request failed: ${getErrorMessage(error)}`);

@@ -66,20 +66,25 @@ Record for each check: the exact command, the exit code, and the relevant output
 
 A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is never rewritten into a pass, and "probably fine" is not a result.
 
-## 5. Commit and push the checkpoint
+## 5. Commit, push and open the pull request
 
-A review needs a revision the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and record the SHA:
+A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists:
 
 ```bash
 git add -A
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD
+
+# The pull request is the reviewer's entry point — open it if it does not exist
+gh pr view --json number,url >/dev/null 2>&1 \
+  || gh pr create --base <base> --head <branch> --title "<title>" --body "<what this branch changes>"
+gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
-The reviewer reads that SHA on GitHub: the change in place, with its context, its conventions and the CI run of the branch. If the push fails — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
+The reviewer reads the change at the pull request: the diff, the discussion, the head SHA, in its real context. If the push or the pull request cannot be created — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
 
-Pushing the branch is part of the pipeline. Merging, opening a pull request, tagging a release or deploying is not (step 9).
+Pushing the branch and opening the pull request are part of the pipeline. Merging, tagging a release or deploying is not (step 9).
 
 ## 6. Independent adversarial review of the checkpoint
 
@@ -90,11 +95,12 @@ Ask 10x-chat for an adversarial review of *this checkpoint*, in a fresh conversa
   -p "You are an adversarial reviewer. Your job is to find the ways this change fails.
 Assume it is wrong until the code proves it.
 
-Read the code yourself on GitHub — do not guess and do not ask for the files:
-  Repository: https://github.com/<owner>/<name>
-  Branch:     <branch>
-  Commit:     <sha of the checkpoint>
-  Conventions: read AGENTS.md and CONTRIBUTING.md at that commit
+Read the code yourself on GitHub (the pull request page, its diff and the discussion) — do not guess and do not ask for the files:
+  Repository:   https://github.com/<owner>/<name>
+  Pull request: #<n> — https://github.com/<owner>/<name>/pull/<n>
+  Branch:       <branch>
+  Commit:       <sha of the checkpoint>
+  Conventions:  read AGENTS.md and CONTRIBUTING.md at that commit
 
 Look for: wrong logic, unhandled edge cases, missing error handling, races, security holes, broken callers, violated conventions of this repository, missing tests, and scope that creeps beyond the stated goal.
 For each finding: SEVERITY (BLOCKING | MAJOR | MINOR | INFO), LOCATION (file:line), PROBLEM, IMPACT (the concrete failure scenario), EVIDENCE (the code that shows it), FIX (the minimal correction).

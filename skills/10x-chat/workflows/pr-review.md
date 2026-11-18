@@ -6,7 +6,7 @@ Use it when the user asks for a review of a pull request, a branch, a patch, or 
 
 **The reviewers read the repository on GitHub themselves — no files are sent at all.** A reviewer that receives a pasted diff sees a snapshot of a few files; a reviewer that receives the repository URL, the pull request URL and the commit SHAs reads the whole change in its real context: the surrounding code, the conventions, the CI run. So:
 
-- The prompt carries the **GitHub coordinates** — repository URL, pull request URL, base and head SHA — plus the changed file list and a short brief. Nothing else.
+- The prompt carries the **GitHub coordinates** — repository URL, **pull request number and URL**, base and head SHA — plus the changed file list and a short brief. Nothing else.
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded). The reviewer opens the repository itself.
 - The review target must therefore be **on `origin`**. The pipeline pushes the branch before the review (step 1). If the change cannot be pushed — no rights, no remote — the review is `UNAVAILABLE` for every role that needs the code, and the report says so.
 - A provider that cannot open the repository (private repo without a connector, provider without web access) must **say so in its answer**. That is a finding about the review, not a licence to guess — the review is then `UNAVAILABLE` for that role, and the report says which role could not run.
@@ -24,16 +24,21 @@ git diff --name-only "$BASE...$HEAD"
 git remote get-url origin
 ```
 
-Then make the change reachable for the reviewers — **commit and push the branch to `origin`**, so that the head SHA they read is the one you reviewed:
+Then make the change reachable for the reviewers — **commit, push and open the pull request**, so that the PR the reviewers open is the change you reviewed:
 
 ```bash
 git add -A
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD          # the SHA the reviewers get
+
+# The pull request is the reviewer's entry point — open it if it does not exist
+gh pr view --json number,url >/dev/null 2>&1 \
+  || gh pr create --base <base> --head <branch> --title "<title>" --body "<what changed and why>"
+gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
-The pull request URL is the one the branch belongs to (`https://github.com/<owner>/<name>/pull/<n>`). If the branch has no pull request yet, the review runs against the pushed branch and the commit SHA — that is enough for the reviewer to read the change.
+**The prompt carries the pull request number and URL.** A reviewer that only gets a branch name does not find the change; the PR page carries the diff, the discussion and the head SHA. Without a pull request there is nothing to review — create it first.
 
 - The **changed files** and the **surrounding code** of each of them — read them in your checkout. A diff without its context hides most real defects, and *you* are the one who resolves disagreements later.
 - The **project conventions**: `AGENTS.md`, `CLAUDE.md`, `README`, `CONTRIBUTING`, the lint/format/CI configuration. Point the reviewer at these files **by path in the repository** (`AGENTS.md` at the head SHA) instead of pasting them.
@@ -43,7 +48,7 @@ What the reviewers get is a brief, not a bundle:
 
 ```text
 Repository:  https://github.com/<owner>/<name>
-Pull request: https://github.com/<owner>/<name>/pull/<n>
+Pull request: #<n> — https://github.com/<owner>/<name>/pull/<n>
 Base:        <base-ref> -> <base-sha>
 Head:        <head-ref> -> <head-sha>
 Changed files:
@@ -66,12 +71,12 @@ A third role (**Role C — tests and verification**) is worth it when the change
 
 ```bash
 # Role A
-10x-chat chat --provider chatgpt --new-chat --timeout 900000 \
+10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
   -p "You are an independent reviewer of a pull request. Your role: correctness, regressions, security and edge cases.
 
 Read the code yourself on GitHub — do not guess and do not ask for the files:
   Repository:   https://github.com/<owner>/<name>
-  Pull request: https://github.com/<owner>/<name>/pull/<n>
+  Pull request: #<n> — https://github.com/<owner>/<name>/pull/<n>
   Base:         <base-sha>
   Head:         <head-sha>
   Changed files: path/a.ts, path/b.ts
@@ -90,7 +95,7 @@ FIX: <the minimal correction>
 If you find nothing blocking, say so explicitly. Do not invent problems to fill the format. Do not rewrite the code."
 
 # Role B — a separate command, its own conversation, no reference to A
-10x-chat chat --provider chatgpt --new-chat --timeout 900000 \
+10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
   -p "You are an independent reviewer of a pull request. Your role: architecture, maintainability, compatibility and scope discipline.
 ...same repository coordinates...
 Judge the change against the conventions of the repository (read AGENTS.md and CONTRIBUTING.md at the head SHA) and against the surrounding code: does it fit the codebase's shape, is it the smallest change that solves the task, does it break public APIs, formats or schemas, does it leave dead code or needless abstraction, are the tests meaningful?

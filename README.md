@@ -455,6 +455,8 @@ This lets agents like Codex or Claude Code use 10x-chat to query other models fo
 
 The skill ships two playbooks next to `SKILL.md`: `workflows/pr-review.md` (independent role-specific reviewers, a finding schema, verification and a final verdict) and `workflows/helix-development.md` (gated checkpoints with acceptance criteria and evidence). Both end in the shared report format in `workflows/report-format.md`.
 
+The pipeline is: commit → push the branch → open the pull request → ask the reviewer, with the pull request number and URL in the prompt. The reviewer reads the repository on GitHub itself; no files are sent to the provider.
+
 ## Supported Providers
 
 | Provider | Status | Models | URL |

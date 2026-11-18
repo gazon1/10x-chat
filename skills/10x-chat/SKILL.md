@@ -111,16 +111,20 @@ git fetch origin main --quiet
 git add -A && git commit -m "<message>" && git push origin <branch>
 BASE=$(git rev-parse origin/main)
 HEAD=$(git rev-parse HEAD)
+gh pr view --json number,url >/dev/null 2>&1 \
+  || gh pr create --base main --head <branch> --title "<title>" --body "<what changed>"
+PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 
-10x-chat chat --provider chatgpt --new-chat --timeout 900000 \
-  -p "You are reviewing a pull request. Read the code on GitHub yourself:
-       Repository:   https://github.com/<owner>/<name>
-       Pull request: https://github.com/<owner>/<name>/pull/<n>
+10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
+  -p "You are reviewing pull request $PR of https://github.com/gazon1/10x-chat. Read the code on GitHub yourself:
+       Repository:   https://github.com/gazon1/10x-chat
+       Pull request: $PR
        Base: $BASE
        Head: $HEAD
      Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
 ```
 
+- The **pull request** is the reviewer's entry point — create it before asking, and put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
 - `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.

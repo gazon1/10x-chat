@@ -11,9 +11,11 @@ function createSubmitPage(options: { contenteditable: boolean; fillFails?: boole
           throw new Error('fill failed');
         })
       : vi.fn(async () => {}),
-    evaluate: vi.fn(async (_fn: unknown, arg?: string) =>
-      arg === undefined ? contenteditable : undefined,
-    ),
+    evaluate: vi.fn(async (_fn: unknown, arg?: string) => {
+      if (arg === undefined) return contenteditable;
+      // The text landed in the composer.
+      return true;
+    }),
   };
 
   const sendButton = {
@@ -53,7 +55,7 @@ function createSubmitPage(options: { contenteditable: boolean; fillFails?: boole
 }
 
 describe('submitPromptToComposer', () => {
-  it('uses keyboard text insertion for contenteditable composers', async () => {
+  it('inserts the prompt in one go for contenteditable composers', async () => {
     const { page, composer, sendButton } = createSubmitPage({ contenteditable: true });
 
     await submitPromptToComposer(page as never, 'Hello from ProseMirror', {
@@ -65,8 +67,24 @@ describe('submitPromptToComposer', () => {
     expect(composer.click).toHaveBeenCalled();
     expect(page.keyboard.press).toHaveBeenCalledWith('ControlOrMeta+a');
     expect(page.keyboard.press).toHaveBeenCalledWith('Backspace');
+    expect(composer.fill).toHaveBeenCalledWith('Hello from ProseMirror');
+    // One keystroke per character is too slow for a long prompt.
+    expect(page.keyboard.type).not.toHaveBeenCalled();
+    expect(sendButton.click).toHaveBeenCalled();
+  });
+
+  it('falls back to typing when the composer refuses the insertion', async () => {
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      fillFails: true,
+    });
+
+    await submitPromptToComposer(page as never, 'Hello from ProseMirror', {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
     expect(page.keyboard.type).toHaveBeenCalledWith('Hello from ProseMirror');
-    expect(composer.fill).not.toHaveBeenCalled();
     expect(sendButton.click).toHaveBeenCalled();
   });
 

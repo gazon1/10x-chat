@@ -107,12 +107,26 @@ export async function submitPromptToComposer(
   if (isContentEditable) {
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.press('Backspace');
-    await page.keyboard.type(prompt);
-    await page.waitForTimeout(100);
 
-    const inserted = await composer
-      .evaluate((element, text) => (element.textContent ?? '').includes(text.trim()), prompt)
-      .catch(() => false);
+    const landed = async (): Promise<boolean> =>
+      composer
+        .evaluate((element, text) => (element.textContent ?? '').includes(text.trim()), prompt)
+        .catch(() => false);
+
+    // One insertion instead of one keystroke per character: a rich composer
+    // types slowly, and a long prompt took minutes — long enough to kill the
+    // daemon request.
+    let inserted = false;
+    try {
+      await composer.fill(prompt);
+      inserted = await landed();
+    } catch {
+      inserted = false;
+    }
+    if (!inserted) {
+      await page.keyboard.type(prompt);
+      inserted = await landed();
+    }
     if (!inserted) {
       await composer.evaluate((element, text) => {
         if (!(element instanceof HTMLElement)) return;
