@@ -8,10 +8,18 @@ import { submitPromptToComposer } from '../src/providers/submit.js';
  * functions of the source against a fake element — so the comparison of the
  * source is the one under test, not a copy of it.
  */
+type FakeNode = {
+  nodeType: number;
+  tagName?: string;
+  textContent?: string;
+  childNodes?: FakeNode[];
+};
+
 class FakeElement {
   textContent = '';
   innerHTML = '';
   isContentEditable = true;
+  childNodes: FakeNode[] = [];
   getAttribute(): string | null {
     return null;
   }
@@ -19,6 +27,19 @@ class FakeElement {
   dispatchEvent(): boolean {
     return true;
   }
+}
+
+/** The editor turns every line of the prompt into a paragraph. */
+function setComposerText(element: FakeElement, value: string): void {
+  const lines = value.split('\n');
+  element.childNodes = lines.map((line) => ({
+    nodeType: 1,
+    tagName: 'P',
+    textContent: line,
+    childNodes: [{ nodeType: 3, textContent: line }],
+  }));
+  // The real DOM concatenates the paragraphs without a separator.
+  element.textContent = lines.join('');
 }
 
 const globals = globalThis as unknown as { HTMLElement?: unknown; InputEvent?: unknown };
@@ -39,6 +60,8 @@ function createSubmitPage(options: {
   typeDoesNotLand?: boolean;
   /** The first insertion lands only half of the prompt. */
   insertLandsHalf?: boolean;
+  /** The composer swallows the whitespace of the prompt. */
+  losesSeparators?: boolean;
   /** A hidden composer sits in front of the visible one. */
   hiddenFirst?: boolean;
 }) {
@@ -48,12 +71,19 @@ function createSubmitPage(options: {
     insertDoesNotLand = false,
     typeDoesNotLand = false,
     insertLandsHalf = false,
+    losesSeparators = false,
     hiddenFirst = false,
   } = options;
   // The raw text of the composer, before the editor merges the paragraphs.
   let raw = '';
   const element = new FakeElement();
   element.isContentEditable = contenteditable;
+
+  // A composer that swallows the whitespace turns "hello world" into
+  // "helloworld" — the prompt is there, but the words are glued together.
+  const applyText = (value: string): void => {
+    raw += losesSeparators ? value.replace(/\s+/g, '') : value;
+  };
 
   const composer = {
     waitFor: vi.fn(async () => {}),
@@ -62,8 +92,7 @@ function createSubmitPage(options: {
       raw = value;
     }),
     evaluate: vi.fn(async (fn: unknown, arg?: string) => {
-      // The editor merges the paragraphs: no separator between them.
-      element.textContent = raw.replace(/\n+/g, '');
+      setComposerText(element, raw);
       const call = fn as (this: FakeElement, element: FakeElement, arg?: string) => unknown;
       return call.call(element, element, arg);
     }),
@@ -106,7 +135,7 @@ function createSubmitPage(options: {
     keyboard: {
       type: vi.fn(async (value: string) => {
         if (typeDoesNotLand) return;
-        raw += value;
+        applyText(value);
       }),
       insertText: insertFails
         ? vi.fn(async () => {
@@ -116,10 +145,10 @@ function createSubmitPage(options: {
             insertions++;
             if (insertDoesNotLand) return;
             if (insertLandsHalf && insertions === 1) {
-              raw += value.slice(0, Math.floor(value.length / 2));
+              applyText(value.slice(0, Math.floor(value.length / 2)));
               return;
             }
-            raw += value;
+            applyText(value);
           }),
       press: vi.fn(async (key: string) => {
         if (key === 'Backspace') raw = '';
@@ -268,6 +297,24 @@ describe('submitPromptToComposer', () => {
 
     await expect(
       submitPromptToComposer(page as never, 'Hello from ProseMirror', {
+        composerSelector: '#composer',
+        sendButtonSelector: '#send',
+      }),
+    ).rejects.toThrow('could not be entered into the composer');
+
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a prompt whose word separators were lost', async () => {
+    // "hello world" as "helloworld" is one word: the prompt is not in the
+    // composer as it was written, so it must not be sent.
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      losesSeparators: true,
+    });
+
+    await expect(
+      submitPromptToComposer(page as never, 'Hello world', {
         composerSelector: '#composer',
         sendButtonSelector: '#send',
       }),

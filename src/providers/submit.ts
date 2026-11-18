@@ -134,10 +134,55 @@ export async function submitPromptToComposer(
         .evaluate((element, text) => {
           // The composer turns the newlines of the prompt into paragraphs:
           // the words land, but the whitespace between them does not. The
-          // comparison ignores whitespace — otherwise a multi-paragraph prompt
-          // never lands and the typing fallback sends it in pieces.
-          const normalize = (value: string): string => value.replace(/[\s\u200b\ufeff]+/g, '');
-          return normalize(element.textContent ?? '').includes(normalize(text));
+          // comparison therefore works on the words — and the words of the
+          // composer are read per block, so a prompt that lost its word
+          // separators ("hello world" -> "helloworld") is one word and does
+          // not land. Ignoring every whitespace would accept that.
+          const words = (value: string): string[] => value.split(/\s+/).filter(Boolean);
+
+          const blocks = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'SECTION']);
+          const collect = (node: Node, out: string[]): void => {
+            for (const child of Array.from(node.childNodes)) {
+              if (child.nodeType === 3) {
+                out.push(child.textContent ?? '');
+                continue;
+              }
+              if (child.nodeType !== 1) continue;
+              const childElement = child as HTMLElement;
+              if (childElement.tagName === 'BR') {
+                out.push('\n');
+                continue;
+              }
+              const isBlock = blocks.has(childElement.tagName);
+              if (isBlock) out.push('\n');
+              collect(childElement, out);
+              if (isBlock) out.push('\n');
+            }
+          };
+
+          const composerWords = (): string[] => {
+            const parts: string[] = [];
+            collect(element, parts);
+            const text2 = parts.join('');
+            if (text2.trim().length === 0) {
+              // No child nodes: the composer is a plain text holder.
+              const rendered = (element as HTMLElement).innerText;
+              return words(typeof rendered === 'string' ? rendered : (element.textContent ?? ''));
+            }
+            return words(text2);
+          };
+
+          const expected = words(text);
+          if (expected.length === 0) return false;
+          const actual = composerWords();
+          if (actual.length < expected.length) return false;
+          // The words must appear in the same order.
+          let index = 0;
+          for (const word of actual) {
+            if (word === expected[index]) index += 1;
+            if (index === expected.length) break;
+          }
+          return index === expected.length;
         }, prompt)
         .catch(() => false);
 

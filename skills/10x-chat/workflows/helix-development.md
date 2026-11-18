@@ -68,10 +68,22 @@ A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is nev
 
 ## 5. Commit, push and open the pull request
 
-A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists. **Publication needs the user's word**: commit, push and open the pull request only when the user asked for it; when the request is an assessment of local work, ask first, and if the answer is no, the checkpoint stays local and its review is `UNAVAILABLE`:
+A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists. **Publication needs the user's word**: the read-only check and the publication are two separate procedures, and the commands of the second one run only after the user said yes.
+
+- **The pull request exists and the branch is pushed** → review the checkpoint as it is. Nothing is committed, nothing is pushed.
+- **The checkpoint is still local** → ask the user first: *"The checkpoint is not on `origin` yet — may I commit and push it?"* Only after the answer comes the publication block.
+- **The answer is no** → publish nothing. The checkpoint stays local and its review is `UNAVAILABLE`.
+
+Read the state first — this block never publishes:
 
 ```bash
 git status --short                 # read it: only the files of this checkpoint
+gh pr view --json number,url -q '"#\(.number) \(.url)"'
+```
+
+**Publication — only after the user's word:**
+
+```bash
 git add <path> …                   # add those paths by name — never everything at once
 git commit -m "<message in the repository's style>"
 git push origin <branch>
@@ -80,7 +92,6 @@ git rev-parse HEAD
 # Does the pull request exist? Opening one is a publication — the user's word
 gh pr view --json number,url >/dev/null 2>&1 \
   || echo "no pull request yet — ask the user before opening one"
-gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
 **The pull request is opened only with the user's word.** If the check above says that no pull request exists, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:

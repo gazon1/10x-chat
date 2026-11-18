@@ -110,18 +110,31 @@ Load the playbook file before starting one of these tasks — it carries the rev
 
 For a real review, use the [PR review playbook](workflows/pr-review.md). The short version:
 
+Read the state — this block never publishes:
+
 ```bash
 REPO=<owner>/<name>               # the repository under review
 BASE_REF=main
 git fetch origin "$BASE_REF" --quiet
 git status --short                 # read it — add the paths of the change by name
-git add <path> … && git commit -m "<message>" && git push origin <branch>
 BASE=$(git rev-parse "origin/$BASE_REF")
+HEAD=$(git rev-parse HEAD)
+PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
+```
+
+Publication — **only after the user's word**, and only when the change is not on `origin` yet:
+
+```bash
+git add <path> …                   # add those paths by name — never everything at once
+git commit -m "<message>" && git push origin <branch>
 HEAD=$(git rev-parse HEAD)
 gh pr view --json number,url >/dev/null 2>&1 \
   || echo "no pull request yet — ask the user before opening one"
-PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
+```
 
+Then ask for the review:
+
+```bash
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
   -p "You are reviewing pull request $PR of https://github.com/$REPO. Read the code on GitHub yourself:
        Repository:   https://github.com/$REPO
@@ -132,12 +145,13 @@ PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 ```
 
 - The **pull request** is the reviewer's entry point — put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
+- **The read-only review and the publication are separate procedures.** A request to *review* is not a request to *publish*: a request that only asks for a review commits and pushes nothing. Ask the user first — *"The change is not on `origin` yet — may I commit and push it?"* — and run the publication block only after the answer.
 - **The pull request is opened only with the user's word.** If no pull request exists yet, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes `gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"`. Without that answer the review is `UNAVAILABLE` and the report says so.
 - **Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in a leftover file, a local config, a `.env` with credentials. Read `git status --short`, add the paths of the change by name, and read the staged diff before the commit.
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
 - `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.
-- The reviewer sees what is pushed to `origin`, so commit and push before asking — when the user asked for the publication. Nothing is attached to the prompt — the reviewer reads the repository itself.
+- The reviewer sees what is pushed to `origin`, so the branch must be pushed before asking — when the user asked for the publication. Nothing is attached to the prompt — the reviewer reads the repository itself.
 
 ### 2. Second opinion on a failure
 

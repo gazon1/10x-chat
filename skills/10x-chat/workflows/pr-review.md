@@ -26,10 +26,22 @@ git remote get-url origin
 
 Then make the change reachable for the reviewers — **commit, push and open the pull request**, so that the PR the reviewers open is the change you reviewed.
 
-**Publication needs the user's word.** A request to *review* is not a request to *publish*. Commit, push and open the pull request only when the user asked for it. When the request is an assessment of local work — an uncommitted change, a local branch, a patch — ask first, and if the answer is no, review the pushed commit the user already published; if the change never reaches `origin`, the review is `UNAVAILABLE` and the report says so:
+**Publication needs the user's word.** A request to *review* is not a request to *publish*. The read-only review and the publication are two separate procedures; the commands of the second one run only after the user said yes:
+
+- **The pull request exists and the branch is pushed** → review it as it is. Nothing is committed, nothing is pushed.
+- **The change is still local** → ask the user first: *"The change is not on `origin` yet — may I commit and push it?"* Only after the answer comes the publication block.
+- **The answer is no** → publish nothing. Review the commit the user already pushed; if the change never reaches `origin`, the review is `UNAVAILABLE` and the report says so.
+
+Read the state first — this block never publishes:
 
 ```bash
 git status --short                 # read it: only the files of this change
+gh pr view --json number,url -q '"#\(.number) \(.url)"'
+```
+
+**Publication — only after the user's word:**
+
+```bash
 git add <path> …                   # add those paths by name — never everything at once
 git commit -m "<message in the repository's style>"
 git push origin <branch>
@@ -38,7 +50,6 @@ git rev-parse HEAD          # the SHA the reviewers get
 # Does the pull request exist? Opening one is a publication — the user's word
 gh pr view --json number,url >/dev/null 2>&1 \
   || echo "no pull request yet — ask the user before opening one"
-gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
 
 **The pull request is opened only with the user's word.** If the check above says that no pull request exists, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:

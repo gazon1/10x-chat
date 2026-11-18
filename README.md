@@ -466,6 +466,8 @@ The skill ships two playbooks next to `SKILL.md`: `workflows/pr-review.md` (inde
 
 The pipeline is: commit → push the branch → open the pull request → ask the reviewer, with the pull request number and URL in the prompt. The reviewer reads the repository on GitHub itself; no files are sent to the provider.
 
+The publication steps happen **only with the user's word** — a request to review something is not a request to publish it. The playbooks keep the read-only review and the publication apart, so an agent that follows them never pushes without permission.
+
 ## Supported Providers
 
 | Provider | Status | Models | URL |
