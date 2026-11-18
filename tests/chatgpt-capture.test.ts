@@ -345,6 +345,113 @@ describe('ChatGPT Provider', () => {
       expect(response.text).toBe('Answer of this turn');
     });
 
+    it('does not take the message of the user for the answer', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
+      const answer = 'SEVERITY: MINOR\nLOCATION: src/a.ts:1\nPROBLEM: the answer of the turn.';
+      // The current UI renders the message of the user in a markdown root of
+      // its own: the fallback of the capture finds it before the answer.
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // The submit happens before the prompt is in the DOM. Then the
+            // message of the user is found first, and the answer comes later.
+            if (polls === 1) return { found: false, bodies: [], errorText: '', lastUserText: '' };
+            const isTheMessageOfTheUser = polls === 2;
+            return {
+              found: true,
+              bodies: isTheMessageOfTheUser
+                ? [{ text: prompt, html: `<p>${prompt}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).not.toContain('independent reviewer');
+      expect(response.text).toBe(answer);
+      expect(response.markdown).toBe('<p>answer</p>');
+    });
+
+    it('does not stream the label of the thinking UI', async () => {
+      const label = 'Reviewed synchronization bugs';
+      const answer = 'The answer of the turn.';
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn(() => defaultLocator),
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            const isTheLabel = polls <= 1;
+            return {
+              found: true,
+              bodies: isTheLabel
+                ? [{ text: label, html: `<p>${label}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: 'the prompt of this run',
+            };
+          }
+          return false;
+        }),
+      };
+
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).not.toContain('Reviewed synchronization bugs');
+      expect(response.text).toBe(answer);
+    });
+
     it('accepts a short answer that looks like an activity label after a grace period', async () => {
       const answer = {
         found: true,

@@ -23,6 +23,9 @@ const chatgptSubmitBaseline = new WeakMap<
      * is not a reliable sign that the prompt is there.
      */
     markers: string[];
+    /** The prompt of this run: the message of the user must not be taken
+     * for the answer. */
+    promptText: string;
     /** The text of every assistant message of the chat before the prompt. */
     bodies: string[];
     /** The joined text of the assistant messages before the prompt. */
@@ -435,6 +438,20 @@ function commonPrefixLength(left: string, right: string): number {
   let index = 0;
   while (index < limit && left[index] === right[index]) index++;
   return index;
+}
+
+/**
+ * The message of the user is rendered in the same elements as the answer:
+ * the current UI puts the text of the prompt into a markdown root of its
+ * own. A body that is a part of the prompt is the message of the user, not
+ * the answer of the assistant.
+ */
+function isPromptEcho(text: string, prompt: string): boolean {
+  const flat = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
+  const body = flat(text);
+  const asked = flat(prompt);
+  if (body.length < 40 || !asked) return false;
+  return asked.includes(body);
 }
 
 /**
@@ -992,6 +1009,9 @@ export const chatgptActions: ProviderActions = {
       turnCount: await getAssistantTurnCount(page),
       // The pieces of the prompt that must be in the DOM when it has landed.
       markers: promptMarkers(prompt),
+      // The message of the user is rendered in the same elements as the
+      // answer: the capture must not take it for the answer.
+      promptText: prompt,
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
       bodies: snapshot.bodies.map((body) => body.text),
@@ -1060,6 +1080,7 @@ export const chatgptActions: ProviderActions = {
       // Without a prompt in this process there is no baseline: the gate of
       // the prompt stays off.
       markers: [] as string[],
+      promptText: '',
       bodies: [] as string[],
       latestText: '',
       errorText: '',
@@ -1086,7 +1107,9 @@ export const chatgptActions: ProviderActions = {
         await page.waitForTimeout(1000);
         continue;
       }
-      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies);
+      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies).filter(
+        (body) => !isPromptEcho(body.text, baseline.promptText),
+      );
       const text = bodies
         .map((body) => body.text)
         .join('\n\n')
@@ -1105,10 +1128,14 @@ export const chatgptActions: ProviderActions = {
       const activity = ACTIVITY_TEXT.test(text);
 
       if (bodies.length > 0 && text !== baseline.latestText) {
-        if (text !== emittedText) {
+        if (text !== emittedText && !activity) {
           // The renderer re-creates the message while it streams, so the text
           // can change from the beginning. Emit only what was not emitted yet:
           // the answer must not repeat itself in the stream.
+          //
+          // A label of the thinking UI ("Reviewed the diff") is not the answer:
+          // it is not emitted, and it stays the base of the next delta, so the
+          // answer that follows it is emitted whole.
           const common = commonPrefixLength(emittedText, text);
           if (text.length > common) onChunk?.(text.slice(common));
           emittedText = text;
@@ -1151,11 +1178,16 @@ export const chatgptActions: ProviderActions = {
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
     const finalSnapshot = await getLatestAssistantSnapshot(page);
-    const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies);
+    const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies).filter(
+      (body) => !isPromptEcho(body.text, baseline.promptText),
+    );
     const markdown =
       finalBodies.length > 0
         ? finalBodies.map((body) => body.html).join('\n\n')
-        : finalSnapshot.bodies.map((body) => body.html).join('\n\n');
+        : finalSnapshot.bodies
+            .filter((body) => !isPromptEcho(body.text, baseline.promptText))
+            .map((body) => body.html)
+            .join('\n\n');
 
     // Extract generated images (DALL-E / GPT-Image)
     // ChatGPT uses alt="Generated image: <description>" and src containing
