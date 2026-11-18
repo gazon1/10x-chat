@@ -64,6 +64,8 @@ function createSubmitPage(options: {
   losesSeparators?: boolean;
   /** The composer cannot be emptied — the old text stays in it. */
   clearFails?: boolean;
+  /** The composer ignores Shift+Enter and flattens the prompt. */
+  ignoresLineBreaks?: boolean;
   /** A hidden composer sits in front of the visible one. */
   hiddenFirst?: boolean;
 }) {
@@ -75,6 +77,7 @@ function createSubmitPage(options: {
     insertLandsHalf = false,
     losesSeparators = false,
     clearFails = false,
+    ignoresLineBreaks = false,
     hiddenFirst = false,
   } = options;
   // The raw text of the composer, before the editor merges the paragraphs.
@@ -155,6 +158,8 @@ function createSubmitPage(options: {
           }),
       press: vi.fn(async (key: string) => {
         if (key === 'Backspace' && !clearFails) raw = '';
+        // Shift+Enter inserts a line break.
+        if (key === 'Shift+Enter' && !ignoresLineBreaks) raw += '\n';
       }),
     },
     waitForTimeout: vi.fn(async () => {}),
@@ -222,8 +227,8 @@ describe('submitPromptToComposer', () => {
     expect(sendButton.click).toHaveBeenCalled();
   });
 
-  it('types a multi-paragraph prompt without a newline', async () => {
-    const { page } = createSubmitPage({ contenteditable: true, insertFails: true });
+  it('types a multi-paragraph prompt with line breaks', async () => {
+    const { page, composerText } = createSubmitPage({ contenteditable: true, insertFails: true });
     const prompt = 'First paragraph.\n\nSecond paragraph.';
 
     await submitPromptToComposer(page as never, prompt, {
@@ -231,9 +236,34 @@ describe('submitPromptToComposer', () => {
       sendButtonSelector: '#send',
     });
 
+    // Enter would send the prompt — the line breaks are typed as Shift+Enter.
     const typed = page.keyboard.type.mock.calls.map((call) => call[0] as string);
     expect(typed.join('')).not.toContain('\n');
-    expect(typed.join('')).toBe('First paragraph. Second paragraph.');
+    expect(page.keyboard.press).toHaveBeenCalledWith('Shift+Enter');
+    // The line structure of the prompt survives the typing.
+    expect(composerText().split('\n').filter(Boolean)).toEqual([
+      'First paragraph.',
+      'Second paragraph.',
+    ]);
+  });
+
+  it('does not send a prompt whose line structure was lost', async () => {
+    // A composer that flattens the prompt would send broken code.
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      insertFails: true,
+      ignoresLineBreaks: true,
+    });
+    const prompt = 'def calculate():\n    return 42';
+
+    await expect(
+      submitPromptToComposer(page as never, prompt, {
+        composerSelector: '#composer',
+        sendButtonSelector: '#send',
+      }),
+    ).rejects.toThrow('could not be entered into the composer');
+
+    expect(sendButton.click).not.toHaveBeenCalled();
   });
 
   it('types the prompt in chunks, so no request runs into the client deadline', async () => {

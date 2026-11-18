@@ -118,19 +118,16 @@ export async function submitPromptToComposer(
         .catch(() => {});
     };
 
-    // The words of the composer, read per block: the composer turns the
+    // The lines of the composer, read per block: the composer turns the
     // newlines of the prompt into paragraphs, and the text of the paragraphs
-    // is concatenated without a separator. A prompt that lost its word
-    // separators ("hello world" -> "helloworld") is one word and does not
-    // land.
-    const readWords = async (): Promise<string[]> =>
+    // is concatenated without a separator. A prompt that lost its line
+    // structure — the typing fallback of a code prompt, for instance — does
+    // not land.
+    const readLines = async (): Promise<string[]> =>
       composer
         .evaluate((element) => {
-          const words = (value: string): string[] =>
-            value
-              .replace(/[\u200b\ufeff]/g, '')
-              .split(/\s+/)
-              .filter(Boolean);
+          const clean = (value: string): string =>
+            value.replace(/[\u00a0\u200b\ufeff]/g, ' ').replace(/\s+$/, '');
 
           const blocks = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'SECTION']);
           const collect = (node: Node, out: string[]): void => {
@@ -169,12 +166,18 @@ export async function submitPromptToComposer(
           const parts: string[] = [];
           collect(editable, parts);
           const collected = parts.join('');
-          if (collected.trim().length === 0) {
-            // No child nodes: the composer is a plain text holder.
-            const rendered = (element as HTMLElement).innerText;
-            return words(typeof rendered === 'string' ? rendered : (editable.textContent ?? ''));
-          }
-          return words(collected);
+          const text =
+            collected.trim().length === 0
+              ? // No child nodes: the composer is a plain text holder.
+                (() => {
+                  const rendered = (element as HTMLElement).innerText;
+                  return typeof rendered === 'string' ? rendered : (editable.textContent ?? '');
+                })()
+              : collected;
+          return text
+            .split('\n')
+            .map(clean)
+            .filter((line) => line.length > 0);
         })
         .catch(() => [] as string[]);
 
@@ -188,7 +191,7 @@ export async function submitPromptToComposer(
       // The composer must be empty now: an insertion into a composer that
       // still holds the old text produces a prompt that is not the one asked
       // for.
-      const left = await readWords();
+      const left = await readLines();
       if (left.length > 0) {
         throw new Error('The composer could not be cleared — the old text is still in it.');
       }
@@ -198,16 +201,16 @@ export async function submitPromptToComposer(
 
     const landed = async (): Promise<boolean> => {
       const expected = prompt
-        .replace(/[\u200b\ufeff]/g, '')
-        .split(/\s+/)
-        .filter(Boolean);
+        .split(/\r?\n/)
+        .map((line) => line.replace(/[\u00a0\u200b\ufeff]/g, ' ').replace(/\s+$/, ''))
+        .filter((line) => line.length > 0);
       if (expected.length === 0) return false;
-      const actual = await readWords();
-      // Exactly the prompt, in the same order: extra words mean that the
-      // composer held something else — the old text of a previous prompt, for
-      // instance.
+      const actual = await readLines();
+      // Exactly the prompt, line by line: extra words mean that the composer
+      // held something else — the old text of a previous prompt, for instance
+      // — and missing line breaks mean that the prompt was flattened.
       return (
-        actual.length === expected.length && actual.every((word, index) => word === expected[index])
+        actual.length === expected.length && actual.every((line, index) => line === expected[index])
       );
     };
 
@@ -232,14 +235,20 @@ export async function submitPromptToComposer(
       // composer is emptied first: a partly inserted prompt would be sent
       // twice.
       //
-      // The newlines become spaces: in a chat composer a newline is Enter,
-      // and Enter sends. Typing the prompt as it is would send it in pieces —
-      // one message per paragraph.
+      // The line breaks are typed as Shift+Enter: in a chat composer a
+      // newline is Enter, and Enter sends — the prompt would leave in
+      // pieces, one message per paragraph. Shift+Enter inserts the line
+      // break. A composer that does not support it keeps the prompt on one
+      // line, and the verification below rejects it — a flattened code
+      // prompt is worse than a failed run.
       await clearComposer();
-      const flat = prompt.replace(/\r?\n+/g, ' ');
+      const lines = prompt.split(/\r?\n/);
       const chunkSize = 400;
-      for (let start = 0; start < flat.length; start += chunkSize) {
-        await page.keyboard.type(flat.slice(start, start + chunkSize));
+      for (const [index, line] of lines.entries()) {
+        if (index > 0) await page.keyboard.press('Shift+Enter');
+        for (let start = 0; start < line.length; start += chunkSize) {
+          await page.keyboard.type(line.slice(start, start + chunkSize));
+        }
       }
       inserted = await landed();
     }
