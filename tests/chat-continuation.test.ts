@@ -169,4 +169,47 @@ describe('the continuation of an exhausted chat', () => {
     // Once for the old chat, once for the new one.
     expect(attachFiles).toHaveBeenCalledTimes(2);
   });
+
+  it('aborts the continuation when the files cannot be attached again', async () => {
+    // The prompt must not be sent without the files of the request: the
+    // answer would look successful and be wrong.
+    const file = path.join(tempHome, 'note.txt');
+    await writeFile(file, 'hello', 'utf8');
+    let attachments = 0;
+    const attachFiles = vi.fn(async () => {
+      attachments++;
+      // The first attachment (to the old chat) works, the second one (to the
+      // new chat) fails.
+      if (attachments > 1) throw new Error('the upload failed');
+    });
+    const submitPrompt = vi.fn(async () => {});
+    fake.page = {
+      url: () => 'https://chatgpt.com/c/abc',
+      evaluate: async () => '',
+      title: async () => '',
+      locator: () => ({ first: () => ({ isVisible: async () => false }) }),
+    } as never;
+    fake.provider = {
+      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      actions: {
+        isLoggedIn: async () => true,
+        contextWindowFull: async () => true,
+        continueInNewChat: async () => true,
+        attachFiles,
+        submitPrompt,
+        captureResponse: async () => ({
+          text: 'the answer',
+          markdown: 'the answer',
+          truncated: false,
+        }),
+      } as unknown as ProviderActions,
+    };
+
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] })).rejects.toThrow(
+      /could not be attached/,
+    );
+
+    // The prompt was not sent without the files.
+    expect(submitPrompt).not.toHaveBeenCalled();
+  });
 });

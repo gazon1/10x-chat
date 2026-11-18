@@ -222,7 +222,18 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     // again in the new one, so the answer is not produced without them.
     if (attachPaths && provider.actions.attachFiles) {
       console.log(chalk.dim(`Attaching ${attachPaths.length} file(s) to the new chat...`));
-      await provider.actions.attachFiles(browser.page, attachPaths).catch(() => {});
+      try {
+        await provider.actions.attachFiles(browser.page, attachPaths);
+      } catch (error) {
+        // A failed attachment is not a warning: the prompt would be sent
+        // without the files of the request, and the answer would be wrong
+        // without anyone noticing.
+        throw new ProviderGenerationError(
+          `The files could not be attached to the new chat: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
 
     // The new chat replaces the stored one: it is the working chat of this
