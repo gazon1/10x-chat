@@ -286,16 +286,55 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
         ((element as HTMLElement).innerText || element.textContent || '').trim();
 
       const groups = new Map<Element, { text: string; html: string; element: Element }>();
+
+      // The answer of this turn is what follows the last message of the user.
+      // A chat that continues an exhausted conversation keeps the old turns,
+      // and their answers are not the answer of this run.
+      const userTurns = Array.from(
+        document.querySelectorAll(
+          '[data-message-author-role="user"], [data-conversation-role="user"]',
+        ),
+      );
+      const lastUserTurn = userTurns.length > 0 ? userTurns[userTurns.length - 1] : null;
+
+      // Every body element of the page, no matter which selector found it.
+      const matched = new Set<Element>();
       for (const selector of bodySelectors) {
         for (const element of Array.from(document.querySelectorAll(selector))) {
-          if (element.closest('[data-message-author-role="user"]')) continue;
-          const text = textOf(element);
-          if (!text) continue;
-          const container = element.closest(messageSelectors.join(',')) ?? element;
-          const known = groups.get(container);
-          if (!known || text.length > known.text.length) {
-            groups.set(container, { text, html: element.innerHTML || '', element });
-          }
+          matched.add(element);
+        }
+      }
+
+      // The body of one message is nested in several elements that carry the
+      // same text (`data-dil-response` > `assistant-message` > `response-body`).
+      // The current UI has no container of its own, so without this the message
+      // would be counted once per element and the answer would repeat.
+      const outermostMatched = (element: Element): Element => {
+        let node = element.parentElement;
+        let outermost: Element | null = null;
+        while (node) {
+          if (matched.has(node)) outermost = node;
+          node = node.parentElement;
+        }
+        return outermost ?? element;
+      };
+
+      for (const element of matched) {
+        if (element.closest('[data-message-author-role="user"]')) continue;
+        // Only the messages after the last message of the user belong to the
+        // answer of this turn.
+        if (
+          lastUserTurn &&
+          !(lastUserTurn.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)
+        ) {
+          continue;
+        }
+        const text = textOf(element);
+        if (!text) continue;
+        const container = element.closest(messageSelectors.join(',')) ?? outermostMatched(element);
+        const known = groups.get(container);
+        if (!known || text.length > known.text.length) {
+          groups.set(container, { text, html: element.innerHTML || '', element });
         }
       }
 

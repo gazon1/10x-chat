@@ -133,8 +133,10 @@ export async function submitPromptToComposer(
       composer
         .evaluate((element, text) => {
           // The composer turns the newlines of the prompt into paragraphs:
-          // the text lands, but not character for character.
-          const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+          // the words land, but the whitespace between them does not. The
+          // comparison ignores whitespace — otherwise a multi-paragraph prompt
+          // never lands and the typing fallback sends it in pieces.
+          const normalize = (value: string): string => value.replace(/[\s\u200b\ufeff]+/g, '');
           return normalize(element.textContent ?? '').includes(normalize(text));
         }, prompt)
         .catch(() => false);
@@ -159,10 +161,15 @@ export async function submitPromptToComposer(
       // no single request runs into the deadline of the HTTP client. The
       // composer is emptied first: a partly inserted prompt would be sent
       // twice.
+      //
+      // The newlines become spaces: in a chat composer a newline is Enter,
+      // and Enter sends. Typing the prompt as it is would send it in pieces —
+      // one message per paragraph.
       await clearComposer();
+      const flat = prompt.replace(/\r?\n+/g, ' ');
       const chunkSize = 400;
-      for (let start = 0; start < prompt.length; start += chunkSize) {
-        await page.keyboard.type(prompt.slice(start, start + chunkSize));
+      for (let start = 0; start < flat.length; start += chunkSize) {
+        await page.keyboard.type(flat.slice(start, start + chunkSize));
       }
       inserted = await landed();
     }

@@ -1,6 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
 import { submitPromptToComposer } from '../src/providers/submit.js';
 
+/**
+ * The composer of ChatGPT is a rich text editor: it turns the newlines of the
+ * prompt into paragraphs, and the text of the paragraphs is concatenated
+ * without a separator. The mock below reproduces that, and it runs the real
+ * functions of the source against a fake element — so the comparison of the
+ * source is the one under test, not a copy of it.
+ */
+class FakeElement {
+  textContent = '';
+  innerHTML = '';
+  isContentEditable = true;
+  getAttribute(): string | null {
+    return null;
+  }
+  focus(): void {}
+  dispatchEvent(): boolean {
+    return true;
+  }
+}
+
+const globals = globalThis as unknown as { HTMLElement?: unknown; InputEvent?: unknown };
+globals.HTMLElement = FakeElement;
+globals.InputEvent = class InputEvent extends Event {
+  data: string | null;
+  constructor(type: string, init?: { data?: string }) {
+    super(type);
+    this.data = init?.data ?? null;
+  }
+};
+
 function createSubmitPage(options: {
   contenteditable: boolean;
   insertFails?: boolean;
@@ -17,19 +47,22 @@ function createSubmitPage(options: {
     insertLandsHalf = false,
     hiddenFirst = false,
   } = options;
-  // The composer holds the text, so the tests can see what is really sent.
-  let text = '';
+  // The raw text of the composer, before the editor merges the paragraphs.
+  let raw = '';
+  const element = new FakeElement();
+  element.isContentEditable = contenteditable;
+
   const composer = {
     waitFor: vi.fn(async () => {}),
     click: vi.fn(async () => {}),
     fill: vi.fn(async (value: string) => {
-      text = value;
+      raw = value;
     }),
-    evaluate: vi.fn(async (_fn: unknown, arg?: string) => {
-      if (arg === undefined) return contenteditable;
-      // Did the text land in the composer?
-      const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
-      return normalize(text).includes(normalize(arg));
+    evaluate: vi.fn(async (fn: unknown, arg?: string) => {
+      // The editor merges the paragraphs: no separator between them.
+      element.textContent = raw.replace(/\n+/g, '');
+      const call = fn as (this: FakeElement, element: FakeElement, arg?: string) => unknown;
+      return call.call(element, element, arg);
     }),
     isVisible: vi.fn(async () => contenteditable),
   };
@@ -69,7 +102,7 @@ function createSubmitPage(options: {
     locator,
     keyboard: {
       type: vi.fn(async (value: string) => {
-        text += value;
+        raw += value;
       }),
       insertText: insertFails
         ? vi.fn(async () => {
@@ -79,13 +112,13 @@ function createSubmitPage(options: {
             insertions++;
             if (insertDoesNotLand) return;
             if (insertLandsHalf && insertions === 1) {
-              text += value.slice(0, Math.floor(value.length / 2));
+              raw += value.slice(0, Math.floor(value.length / 2));
               return;
             }
-            text += value;
+            raw += value;
           }),
       press: vi.fn(async (key: string) => {
-        if (key === 'Backspace') text = '';
+        if (key === 'Backspace') raw = '';
       }),
     },
     waitForTimeout: vi.fn(async () => {}),
@@ -97,7 +130,7 @@ function createSubmitPage(options: {
     hiddenComposer,
     sendButton,
     /** The text that is in the composer right now. */
-    composerText: () => text,
+    composerText: () => raw,
   };
 }
 
@@ -122,6 +155,22 @@ describe('submitPromptToComposer', () => {
     expect(sendButton.click).toHaveBeenCalled();
   });
 
+  it('lands a multi-paragraph prompt in one message', async () => {
+    const { page, composerText } = createSubmitPage({ contenteditable: true });
+    const prompt = 'First paragraph.\n\nSecond paragraph.\nThird line.';
+
+    await submitPromptToComposer(page as never, prompt, {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
+    // The composer merges the paragraphs, but the prompt must not be typed
+    // character by character — a newline is Enter, and Enter sends.
+    expect(page.keyboard.insertText).toHaveBeenCalledWith(prompt);
+    expect(page.keyboard.type).not.toHaveBeenCalled();
+    expect(composerText()).toBe(prompt);
+  });
+
   it('falls back to typing when the composer refuses the insertion', async () => {
     const { page, sendButton } = createSubmitPage({
       contenteditable: true,
@@ -135,6 +184,20 @@ describe('submitPromptToComposer', () => {
 
     expect(page.keyboard.type).toHaveBeenCalledWith('Hello from ProseMirror');
     expect(sendButton.click).toHaveBeenCalled();
+  });
+
+  it('types a multi-paragraph prompt without a newline', async () => {
+    const { page } = createSubmitPage({ contenteditable: true, insertFails: true });
+    const prompt = 'First paragraph.\n\nSecond paragraph.';
+
+    await submitPromptToComposer(page as never, prompt, {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
+    const typed = page.keyboard.type.mock.calls.map((call) => call[0] as string);
+    expect(typed.join('')).not.toContain('\n');
+    expect(typed.join('')).toBe('First paragraph. Second paragraph.');
   });
 
   it('types the prompt in chunks, so no request runs into the client deadline', async () => {

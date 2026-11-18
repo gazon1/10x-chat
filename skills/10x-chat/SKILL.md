@@ -107,17 +107,20 @@ Load the playbook file before starting one of these tasks — it carries the rev
 For a real review, use the [PR review playbook](workflows/pr-review.md). The short version:
 
 ```bash
-git fetch origin main --quiet
-git add -A && git commit -m "<message>" && git push origin <branch>
-BASE=$(git rev-parse origin/main)
+REPO=<owner>/<name>               # the repository under review
+BASE_REF=main
+git fetch origin "$BASE_REF" --quiet
+git status --short                 # read it — add the paths of the change by name
+git add <path> … && git commit -m "<message>" && git push origin <branch>
+BASE=$(git rev-parse "origin/$BASE_REF")
 HEAD=$(git rev-parse HEAD)
 gh pr view --json number,url >/dev/null 2>&1 \
-  || gh pr create --base main --head <branch> --title "<title>" --body "<what changed>"
+  || gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"
 PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
-  -p "You are reviewing pull request $PR of https://github.com/gazon1/10x-chat. Read the code on GitHub yourself:
-       Repository:   https://github.com/gazon1/10x-chat
+  -p "You are reviewing pull request $PR of https://github.com/$REPO. Read the code on GitHub yourself:
+       Repository:   https://github.com/$REPO
        Pull request: $PR
        Base: $BASE
        Head: $HEAD
