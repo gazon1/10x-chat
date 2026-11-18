@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,8 @@ import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
 
 const DAEMON_FILE = 'browser-daemon.json';
+/** The output of the detached daemon: the timings of its calls. */
+const DAEMON_LOG_FILE = 'browser-daemon.log';
 const DAEMON_LOCK_DIR = path.join(getAppDir(), 'browser-daemon-lock');
 const STARTUP_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 3_000;
@@ -373,6 +376,7 @@ function createRemoteKeyboardProxy(
       invoke('press', [key, options ?? {}]),
     type: async (text: string, options?: Record<string, unknown>) =>
       invoke('type', [text, options ?? {}]),
+    insertText: async (text: string) => invoke('insertText', [text]),
   } as Page['keyboard'];
 }
 
@@ -826,16 +830,24 @@ async function waitForDaemonReady(headless: boolean, proxy: string): Promise<Dae
 
 async function startDaemon(headless: boolean, proxy: string): Promise<DaemonState> {
   const entry = getServerEntryPoint();
-  const child = spawn(entry.command, entry.args, {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      TEN_X_CHAT_BROWSER_HEADLESS: headless ? '1' : '0',
-      TEN_X_CHAT_BROWSER_STATE_FILE: getDaemonStatePathInternal(),
-    },
-  });
-  child.unref();
+  // The daemon is detached: its output would be lost without a file. The log
+  // is the only place where a hung page operation is visible.
+  mkdirSync(getAppDir(), { recursive: true });
+  const logFd = openSync(path.join(getAppDir(), DAEMON_LOG_FILE), 'a');
+  try {
+    const child = spawn(entry.command, entry.args, {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        TEN_X_CHAT_BROWSER_HEADLESS: headless ? '1' : '0',
+        TEN_X_CHAT_BROWSER_STATE_FILE: getDaemonStatePathInternal(),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
   return waitForDaemonReady(headless, proxy);
 }
 

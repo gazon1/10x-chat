@@ -115,10 +115,12 @@ export async function submitPromptToComposer(
 
     // One insertion instead of one keystroke per character: a rich composer
     // types slowly, and a long prompt took minutes — long enough to kill the
-    // daemon request.
+    // daemon request. `fill` is not used here: on a busy contenteditable it
+    // waits for the element forever instead of failing, and the request never
+    // comes back.
     let inserted = false;
     try {
-      await composer.fill(prompt);
+      await page.keyboard.insertText(prompt);
       inserted = await landed();
     } catch {
       inserted = false;

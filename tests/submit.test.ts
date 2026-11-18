@@ -1,16 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { submitPromptToComposer } from '../src/providers/submit.js';
 
-function createSubmitPage(options: { contenteditable: boolean; fillFails?: boolean }) {
-  const { contenteditable, fillFails = false } = options;
+function createSubmitPage(options: { contenteditable: boolean; insertFails?: boolean }) {
+  const { contenteditable, insertFails = false } = options;
   const composer = {
     waitFor: vi.fn(async () => {}),
     click: vi.fn(async () => {}),
-    fill: fillFails
-      ? vi.fn(async () => {
-          throw new Error('fill failed');
-        })
-      : vi.fn(async () => {}),
+    fill: vi.fn(async () => {}),
     evaluate: vi.fn(async (_fn: unknown, arg?: string) => {
       if (arg === undefined) return contenteditable;
       // The text landed in the composer.
@@ -44,7 +40,11 @@ function createSubmitPage(options: { contenteditable: boolean; fillFails?: boole
       locator,
       keyboard: {
         type: vi.fn(async () => {}),
-        insertText: vi.fn(async () => {}),
+        insertText: insertFails
+          ? vi.fn(async () => {
+              throw new Error('insertText failed');
+            })
+          : vi.fn(async () => {}),
         press: vi.fn(async () => {}),
       },
       waitForTimeout: vi.fn(async () => {}),
@@ -67,7 +67,9 @@ describe('submitPromptToComposer', () => {
     expect(composer.click).toHaveBeenCalled();
     expect(page.keyboard.press).toHaveBeenCalledWith('ControlOrMeta+a');
     expect(page.keyboard.press).toHaveBeenCalledWith('Backspace');
-    expect(composer.fill).toHaveBeenCalledWith('Hello from ProseMirror');
+    expect(page.keyboard.insertText).toHaveBeenCalledWith('Hello from ProseMirror');
+    // `fill` waits for the element forever on a busy contenteditable.
+    expect(composer.fill).not.toHaveBeenCalled();
     // One keystroke per character is too slow for a long prompt.
     expect(page.keyboard.type).not.toHaveBeenCalled();
     expect(sendButton.click).toHaveBeenCalled();
@@ -76,7 +78,7 @@ describe('submitPromptToComposer', () => {
   it('falls back to typing when the composer refuses the insertion', async () => {
     const { page, sendButton } = createSubmitPage({
       contenteditable: true,
-      fillFails: true,
+      insertFails: true,
     });
 
     await submitPromptToComposer(page as never, 'Hello from ProseMirror', {

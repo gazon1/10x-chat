@@ -19,6 +19,45 @@ function redactError(error: unknown): string {
   return redactText(msg);
 }
 
+/**
+ * How long a single page operation may take.
+ *
+ * Playwright's `evaluate` has no timeout of its own: a busy page blocks it
+ * forever, and the RPC never answers. The bound turns a hung page into an
+ * error the caller can act on.
+ */
+const OPERATION_TIMEOUT_MS = 60_000;
+
+/**
+ * The bound of a whole RPC.
+ *
+ * It stays below the deadline of the HTTP request of the client (Bun aborts a
+ * fetch after 360 s), so a stuck call surfaces as an error instead of killing
+ * the run.
+ */
+const RPC_TIMEOUT_MS = 180_000;
+
+async function withOperationTimeout<T>(
+  operation: Promise<T>,
+  label: string,
+  timeoutMs = OPERATION_TIMEOUT_MS,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 type JsonPrimitive = boolean | number | string | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -432,9 +471,12 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
           const arg = args[1];
           let result: unknown;
           if (typeof pageFunction === 'string') {
-            result = await page.evaluate(pageFunction);
+            result = await withOperationTimeout(page.evaluate(pageFunction), 'page.evaluate');
           } else if (typeof pageFunction === 'function') {
-            result = await page.evaluate(pageFunction as never, arg as never);
+            result = await withOperationTimeout(
+              page.evaluate(pageFunction as never, arg as never),
+              'page.evaluate',
+            );
           } else {
             throw new Error('Unsupported evaluate payload');
           }
@@ -463,6 +505,13 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
 
       if (body.method === 'type') {
         await page.keyboard.type(args[0] as string, (args[1] as Record<string, unknown>) ?? {});
+        return { ok: true, result: null, pageState: buildPageState(pageId) };
+      }
+
+      if (body.method === 'insertText') {
+        // One input event instead of one keystroke per character: a long
+        // prompt took minutes to type.
+        await page.keyboard.insertText(args[0] as string);
         return { ok: true, result: null, pageState: buildPageState(pageId) };
       }
 
@@ -516,8 +565,14 @@ async function handleRpc(body: RpcRequest): Promise<RpcResponse> {
           if (typeof pageFunction === 'function' || typeof pageFunction === 'string') {
             result =
               arg !== undefined
-                ? await locator.evaluate(pageFunction as never, arg as never)
-                : await locator.evaluate(pageFunction as never);
+                ? await withOperationTimeout(
+                    locator.evaluate(pageFunction as never, arg as never),
+                    'locator.evaluate',
+                  )
+                : await withOperationTimeout(
+                    locator.evaluate(pageFunction as never),
+                    'locator.evaluate',
+                  );
           } else {
             throw new Error('Unsupported evaluate payload');
           }
@@ -704,12 +759,25 @@ async function main(): Promise<void> {
 
     touchActivity();
 
+    let rpcLabel = 'unknown';
+    const startedAt = Date.now();
     try {
       const body = (await readJsonBody(req)) as RpcRequest;
-      const response = await handleRpc(body);
+      rpcLabel = `${body.kind}.${body.method}`;
+      // The bound is below the deadline of the client's HTTP request: a call
+      // that never answers must fail here, not kill the whole run.
+      const response = await withOperationTimeout(
+        handleRpc(body),
+        `rpc ${rpcLabel}`,
+        RPC_TIMEOUT_MS,
+      );
+      // One line per call: a hung page operation is only visible in the
+      // timings, not in the error of the client that waited for it.
+      console.log(`[rpc] ${rpcLabel} ok ${Date.now() - startedAt}ms`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
     } catch (error) {
+      console.error(`[rpc] ${rpcLabel} failed ${Date.now() - startedAt}ms: ${redactError(error)}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
