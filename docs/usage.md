@@ -147,9 +147,11 @@ cd ~/src/my-project          # branch: feature/login
 10x-chat chat -p 'Start over'               --provider chatgpt --new-chat
 ```
 
-- The key is the repository **root** (a run from a subdirectory finds the same
-  chat), the checked-out branch and the provider. A detached HEAD uses the
-  short commit; outside git the working directory is used.
+- The key is the **repository**, the checked-out branch and the provider. The
+  repository is identified by its origin URL, so another worktree or another
+  clone of the same repository finds the same chat; without a remote the git
+  common directory is used. A detached HEAD uses the short commit; outside git
+  the working directory is used.
 - The providers' capture logic is baselined before the prompt, so the answer
   of the new turn is captured even in a conversation that already has turns.
 - A conversation the provider no longer serves (deleted, expired, or a redirect

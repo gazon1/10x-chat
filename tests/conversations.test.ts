@@ -9,6 +9,7 @@ import {
   conversationIdFromUrl,
   getStoredConversation,
   isConversationGone,
+  repoIdentityFromRemote,
   resolveConversationContext,
   type StoredConversation,
   saveStoredConversation,
@@ -146,6 +147,23 @@ describe('conversation cache', () => {
   });
 });
 
+describe('repoIdentityFromRemote', () => {
+  const cases: Array<[string, string | undefined]> = [
+    ['git@github.com:Owner/Repo.git', 'github.com/owner/repo'],
+    ['https://github.com/Owner/Repo', 'github.com/owner/repo'],
+    ['https://github.com/Owner/Repo.git/', 'github.com/owner/repo'],
+    ['ssh://git@github.com/Owner/Repo.git', 'github.com/owner/repo'],
+    ['https://user:pass@github.com/Owner/Repo.git', 'github.com/owner/repo'],
+    ['', undefined],
+  ];
+
+  for (const [remote, expected] of cases) {
+    it(`${remote || '(empty)'} → ${expected ?? 'no identity'}`, () => {
+      expect(repoIdentityFromRemote(remote)).toBe(expected);
+    });
+  }
+});
+
 describe('resolveConversationContext', () => {
   let dir = '';
 
@@ -161,7 +179,7 @@ describe('resolveConversationContext', () => {
     expect(context.branch).toBe('(no-git)');
   });
 
-  it.skipIf(!gitAvailable)('uses the repository root and the checked-out branch', async () => {
+  it.skipIf(!gitAvailable)('uses the git common directory and the checked-out branch', async () => {
     dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-git-'));
     execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
     execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], {
@@ -188,8 +206,47 @@ describe('resolveConversationContext', () => {
     await mkdir(subdir, { recursive: true });
 
     const context = await resolveConversationContext(subdir);
-    expect(await realpath(context.repo)).toBe(await realpath(dir));
+    expect(await realpath(context.repo)).toBe(path.join(await realpath(dir), '.git'));
     expect(context.branch).toBe('feature/test');
+  });
+
+  it.skipIf(!gitAvailable)('keys two worktrees of one repository the same', async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-worktree-'));
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], {
+      cwd: dir,
+      stdio: 'ignore',
+    });
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'init',
+      ],
+      { cwd: dir, stdio: 'ignore' },
+    );
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:Owner/Repo.git'], {
+      cwd: dir,
+      stdio: 'ignore',
+    });
+    const worktree = path.join(dir, 'wt');
+    execFileSync('git', ['worktree', 'add', '-b', 'feature/test', worktree], {
+      cwd: dir,
+      stdio: 'ignore',
+    });
+
+    const main = await resolveConversationContext(dir);
+    const feature = await resolveConversationContext(worktree);
+
+    expect(main.repo).toBe('github.com/owner/repo');
+    expect(feature.repo).toBe(main.repo);
+    expect(feature.branch).toBe('feature/test');
   });
 
   it.skipIf(!gitAvailable)('uses the short commit for a detached HEAD', async () => {

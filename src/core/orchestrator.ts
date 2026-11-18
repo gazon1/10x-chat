@@ -101,6 +101,10 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
   }
   if (storedConversation) {
     console.log(chalk.dim(`Reusing chat: ${storedConversation.id}`));
+  } else {
+    console.log(
+      chalk.dim(`New chat (${conversationContext.repo} @ ${conversationContext.branch})`),
+    );
   }
 
   // Determine profile mode: CLI flag overrides config

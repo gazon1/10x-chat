@@ -89,10 +89,57 @@ function git(args: string[], cwd: string): Promise<string> {
 }
 
 /**
- * The repository root and branch of this run.
+ * The identity of a repository from its remote URL.
  *
- * The repository root is used, not the current directory, so a run from a
- * subdirectory finds the same conversation. A detached HEAD uses the short
+ * The same repository is cloned or checked out at different paths (a worktree
+ * per task, a second clone, a fork brought in over ssh). The identity must not
+ * depend on the path, so the origin URL is used: `git@github.com:o/r.git` and
+ * `https://github.com/o/r` are the same repository.
+ */
+export function repoIdentityFromRemote(remote: string): string | undefined {
+  let value = remote.trim();
+  if (!value) return undefined;
+  // scp-style `user@host:owner/repo` → `host/owner/repo`
+  value = value.replace(/^[^@/:]+@([^:/]+):/, '$1/');
+  value = value.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^[^/@]+@/, '');
+  value = value.replace(/\/+$/, '').replace(/\.git$/i, '');
+  return value ? value.toLowerCase() : undefined;
+}
+
+/**
+ * The stable identity of the repository this run belongs to.
+ *
+ * The origin URL is used first, so every worktree and clone of the same
+ * repository shares its conversations. Without a remote, the git common
+ * directory is used — it is shared by the worktrees of one clone.
+ */
+async function resolveRepoIdentity(cwd: string, root: string): Promise<string> {
+  try {
+    const identity = repoIdentityFromRemote(
+      await git(['config', '--get', 'remote.origin.url'], cwd),
+    );
+    if (identity) return identity;
+  } catch {
+    // No origin remote — fall through to the common directory.
+  }
+
+  try {
+    // `--git-common-dir` is relative to the current directory.
+    const common = await git(['rev-parse', '--git-common-dir'], cwd);
+    if (common) return path.resolve(cwd, common);
+  } catch {
+    // Fall through to the working tree root.
+  }
+
+  return root;
+}
+
+/**
+ * The repository identity and branch of this run.
+ *
+ * The repository identity does not depend on the working tree path, so a run
+ * from a subdirectory, another worktree or another clone of the same
+ * repository finds the same conversation. A detached HEAD uses the short
  * commit, and a directory outside git uses the working directory — the cache
  * still works, it just cannot follow a branch.
  */
@@ -100,8 +147,8 @@ export async function resolveConversationContext(
   cwd = process.cwd(),
 ): Promise<ConversationContext> {
   try {
-    const repo = await git(['rev-parse', '--show-toplevel'], cwd);
-    if (!repo) throw new Error('The git repository root is empty');
+    const root = await git(['rev-parse', '--show-toplevel'], cwd);
+    if (!root) throw new Error('The git repository root is empty');
 
     let branch = '';
     try {
@@ -111,7 +158,7 @@ export async function resolveConversationContext(
       branch = await git(['rev-parse', '--short', 'HEAD'], cwd);
     }
 
-    return { repo, branch: branch || '(detached)' };
+    return { repo: await resolveRepoIdentity(cwd, root), branch: branch || '(detached)' };
   } catch {
     return { repo: path.resolve(cwd), branch: '(no-git)' };
   }
