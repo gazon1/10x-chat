@@ -36,7 +36,7 @@ The timeout of a **chat** (`chat`, `delegate`) is `--timeout` →
 `defaultTimeoutMs` → the default of the provider.
 
 The headless mode is decided per provider: a provider whose config sets
-`requiresHeaded` (ChatGPT, Claude, Perplexity) runs in a visible browser,
+`requiresHeaded` (Claude, Perplexity) runs in a visible browser,
 every other provider follows the `headless` key of the config file. There is no
 list of provider names in the code — the decision belongs to the provider
 config. `--headless` forces the headless mode for such a provider as well

@@ -95,13 +95,14 @@ costs the old 25-second picker wait. On a provider whose picker still exists,
 
 ## Headless and displays
 
-The provider decides the default mode. ChatGPT, Claude and Perplexity set
+The provider decides the default mode. Claude and Perplexity set
 `requiresHeaded` because their sites block headless Chromium; the `headless`
-key of the config file does **not** override that. Use `--headless` to force a
-windowless browser for any provider:
+key of the config file does **not** override that. ChatGPT follows the config
+key (headless by default). Use `--headless` to force a windowless browser for
+any provider:
 
 ```bash
-10x-chat chat -p 'Review this' --provider chatgpt --headless
+10x-chat chat -p 'Review this' --provider claude --headless
 ```
 
 A Cloudflare challenge cannot be solved in a headless window. If the provider

@@ -4,13 +4,13 @@ import { getProvider } from '../src/providers/index.js';
 
 describe('resolveHeadlessMode', () => {
   it('runs the providers that need a visible browser headed', () => {
-    expect(resolveHeadlessMode(getProvider('chatgpt').config, true)).toBe(false);
     expect(resolveHeadlessMode(getProvider('claude').config, true)).toBe(false);
     expect(resolveHeadlessMode(getProvider('perplexity').config, true)).toBe(false);
   });
 
-  it('keeps headless mode for Gemini when config prefers headless', () => {
+  it('keeps headless mode for Gemini and ChatGPT when config prefers headless', () => {
     expect(resolveHeadlessMode(getProvider('gemini').config, true)).toBe(true);
+    expect(resolveHeadlessMode(getProvider('chatgpt').config, true)).toBe(true);
   });
 
   it('follows the config file for a provider without a headed requirement', () => {
@@ -28,6 +28,6 @@ describe('resolveHeadlessMode', () => {
   });
 
   it('honors explicit headless override for providers that prefer headed', () => {
-    expect(resolveHeadlessMode(getProvider('chatgpt').config, true, false, true)).toBe(true);
+    expect(resolveHeadlessMode(getProvider('claude').config, true, false, true)).toBe(true);
   });
 });

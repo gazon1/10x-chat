@@ -185,10 +185,10 @@ The model is chosen in this order: `--model` → `defaultModel` of the config fi
 
 ChatGPT's current UI (including the free plan) does not render a model picker. The CLI probes briefly and then keeps the account's current model; the `Selecting model: …` line is a no-op in that case.
 
-ChatGPT, Claude and Perplexity set `requiresHeaded` because their sites block headless Chromium. Add `--headless` to force a windowless browser:
+Claude and Perplexity set `requiresHeaded` because their sites block headless Chromium. ChatGPT is headless by default too (CloakBrowser clears its Cloudflare check); force a windowless browser on any provider with `--headless`, or a visible one with `--headed`:
 
 ```bash
-10x-chat chat -p "…" --provider chatgpt --headless
+10x-chat chat -p "…" --provider claude --headless
 ```
 
 A Cloudflare challenge cannot be solved in a headless window: run once headed (or `10x-chat login <provider>`) to refresh the clearance cookie. If you need a headed browser that does not open on your desktop, run it under Xvfb (`sudo dnf install xorg-x11-server-Xvfb` on Fedora):
@@ -471,7 +471,7 @@ The provider UIs change without notice — Grok in particular is the most fragil
 | `CloakBrowser is not installed or failed to load` | `npm install -g --install-links github:gazon1/10x-chat` again, or run `npx cloakbrowser install` |
 | The browser does not start / no window | the build is missing: `npx cloakbrowser install` (it lands in `~/.cloakbrowser/`) |
 | `Not logged in` although you logged in | the session expired — `10x-chat login <provider>` again; `login --status` shows the state of every provider |
-| ChatGPT / Perplexity open a window even with headless | both are blocked by anti-bot protection and always run headed; `--headless` overrides it |
+| Claude / Perplexity open a window even with headless | both are blocked by anti-bot protection and always run headed; `--headless` overrides it |
 | The daemon is busy with another session | another run holds the shared browser — wait for it to finish, or use `--isolated-profile` |
 | `SOCKS proxy authentication is not supported…` | use an HTTP proxy with credentials, or a SOCKS proxy without them |
 | `Invalid config file …` | the config file is broken — it is an error, not a fallback; fix or delete `~/.10x-chat/config.json` |

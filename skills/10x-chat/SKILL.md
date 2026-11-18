@@ -39,7 +39,7 @@ The npm registry name `10x-chat` belongs to the upstream project — install thi
 
 | Provider | Chat | Image | Research | Models | Notes |
 |----------|------|-------|----------|--------|-------|
-| chatgpt | ✅ | ✅ (DALL-E) | ✅ | — | Runs headed by default (anti-bot) |
+| chatgpt | ✅ | ✅ (DALL-E) | ✅ | — | Headless by default |
 | gemini | ✅ | ✅ (Imagen) | ✅ | Fast, **Thinking** (default), Deep Think, Pro | `--model` switches mode |
 | claude | ✅ | ❌ | ❌ | — | Runs headed by default |
 | grok | ✅ | ✅ | ❌ | — | UI changes often; keep the local checkout current |
@@ -143,8 +143,8 @@ wait
 
 ## Browser mode
 
-- **Headless (default for gemini, grok, deepseek)**: no visible window
-- **Headed (default for chatgpt, claude, perplexity)**: visible Chromium window (anti-bot protection)
+- **Headless (default for chatgpt, gemini, grok, deepseek)**: no visible window
+- **Headed (default for claude, perplexity)**: visible Chromium window (anti-bot protection)
 - **Force headed**: `--headed` flag on any provider
 - **Force headless**: `--headless` flag on any provider
 

@@ -74,9 +74,7 @@ export const CHATGPT_CONFIG: ProviderConfig = {
   ],
   defaultModel: 'Pro',
   defaultTimeoutMs: 5 * 60 * 1000,
-  // ChatGPT's Cloudflare bot-protection blocks headless Playwright permanently.
   botProtected: true,
-  requiresHeaded: true,
 };
 
 function resolveChatGPTModelLabels(model: string): string[] {
