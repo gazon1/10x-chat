@@ -267,6 +267,31 @@ export async function saveStoredConversation(
   });
 }
 
+/**
+ * Store the conversation the run is in — if it can be reopened.
+ *
+ * A fresh chat has no permanent URL yet: ChatGPT gives it a local id until
+ * the first message is sent. Such a chat is not stored, and the previous
+ * conversation stays: the transition to the new chat must not lose the
+ * conversation when the run fails before the new chat has a permanent URL.
+ *
+ * Returns `true` when the conversation was stored.
+ */
+export async function storeCurrentConversation(
+  context: ConversationContext,
+  provider: ProviderName,
+  url: string,
+): Promise<boolean> {
+  const id = conversationIdFromUrl(provider, url);
+  if (!id || !isReopenableConversationId(id)) return false;
+  await saveStoredConversation(context, provider, {
+    url,
+    id,
+    updatedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
 /** Forget the conversation of a repository, branch and provider. */
 export async function clearStoredConversation(
   context: ConversationContext,

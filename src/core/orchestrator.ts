@@ -13,10 +13,9 @@ import {
   conversationIdFromUrl,
   getStoredConversation,
   isConversationGone,
-  isReopenableConversationId,
   resolveConversationContext,
   type StoredConversation,
-  saveStoredConversation,
+  storeCurrentConversation,
 } from './conversations.js';
 import type { FailureKind } from './failures.js';
 import {
@@ -189,7 +188,8 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
    *
    * The new chat replaces the stored one: it is the working chat of this
    * repository and branch from now on, until its own context window runs out
-   * too.
+   * too. The previous conversation stays until the new one has a permanent
+   * URL — a run that fails in between must not lose the conversation.
    */
   const continueInNewChat = async (): Promise<boolean> => {
     if (!provider.actions.continueInNewChat) return false;
@@ -205,23 +205,21 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     storedConversation = undefined;
     // The new chat is fresh: it must not be replaced by a blank one.
     freshRequired = false;
-    await clearStoredConversation(conversationContext, providerName).catch(() => {});
 
-    // The new chat is stored right away: a failed run must not lose it.
-    // A chat that has no permanent URL yet (ChatGPT gives it a local id until
-    // the first message is sent) cannot be reopened — it is stored after the
-    // answer instead.
-    const url = browser.page.url();
-    const id = conversationIdFromUrl(providerName, url);
-    if (id && isReopenableConversationId(id)) {
-      await saveStoredConversation(conversationContext, providerName, {
-        url,
-        id,
-        updatedAt: new Date().toISOString(),
-      }).catch(() => {});
-    } else {
+    // The new chat replaces the stored one: it is the working chat of this
+    // repository and branch from now on, until its own context window runs out
+    // too. The previous conversation stays until the new one has a permanent
+    // URL — a run that fails in between must not lose the conversation.
+    const stored = await storeCurrentConversation(
+      conversationContext,
+      providerName,
+      browser.page.url(),
+    ).catch(() => false);
+    if (!stored) {
       console.log(
-        chalk.dim('The new chat has no permanent URL yet — it is stored after the answer.'),
+        chalk.dim(
+          'The new chat has no permanent URL yet — the previous conversation stays until it has one.',
+        ),
       );
     }
     return true;
@@ -317,6 +315,13 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       console.log(chalk.dim('Submitting prompt...'));
       await provider.actions.submitPrompt(browser.page, bundle);
 
+      // The chat gets its permanent URL when the first message is sent.
+      // Store it right away: a run that fails while waiting for the answer
+      // must not lose the conversation.
+      await storeCurrentConversation(conversationContext, providerName, browser.page.url()).catch(
+        () => false,
+      );
+
       stage = 'capture-response';
       console.log(chalk.dim('Waiting for response...'));
       return provider.actions.captureResponse(browser.page, {
@@ -364,19 +369,15 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
 
     const durationMs = Date.now() - startTime;
     const conversationId = conversationIdFromUrl(providerName, browser.page.url());
-    if (conversationId && isReopenableConversationId(conversationId)) {
-      await saveStoredConversation(conversationContext, providerName, {
-        url: browser.page.url(),
-        id: conversationId,
-        updatedAt: new Date().toISOString(),
-      }).catch((error) => {
+    await storeCurrentConversation(conversationContext, providerName, browser.page.url()).catch(
+      (error) => {
         console.warn(
           chalk.dim(
             `Could not save the conversation: ${error instanceof Error ? error.message : String(error)}`,
           ),
         );
-      });
-    }
+      },
+    );
 
     stage = 'save-response';
     await saveResponse(session.id, captured.text);

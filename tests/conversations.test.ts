@@ -14,6 +14,7 @@ import {
   resolveConversationContext,
   type StoredConversation,
   saveStoredConversation,
+  storeCurrentConversation,
 } from '../src/core/conversations.js';
 import type { ProviderName } from '../src/types.js';
 
@@ -122,6 +123,31 @@ describe('conversation cache', () => {
     );
 
     expect(await getStoredConversation(main, 'chatgpt')).toBeUndefined();
+  });
+
+  it('keeps the previous conversation when the new chat has no permanent URL yet', async () => {
+    // A chat that continues in a new one has no permanent URL until its
+    // first message is sent. A run that fails in between must not lose the
+    // conversation: the previous one stays.
+    await saveStoredConversation(main, 'chatgpt', conversation('abc', 'https://chatgpt.com/c/abc'));
+
+    const stored = await storeCurrentConversation(
+      main,
+      'chatgpt',
+      'https://chatgpt.com/c/local-chatgpt%3A62043ce8',
+    );
+
+    expect(stored).toBe(false);
+    expect((await getStoredConversation(main, 'chatgpt'))?.id).toBe('abc');
+  });
+
+  it('replaces the previous conversation when the new chat has a permanent URL', async () => {
+    await saveStoredConversation(main, 'chatgpt', conversation('abc', 'https://chatgpt.com/c/abc'));
+
+    const stored = await storeCurrentConversation(main, 'chatgpt', 'https://chatgpt.com/c/def');
+
+    expect(stored).toBe(true);
+    expect((await getStoredConversation(main, 'chatgpt'))?.id).toBe('def');
   });
 
   it('writes the file atomically with owner-only permissions', async () => {
