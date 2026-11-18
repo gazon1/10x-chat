@@ -22,7 +22,10 @@ export function createChatCommand(): Command {
       '--provider <name>',
       'Provider to use (chatgpt, gemini, claude, grok, perplexity, deepseek)',
     )
-    .option('--all', 'Send to all chat providers in parallel and compare responses')
+    .option(
+      '--all',
+      'Send to all chat providers in parallel via browser and compare responses (browser transport only)',
+    )
     .option('--model <name>', 'Model to select')
     .option('-f, --file <paths...>', 'Files/globs to include as context')
     .option('-a, --attach <paths...>', 'Images/files to upload as attachments')
@@ -31,7 +34,7 @@ export function createChatCommand(): Command {
     .option('--headed', 'Show browser window during chat')
     .option('--headless', 'Force headless browser even for providers that prefer headed')
     .option('--timeout <ms>', 'Response timeout in milliseconds (overrides the config)')
-    .option('--transport <name>', 'Transport to use: browser (default) or api')
+    .option('--transport <name>', 'Transport to use: browser (default) or api (requires --provider)')
     .option(
       '--new-chat',
       'Start a new conversation instead of reusing the one stored for this repo/branch',
@@ -58,6 +61,14 @@ export function createChatCommand(): Command {
       if (transport && transport !== 'browser' && transport !== 'api') {
         console.error(
           chalk.red(`Invalid --transport value: ${transport} (expected "browser" or "api")`),
+        );
+        process.exit(1);
+      }
+      if (options.all && transport === 'api') {
+        console.error(
+          chalk.red(
+            'Cannot use --all with --transport api: API calls are billed per request and providers support different transports. Specify --provider <name>.',
+          ),
         );
         process.exit(1);
       }

@@ -65,7 +65,7 @@ change the other commands.
   defaultTimeoutMs: 300000,     // optional, positive number
   headless: true,               // boolean
   profileMode: 'shared',        // shared | isolated
-  providerKeys: { chatgpt: 'openai-key' },  // optional, names of secrets (§6)
+  providerKeys: { deepseek: 'deepseek-key' },  // optional, names of secrets (§6)
   credentialStorage: 'auto',    // optional, auto | keyring | file (§6)
   proxy: {                      // optional, see §5
     enabled: true,
@@ -75,15 +75,44 @@ change the other commands.
 }
 ```
 
-`10x-chat config set <key> <value>` writes the same keys:
+`10x-chat config show` prints the stored configuration (references only, never
+secret values) and the **effective non-secret** state: where the proxy comes
+from (config, environment, or none) and whether proxy credentials and provider
+key secrets are configured or missing.
+
+`10x-chat config set <key> <value>` writes the keys:
 `provider`, `model`, `timeout`, `headless`, `profile-mode`, `provider-key`,
-`credential-storage`.
-`10x-chat config unset <key>` removes `provider-key` and `credential-storage`
-again. The proxy is not one of them: it is written into the config file by
-hand, because its credentials live in another file (§5).
+`credential-storage`. `10x-chat config unset <key>` removes `provider-key`,
+`credential-storage` and `proxy`.
+
+Proxy settings are managed under the same `config` command:
+
+```bash
+10x-chat config proxy set http://proxy.example:3128 --bypass localhost,127.0.0.1
+10x-chat config proxy disable   # suppresses the environment fallback
+10x-chat config proxy clear     # removes the proxy section (falls back to the environment)
+```
+
+The credentials of the proxy are not stored in the config file — put them in
+the secrets store as `proxy.username` and `proxy.password` (§5). Existing
+commands remain backward compatible: a config file with no `proxy` section
+still uses the proxy of the environment, and a config file that already
+contains a `proxy` section keeps working.
 
 `providerKeys` holds **names**, never values: the values live in the secrets
-store ([docs/secrets.md](secrets.md)).
+store ([docs/secrets.md](secrets.md)). A provider key is configured once and
+reused in later invocations:
+
+```bash
+10x-chat secrets set deepseek-key
+10x-chat config set provider-key deepseek deepseek-key
+10x-chat chat -p "Explain this" --provider deepseek --transport api
+```
+
+Currently DeepSeek has a native API transport (OpenAI-compatible chat
+completions). As other native or OpenAI-compatible providers gain API
+transports, configure their key the same way and use `--transport api
+--provider <provider>`.
 
 ### What is an error
 
@@ -197,8 +226,6 @@ be broken otherwise.
 
 ## 5. The proxy
 
-## 5. The proxy
-
 The proxy comes from the config file, from the environment, or from nowhere —
 in that order:
 
@@ -240,6 +267,14 @@ disabled proxy is not used, but its credentials would still sit in a
 plaintext config file. `bypass` is the list of the hosts that must not go
 through the proxy; it replaces `NO_PROXY` while the config file names a
 proxy.
+
+The section can be managed from the CLI: `10x-chat config proxy set <server>
+[--bypass hosts]` enables it, `config proxy disable` suppresses the
+environment fallback without removing the settings, and `config proxy clear`
+removes the section (back to the environment). Migrating from environment-only
+proxy configuration is explicit: keep no `proxy` section to continue using the
+environment, or persist it once with `config proxy set …` (and store any
+credentials as `proxy.username` / `proxy.password` secrets).
 
 ### The credentials
 

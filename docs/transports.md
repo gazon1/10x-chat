@@ -7,9 +7,9 @@ A prompt reaches a provider in one of two ways:
 | `browser` (the default) | the web app of the provider is driven by a browser (Playwright/CloakBrowser) | a logged-in session in a browser profile |
 | `api` | the HTTP API of the provider is called with an API key | an API key in the secrets store |
 
-The transport is chosen explicitly: `10x-chat chat --transport api`. Without the
-flag the browser is used — an existing run keeps working the way it worked
-before the API transport existed.
+The transport is chosen explicitly: `10x-chat chat --transport api --provider <name>`.
+Without the flag the browser is used — an existing run keeps working the way it
+worked before the API transport existed.
 
 ## What the API transport does differently
 
@@ -32,6 +32,11 @@ A capability that the transport does not have is **rejected**, never silently
 ignored: a prompt that is sent without its attachment is worse than a run that
 fails.
 
+`chat --all` sends the prompt to every chat provider in parallel via the
+**browser** transport. It cannot be combined with `--transport api`: API calls
+are billed per request and providers expose different transports, so transports
+are never mixed and paid APIs are never called unexpectedly.
+
 ## The setup
 
 The API key lives in the secrets store — never in the config file, never in the
@@ -42,6 +47,11 @@ command line (see [secrets.md](secrets.md)):
 ```
 
 The config file refers to the secret by name:
+
+```bash
+10x-chat config set provider-key deepseek deepseek-key
+10x-chat config show                       # lists the reference and its configured/missing state
+```
 
 ```json5
 {
@@ -58,11 +68,20 @@ Then the prompt goes to the API:
 A provider without an API transport fails with an error — it never falls back
 to the browser behind the back of the user.
 
-## The providers with an API transport
+## Supported provider/transport combinations
 
-| Provider | API | Notes |
-|---|---|---|
-| `deepseek` | `https://api.deepseek.com/chat/completions` | the OpenAI-compatible chat completion |
+| Provider | `browser` | `api` | Notes |
+|---|---|---|---|
+| `chatgpt` | yes | — | web chat |
+| `gemini` | yes | — | web chat |
+| `claude` | yes | — | web chat |
+| `grok` | yes | — | web chat |
+| `perplexity` | yes | — | web chat |
+| `deepseek` | yes | yes | native API (OpenAI-compatible chat completions) at `https://api.deepseek.com/chat/completions` |
+
+As other native or OpenAI-compatible providers gain API transports, they will
+be added to this table. Configure each with `config set provider-key <provider>
+<secret-name>` and run with `--transport api --provider <provider>`.
 
 ## The failures
 

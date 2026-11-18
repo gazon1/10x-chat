@@ -74,6 +74,12 @@ export async function runApiChat(
     );
   }
 
+  if (options.providers && options.providers.length > 0) {
+    throw new Error(
+      `The API transport of ${provider.config.displayName} does not support --all (transports are never mixed).`,
+    );
+  }
+
   // A capability that the transport does not have is rejected, not ignored.
   if (options.attach && options.attach.length > 0 && !transport.capabilities.attachments) {
     throw new Error(
