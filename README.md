@@ -23,29 +23,21 @@ https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-cha
 > [!NOTE]
 > **Linux only.** The browser build of CloakBrowser also ships for macOS and Windows, but 10x-chat does not run there: the lock that guards the browser profiles and the secrets store is an **abstract unix socket**, and only the kernel of Linux provides one. On macOS and Windows every launch of a browser and every command that touches the store fails with `The lock of 10x-chat is an abstract unix socket — it works on Linux only.`
 
-No system Chromium is needed: the `postinstall` step of the package downloads the CloakBrowser build into `~/.cloakbrowser/`.
+No system Chromium is needed: the `postinstall` step of the package downloads the CloakBrowser build into `~/.cloakbrowser/`. If that download fails, the install fails — the CLI then reports that the browser is missing; re-run the install or run `npx cloakbrowser install` once by hand.
 
 ## Install
 
 ```bash
-npm install -g --install-links github:gazon1/10x-chat
+npm install -g @gazon1/10x-chat
 ```
 
-The install builds the CLI (`prepare`) and downloads the CloakBrowser build (`postinstall`). Every example below uses the `10x-chat` binary of a global install.
-
-> [!IMPORTANT]
-> `--install-links` is required with npm 11. npm installs a git dependency that carries build scripts as a **symlink** into a temporary clone and deletes that clone right after — the global install is left dangling. With the flag npm copies the prepared package instead. To keep the plain command working, set it once:
->
-> ```bash
-> npm config set install-links true --location=user
-> ```
->
-> Without a global install, run the CLI straight from the source: `npx github:gazon1/10x-chat chat -p "…"` (Bun needs `bun pm -g untrusted` first — it blocks the build scripts otherwise).
->
-> npm 11.20+ additionally skips the `postinstall` that downloads the CloakBrowser build until the package is trusted: add `--allow-scripts=10x-chat` to the install command, or run `npx cloakbrowser install` once by hand.
+The published package contains the compiled CLI — no TypeScript build and no devDependencies on install. The install downloads the CloakBrowser build (`postinstall`). Every example below uses the `10x-chat` binary of a global install.
 
 > [!NOTE]
-> The name `10x-chat` on npm belongs to the upstream project, which still ships the integrations that were removed here. This fork is therefore installed from the repository — it is not published to the registry yet.
+> With npm 11.20+, the install scripts of a dependency are not run until they are allowed: add `--allow-scripts=@gazon1/10x-chat` to the install command, or run `npx cloakbrowser install` once by hand.
+
+> [!NOTE]
+> The fork is published under the scoped name `@gazon1/10x-chat`: the unscoped `10x-chat` on npm belongs to the upstream project, which still ships the integrations that were removed here.
 
 ## Quick Start
 
@@ -468,7 +460,7 @@ The provider UIs change without notice — Grok in particular is the most fragil
 
 | Symptom | What to do |
 |---|---|
-| `CloakBrowser is not installed or failed to load` | `npm install -g --install-links github:gazon1/10x-chat` again, or run `npx cloakbrowser install` |
+| `CloakBrowser is not installed or failed to load` | `npm install -g @gazon1/10x-chat` again, or run `npx cloakbrowser install` |
 | The browser does not start / no window | the build is missing: `npx cloakbrowser install` (it lands in `~/.cloakbrowser/`) |
 | `Not logged in` although you logged in | the session expired — `10x-chat login <provider>` again; `login --status` shows the state of every provider |
 | Claude / Perplexity open a window even with headless | both are blocked by anti-bot protection and always run headed; `--headless` overrides it |
@@ -522,7 +514,7 @@ git push --follow-tags
 Requires `NPM_TOKEN` secret in the GitHub repository settings.
 
 > [!NOTE]
-> The registry name `10x-chat` belongs to the upstream project, so the `npm publish` step of the release workflow is currently disabled — a `v*` tag creates the GitHub Release but does not publish to npm. A free name has to be chosen first; the open items are listed in [docs/verification.md](docs/verification.md).
+> The fork is published as the scoped package `@gazon1/10x-chat`, because the unscoped `10x-chat` on npm belongs to the upstream project. The release workflow builds `dist/` and publishes it before creating the GitHub Release.
 
 ## Disclaimer
 
