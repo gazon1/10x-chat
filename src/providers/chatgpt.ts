@@ -17,6 +17,12 @@ const chatgptSubmitBaseline = new WeakMap<
   Page,
   {
     turnCount: number;
+    /**
+     * The number of messages of the user that the answer must come after.
+     * The DOM lags behind the submit: until the prompt is in the DOM, the
+     * answer of the previous turn is the last message of the chat.
+     */
+    minUserTurns: number;
     /** The text of every assistant message of the chat before the prompt. */
     bodies: string[];
     /** The joined text of the assistant messages before the prompt. */
@@ -83,6 +89,9 @@ const MESSAGE_CONTAINER_SELECTORS = [
   'article[data-testid^="conversation-turn-"]',
   'div.agent-turn',
 ] as const;
+
+/** The message of the user. */
+const USER_MESSAGE_SELECTORS = '[data-message-author-role="user"], [data-conversation-role="user"]';
 
 /** One answer body of the assistant (one message of ChatGPT). */
 interface AssistantBody {
@@ -197,6 +206,15 @@ async function getAssistantTurnCount(page: Page): Promise<number> {
     .catch(() => 0);
 }
 
+/** The number of messages of the user in the chat. */
+async function getUserTurnCount(page: Page): Promise<number> {
+  // The count runs in the page: the daemon does not proxy the selector engine
+  // of Playwright reliably.
+  return page
+    .evaluate((selectors) => document.querySelectorAll(selectors).length, USER_MESSAGE_SELECTORS)
+    .catch(() => 0);
+}
+
 /**
  * The labels ChatGPT renders in the assistant node while it works ("Thinking",
  * "Reviewed potential bugs"). They can stay unchanged for longer than the
@@ -262,10 +280,18 @@ function generationErrorOf(
  * split into several messages, and one message can hold several nested body
  * elements (the markdown root, the response body, the dil renderer). The
  * longest text of a group is the answer of that message.
+ *
+ * `minUserTurns` is the number of messages of the user that the answer must
+ * come after. The DOM lags behind the submit: without the gate the capture
+ * sees the answer of the previous turn and streams it as the answer of this
+ * one.
  */
-async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot> {
+async function getLatestAssistantSnapshot(
+  page: Page,
+  minUserTurns = 0,
+): Promise<AssistantSnapshot> {
   return page.evaluate(
-    ({ bodySelectors, fallbackSelectors, messageSelectors }) => {
+    ({ bodySelectors, fallbackSelectors, messageSelectors, userSelectors, minUserTurns }) => {
       const errorText = Array.from(
         document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
       )
@@ -290,11 +316,13 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       // The answer of this turn is what follows the last message of the user.
       // A chat that continues an exhausted conversation keeps the old turns,
       // and their answers are not the answer of this run.
-      const userTurns = Array.from(
-        document.querySelectorAll(
-          '[data-message-author-role="user"], [data-conversation-role="user"]',
-        ),
-      );
+      const userTurns = Array.from(document.querySelectorAll(userSelectors));
+      // The prompt of this run is not in the DOM yet: the answer of the
+      // previous turn is still the last one, and it is not the answer of this
+      // run.
+      if (userTurns.length > 0 && userTurns.length < minUserTurns) {
+        return { found: false, bodies: [], errorText };
+      }
       const lastUserTurn = userTurns.length > 0 ? userTurns[userTurns.length - 1] : null;
 
       // Every body element of the page, no matter which selector found it.
@@ -320,7 +348,7 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       };
 
       for (const element of matched) {
-        if (element.closest('[data-message-author-role="user"]')) continue;
+        if (element.closest(userSelectors)) continue;
         // Only the messages after the last message of the user belong to the
         // answer of this turn.
         if (
@@ -338,11 +366,27 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
         }
       }
 
-      const bodies = Array.from(groups.values())
+      const sorted = Array.from(groups.values())
         .sort((a, b) =>
           a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
         )
         .map(({ text, html }) => ({ text, html }));
+
+      // The renderer of a message can nest the body of the message in several
+      // elements, and it can render the same message twice while it streams.
+      // The text of such a body is contained in the text of the bigger one —
+      // keep the biggest one, or the answer repeats.
+      const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+      const bodies = sorted.filter((body, index) => {
+        const text = normalize(body.text);
+        if (!text) return false;
+        return !sorted.some(
+          (other, otherIndex) =>
+            otherIndex !== index &&
+            normalize(other.text).length > text.length &&
+            normalize(other.text).includes(text),
+        );
+      });
 
       if (bodies.length > 0) return { found: true, bodies, errorText };
 
@@ -371,8 +415,18 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       bodySelectors: [...ASSISTANT_BODY_SELECTORS],
       fallbackSelectors: [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
       messageSelectors: [...MESSAGE_CONTAINER_SELECTORS],
+      userSelectors: USER_MESSAGE_SELECTORS,
+      minUserTurns,
     },
   );
+}
+
+/** The length of the common beginning of two texts. */
+function commonPrefixLength(left: string, right: string): number {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) index++;
+  return index;
 }
 
 /**
@@ -698,9 +752,10 @@ async function startSummaryChat(page: Page): Promise<boolean> {
   if (!clicked) return false;
 
   // Wait until the banner is gone and the composer of the new chat is back.
+  let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await page.waitForTimeout(500);
-    const ready = await page.evaluate(() => {
+    ready = await page.evaluate(() => {
       const banner = /context window full/i.test(document.body?.innerText || '');
       const composer = Array.from(
         document.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
@@ -713,7 +768,9 @@ async function startSummaryChat(page: Page): Promise<boolean> {
     if (ready) break;
   }
 
-  return true;
+  // The transition did not happen: the caller must not treat the exhausted
+  // chat as a fresh one.
+  return ready;
 }
 
 export const chatgptActions: ProviderActions = {
@@ -925,6 +982,9 @@ export const chatgptActions: ProviderActions = {
     const snapshot = await getLatestAssistantSnapshot(page);
     chatgptSubmitBaseline.set(page, {
       turnCount: await getAssistantTurnCount(page),
+      // The number of messages of the user before the prompt: the answer of
+      // this run comes after the message of the prompt.
+      minUserTurns: (await getUserTurnCount(page)) + 1,
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
       bodies: snapshot.bodies.map((body) => body.text),
@@ -990,11 +1050,15 @@ export const chatgptActions: ProviderActions = {
     const startTime = Date.now();
     const baseline = chatgptSubmitBaseline.get(page) ?? {
       turnCount: await getAssistantTurnCount(page),
+      // Without a prompt in this process there is no baseline: the gate of
+      // the messages of the user stays off.
+      minUserTurns: 0,
       bodies: [] as string[],
       latestText: '',
       errorText: '',
       url: page.url(),
     };
+    const minUserTurns = baseline.minUserTurns;
 
     // ponytail: direct text polling beats ChatGPT's constantly shifting turn DOM.
     let lastText = baseline.latestText;
@@ -1003,7 +1067,14 @@ export const chatgptActions: ProviderActions = {
     let activityPolls = 0;
     let truncated = true;
     while (Date.now() - startTime < timeoutMs) {
-      const snapshot = await getLatestAssistantSnapshot(page);
+      // The prompt of this run is not in the DOM yet: the last message of the
+      // chat is still the answer of the previous turn, and it is not the
+      // answer of this run.
+      if (minUserTurns > 0 && (await getUserTurnCount(page)) < minUserTurns) {
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      const snapshot = await getLatestAssistantSnapshot(page, minUserTurns);
       const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies);
       const text = bodies
         .map((body) => body.text)
@@ -1024,9 +1095,11 @@ export const chatgptActions: ProviderActions = {
 
       if (bodies.length > 0 && text !== baseline.latestText) {
         if (text !== emittedText) {
-          onChunk?.(
-            emittedText && text.startsWith(emittedText) ? text.slice(emittedText.length) : text,
-          );
+          // The renderer re-creates the message while it streams, so the text
+          // can change from the beginning. Emit only what was not emitted yet:
+          // the answer must not repeat itself in the stream.
+          const common = commonPrefixLength(emittedText, text);
+          if (text.length > common) onChunk?.(text.slice(common));
           emittedText = text;
         }
 
@@ -1066,7 +1139,7 @@ export const chatgptActions: ProviderActions = {
     // Extract the final HTML content using page.evaluate instead of locator.textContent/innerHTML.
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
-    const finalSnapshot = await getLatestAssistantSnapshot(page);
+    const finalSnapshot = await getLatestAssistantSnapshot(page, minUserTurns);
     const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies);
     const markdown =
       finalBodies.length > 0

@@ -267,7 +267,14 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     // provider continues it in a new chat with an automatic summary, so the
     // work goes on instead of dying at the context limit.
     if (await contextWindowFull()) {
-      await continueInNewChat();
+      const continued = await continueInNewChat();
+      // The exhausted chat cannot answer: sending the prompt to it anyway
+      // fails with a timeout and no answer at all.
+      if (!continued) {
+        throw new ProviderGenerationError(
+          'The context window of the chat is full and the chat could not be continued in a new one.',
+        );
+      }
       await sessionCheck();
     }
 
@@ -330,11 +337,16 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
         // chat with a summary and ask there.
         if (await contextWindowFull()) {
           const continued = await continueInNewChat();
-          if (continued) {
-            await sessionCheck();
-            if (modelName && provider.actions.selectModel) {
-              await provider.actions.selectModel(browser.page, modelName);
-            }
+          // The exhausted chat cannot answer: the run fails with a clear
+          // reason instead of a timeout without an answer.
+          if (!continued) {
+            throw new ProviderGenerationError(
+              'The context window of the chat is full and the chat could not be continued in a new one.',
+            );
+          }
+          await sessionCheck();
+          if (modelName && provider.actions.selectModel) {
+            await provider.actions.selectModel(browser.page, modelName);
           }
         }
         try {

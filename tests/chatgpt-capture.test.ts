@@ -266,6 +266,69 @@ describe('ChatGPT Provider', () => {
       expect(response.text).toBe(answer.bodies[0].text);
     });
 
+    it('does not stream the answer of the previous turn before the prompt is in the DOM', async () => {
+      const oldAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of the previous turn', html: '<p>old</p>' }],
+      };
+      const newAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of this turn', html: '<p>new</p>' }],
+      };
+      // The DOM lags behind the submit: the prompt lands after two polls.
+      let countCalls = 0;
+      let userTurns = 1;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            return userTurns > 1 ? newAnswer : oldAnswer;
+          }
+          if (typeof arg === 'string') {
+            countCalls++;
+            if (countCalls > 2) userTurns = 2;
+            return userTurns;
+          }
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, 'the prompt');
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      // The answer of the previous turn is still in the DOM: it must not be
+      // taken for the answer of this run.
+      expect(chunks.join('')).not.toContain('previous turn');
+      expect(response.text).toBe('Answer of this turn');
+    });
+
     it('accepts a short answer that looks like an activity label after a grace period', async () => {
       const answer = {
         found: true,
