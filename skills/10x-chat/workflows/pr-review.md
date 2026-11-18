@@ -8,7 +8,7 @@ Use it when the user asks for a review of a pull request, a branch, a patch, or 
 
 - The prompt carries the **GitHub coordinates** — repository URL, **pull request number and URL**, base and head SHA — plus the changed file list and a short brief. Nothing else.
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded). The reviewer opens the repository itself.
-- The review target must therefore be **on `origin`**. The pipeline pushes the branch before the review (step 1). If the change cannot be pushed — no rights, no remote — the review is `UNAVAILABLE` for every role that needs the code, and the report says so.
+- The review target must therefore be **on `origin`**. The pipeline pushes the branch before the review (step 1) — when the user asked for that publication. If the change cannot be pushed — no rights, no remote — the review is `UNAVAILABLE` for every role that needs the code, and the report says so.
 - A provider that cannot open the repository (private repo without a connector, provider without web access) must **say so in its answer**. That is a finding about the review, not a licence to guess — the review is then `UNAVAILABLE` for that role, and the report says which role could not run.
 
 ## 1. Establish the review context
@@ -24,7 +24,9 @@ git diff --name-only "$BASE...$HEAD"
 git remote get-url origin
 ```
 
-Then make the change reachable for the reviewers — **commit, push and open the pull request**, so that the PR the reviewers open is the change you reviewed:
+Then make the change reachable for the reviewers — **commit, push and open the pull request**, so that the PR the reviewers open is the change you reviewed.
+
+**Publication needs the user's word.** A request to *review* is not a request to *publish*. Commit, push and open the pull request only when the user asked for it. When the request is an assessment of local work — an uncommitted change, a local branch, a patch — ask first, and if the answer is no, review the pushed commit the user already published; if the change never reaches `origin`, the review is `UNAVAILABLE` and the report says so:
 
 ```bash
 git status --short                 # read it: only the files of this change
@@ -41,7 +43,7 @@ gh pr view --json number,url -q '"#\(.number) \(.url)"'
 
 **Never commit what you did not read.** `git add -A` sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the change by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
 
-**The prompt carries the pull request number and URL.** A reviewer that only gets a branch name does not find the change; the PR page carries the diff, the discussion and the head SHA. Without a pull request there is nothing to review — create it first.
+**The prompt carries the pull request number and URL.** A reviewer that only gets a branch name does not find the change; the PR page carries the diff, the discussion and the head SHA. Without a pull request there is nothing to review — create it first, if the user asked for it; otherwise ask the user.
 
 - The **changed files** and the **surrounding code** of each of them — read them in your checkout. A diff without its context hides most real defects, and *you* are the one who resolves disagreements later.
 - The **project conventions**: `AGENTS.md`, `CLAUDE.md`, `README`, `CONTRIBUTING`, the lint/format/CI configuration. Point the reviewer at these files **by path in the repository** (`AGENTS.md` at the head SHA) instead of pasting them.
@@ -112,7 +114,7 @@ Any provider that can reach the repository works — `chatgpt` first (it can bro
 
 **A full context window is not a failed review.** A long review can exhaust the context window of the conversation (ChatGPT shows a "Context window full" banner). 10x-chat then continues in a new chat with an automatic summary of the old one and asks there — the same reviewer, the same conversation, a fresh window. The new chat stays bound to the same repository and branch. The protocol does not change: the reviewer still gets the GitHub coordinates and still reads the code itself. Do not restart a role because the chat was continued, and do not report a continued chat as a missing answer.
 
-**What is not on GitHub cannot be reviewed.** Uncommitted work, untracked files and local-only artifacts are invisible to the reviewer, and no file is attached to make them visible. If the change under review is not on `origin`, push it (step 1) before starting the review. If it cannot be pushed, the review does not run: report the review as `UNAVAILABLE` with the reason.
+**What is not on GitHub cannot be reviewed.** Uncommitted work, untracked files and local-only artifacts are invisible to the reviewer, and no file is attached to make them visible. If the change under review is not on `origin`, push it (step 1) before starting the review — when the user asked for that publication; otherwise ask the user first. If it cannot be pushed, the review does not run: report the review as `UNAVAILABLE` with the reason.
 
 ## 3. Read the findings against a common schema
 
@@ -168,7 +170,7 @@ Write the report with the shared format in [report-format.md](report-format.md).
 ## Checklist
 
 - [ ] Context gathered locally: diff, changed files, conventions, CI/test evidence.
-- [ ] The change is committed and pushed to `origin`; the reviewers got the pushed head SHA.
+- [ ] The change is committed and pushed to `origin`, with the user's word; the reviewers got the pushed head SHA.
 - [ ] The reviewers got GitHub coordinates (repository, PR, base/head SHA, changed files); no file was attached — neither `--file` nor `--attach`.
 - [ ] At least two role-specific reviewers ran, each in a fresh conversation.
 - [ ] First passes were isolated — no reviewer saw another's findings.

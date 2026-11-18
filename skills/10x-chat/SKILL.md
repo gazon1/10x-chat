@@ -82,7 +82,7 @@ npm 11 notes: `--install-links` is required for git installs; npm 11.20+ also ne
 
 Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
 
-**Never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed.
+**Never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed — and the push happens when the user asked for that publication: a request to review is not a request to publish.
 
 ## Playbooks
 
@@ -96,7 +96,7 @@ Two ready-made workflows live next to this file. They are provider-neutral and l
 
 **The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
 
-**The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, pull request URL, commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first, then asks for the review. `--file` and `--attach` are not used.
+**The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, pull request URL, commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first — with the user's word — then asks for the review. `--file` and `--attach` are not used.
 
 Load the playbook file before starting one of these tasks — it carries the reviewer roles, the finding schema, the evidence rules and the report template.
 
@@ -131,7 +131,7 @@ PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
 - `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.
-- The reviewer sees what is pushed to `origin`, so commit and push before asking. Nothing is attached to the prompt — the reviewer reads the repository itself.
+- The reviewer sees what is pushed to `origin`, so commit and push before asking — when the user asked for the publication. Nothing is attached to the prompt — the reviewer reads the repository itself.
 
 ### 2. Second opinion on a failure
 
@@ -144,7 +144,7 @@ PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
 Identify the root cause. Do not propose a rewrite."
 ```
 
-The reviewer opens the failing file on GitHub itself — paste only the failing output. If the failure is in a state that is not on `origin`, push it first; there is no attachment fallback.
+The reviewer opens the failing file on GitHub itself — paste only the failing output. If the failure is in a state that is not on `origin`, push it first (with the user's word); there is no attachment fallback.
 
 ### 3. Cross-validation of a decision
 
@@ -161,7 +161,7 @@ The reviewer opens the failing file on GitHub itself — paste only the failing 
 
 ## Agent rules
 
-- **Never send files.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first — nothing that is not on GitHub can be reviewed.
+- **Never send files.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first, when the user asked for that publication — nothing that is not on GitHub can be reviewed.
 - **Check login first.** `login --status` before a batch of runs; a failed run wastes minutes.
 - **Keep the brief short.** The prompt carries coordinates, the role and the expected output format — not the code. Use `--dry-run` when unsure what will be sent.
 - **Timeout deliberately.** Defaults are in seconds-to-minutes; research and reasoning models need `--timeout 600000`–`900000`. A truncated answer prints a warning — re-run with a larger timeout rather than trusting it.

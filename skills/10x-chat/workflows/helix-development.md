@@ -8,7 +8,7 @@ Use it when the user asks for a change to be built in a repository — feature, 
 
 - The prompt carries the **GitHub coordinates** — repository URL, branch, commit SHA — plus the checkpoint's goal and acceptance criteria. Nothing else.
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded).
-- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 5). If the checkpoint cannot be pushed, the review does not run — the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
+- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 5), when the user asked for that publication. If the checkpoint cannot be pushed, the review does not run — the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
 
 ## 1. Understand before touching
 
@@ -68,7 +68,7 @@ A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is nev
 
 ## 5. Commit, push and open the pull request
 
-A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists:
+A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists. **Publication needs the user's word**: commit, push and open the pull request only when the user asked for it; when the request is an assessment of local work, ask first, and if the answer is no, the checkpoint stays local and its review is `UNAVAILABLE`:
 
 ```bash
 git status --short                 # read it: only the files of this checkpoint
@@ -87,7 +87,7 @@ gh pr view --json number,url -q '"#\(.number) \(.url)"'
 
 The reviewer reads the change at the pull request: the diff, the discussion, the head SHA, in its real context. If the push or the pull request cannot be created — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
 
-Pushing the branch and opening the pull request are part of the pipeline. Merging, tagging a release or deploying is not (step 9).
+Pushing the branch and opening the pull request are part of the pipeline, when the user asked for them. Merging, tagging a release or deploying is never (step 9).
 
 ## 6. Independent adversarial review of the checkpoint
 
@@ -141,7 +141,7 @@ If a gate fails, stop and report. Do not push the problem into the next checkpoi
 
 ## 9. Never merge or release autonomously
 
-Committing, pushing the branch and opening the pull request are part of the pipeline (step 5) — the pull request is the reviewer's entry point, and it is opened for the branch under review. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
+Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 5) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the review is `UNAVAILABLE`. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
 
 ## 10. Integration review and completion report
 
@@ -160,9 +160,9 @@ After the last checkpoint, run one review over the *combined* change — at the 
 - [ ] Ordered checkpoints with goal, scope, acceptance criteria, verification, non-goals.
 - [ ] Only the current checkpoint implemented; no speculative refactoring.
 - [ ] Repository's own checks run, each recorded as PASSED / FAILED / SKIPPED / UNAVAILABLE with its command and output.
-- [ ] The checkpoint is committed and pushed to `origin`, and the reviewer read that SHA; no file was attached — neither `--file` nor `--attach`.
+- [ ] The checkpoint is committed and pushed to `origin` — with the user's word — and the reviewer read that SHA; no file was attached — neither `--file` nor `--attach`.
 - [ ] Independent adversarial review of the checkpoint; findings fixed, rejected with reason, or explicitly accepted.
 - [ ] Every acceptance criterion has recorded evidence.
 - [ ] Proceeded only with the gates satisfied or an explicit human exception.
-- [ ] Committed and pushed per checkpoint; nothing merged or released without an explicit instruction.
+- [ ] Committed and pushed per checkpoint, with the user's word; nothing merged or released without an explicit instruction.
 - [ ] Integration review done; completion report written.
