@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { submitPromptToComposer } from '../src/providers/submit.js';
 
-function createSubmitPage(options: { contenteditable: boolean; insertFails?: boolean }) {
-  const { contenteditable, insertFails = false } = options;
+function createSubmitPage(options: {
+  contenteditable: boolean;
+  insertFails?: boolean;
+  insertDoesNotLand?: boolean;
+}) {
+  const { contenteditable, insertFails = false, insertDoesNotLand = false } = options;
   const composer = {
     waitFor: vi.fn(async () => {}),
     click: vi.fn(async () => {}),
@@ -10,7 +14,7 @@ function createSubmitPage(options: { contenteditable: boolean; insertFails?: boo
     evaluate: vi.fn(async (_fn: unknown, arg?: string) => {
       if (arg === undefined) return contenteditable;
       // The text landed in the composer.
-      return true;
+      return !insertDoesNotLand;
     }),
   };
 
@@ -87,6 +91,25 @@ describe('submitPromptToComposer', () => {
     });
 
     expect(page.keyboard.type).toHaveBeenCalledWith('Hello from ProseMirror');
+    expect(sendButton.click).toHaveBeenCalled();
+  });
+
+  it('types the prompt in chunks, so no request runs into the client deadline', async () => {
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      insertDoesNotLand: true,
+    });
+    const prompt = 'x'.repeat(1000);
+
+    await submitPromptToComposer(page as never, prompt, {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
+    const typed = page.keyboard.type.mock.calls.map((call) => call[0] as string);
+    expect(typed.length).toBeGreaterThan(1);
+    expect(typed.join('')).toBe(prompt);
+    expect(Math.max(...typed.map((chunk) => chunk.length))).toBeLessThanOrEqual(400);
     expect(sendButton.click).toHaveBeenCalled();
   });
 

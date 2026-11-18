@@ -105,12 +105,29 @@ export async function submitPromptToComposer(
     .catch(() => false);
 
   if (isContentEditable) {
+    // The text goes to the focused element, not to the composer: a click that
+    // an overlay swallowed leaves the focus somewhere else, and the prompt
+    // disappears. The focus is therefore set explicitly.
+    const focusComposer = async (): Promise<void> => {
+      await composer
+        .evaluate((element) => {
+          if (element instanceof HTMLElement) element.focus();
+        })
+        .catch(() => {});
+    };
+
+    await focusComposer();
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.press('Backspace');
 
     const landed = async (): Promise<boolean> =>
       composer
-        .evaluate((element, text) => (element.textContent ?? '').includes(text.trim()), prompt)
+        .evaluate((element, text) => {
+          // The composer turns the newlines of the prompt into paragraphs:
+          // the text lands, but not character for character.
+          const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+          return normalize(element.textContent ?? '').includes(normalize(text));
+        }, prompt)
         .catch(() => false);
 
     // One insertion instead of one keystroke per character: a rich composer
@@ -119,14 +136,22 @@ export async function submitPromptToComposer(
     // waits for the element forever instead of failing, and the request never
     // comes back.
     let inserted = false;
-    try {
-      await page.keyboard.insertText(prompt);
-      inserted = await landed();
-    } catch {
-      inserted = false;
+    for (let attempt = 0; attempt < 2 && !inserted; attempt++) {
+      if (attempt > 0) await focusComposer();
+      try {
+        await page.keyboard.insertText(prompt);
+        inserted = await landed();
+      } catch {
+        inserted = false;
+      }
     }
     if (!inserted) {
-      await page.keyboard.type(prompt);
+      // Typing is the last resort: one keystroke per character. Split it, so
+      // no single request runs into the deadline of the HTTP client.
+      const chunkSize = 400;
+      for (let start = 0; start < prompt.length; start += chunkSize) {
+        await page.keyboard.type(prompt.slice(start, start + chunkSize));
+      }
       inserted = await landed();
     }
     if (!inserted) {
