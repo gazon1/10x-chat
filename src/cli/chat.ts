@@ -64,6 +64,10 @@ export function createChatCommand(): Command {
         );
         process.exit(1);
       }
+      if (transport === 'api' && !provider) {
+        console.error(chalk.red('The --transport api option requires --provider <name>.'));
+        process.exit(1);
+      }
       if (options.all && transport === 'api') {
         console.error(
           chalk.red(

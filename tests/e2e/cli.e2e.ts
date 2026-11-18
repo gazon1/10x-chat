@@ -204,3 +204,22 @@ describe('cli flows', () => {
       expect(res.output).not.toContain('user:pass');
     });
   });
+
+  it('rejects --transport api without --provider even when defaultProvider is configured for api', async () => {
+    await withTempHome(async (home) => {
+      const { writeFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+      const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+      await writeFile(
+        path.join(home, 'config.json'),
+        JSON.stringify({ defaultProvider: 'deepseek', providerKeys: { deepseek: 'deepseek-key' } }),
+      );
+      const set = await runCli(['secrets', 'set', 'deepseek-key'], env, 'sk-test-key');
+      expect(set.code).toBe(0);
+
+      const result = await runCli(['chat', '-p', 'hi', '--transport', 'api'], env);
+      expect(result.code).toBe(1);
+      expect(result.output).toMatch(/requires --provider/i);
+      expect(result.output).not.toContain('sk-test-key');
+    });
+  });
