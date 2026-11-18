@@ -452,6 +452,50 @@ describe('ChatGPT Provider', () => {
       expect(response.text).toBe(answer);
     });
 
+    it('does not stream the labels of the thinking UI next to the answer', async () => {
+      const label = 'Audited readiness checks';
+      const answer = 'The answer of the turn.';
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn(() => defaultLocator),
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // While the answer is still rendering, the fallback of the
+            // snapshot finds a label of the thinking UI.
+            const isTheLabel = polls <= 1;
+            return {
+              found: true,
+              bodies: isTheLabel
+                ? [{ text: label, html: `<p>${label}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: 'the prompt of this run',
+              viaFallback: isTheLabel,
+            };
+          }
+          return false;
+        }),
+      };
+
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).toBe(answer);
+      expect(response.text).toBe(answer);
+    });
+
     it('accepts a short answer that looks like an activity label after a grace period', async () => {
       const answer = {
         found: true,

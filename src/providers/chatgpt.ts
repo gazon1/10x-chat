@@ -110,6 +110,12 @@ interface AssistantSnapshot {
   errorText: string;
   /** The text of the last message of the user. */
   lastUserText: string;
+  /**
+   * The bodies come from the fallback of the snapshot: the last visible match
+   * of the page, not the body of the message of the assistant. While the
+   * answer is still rendering it is a label of the thinking UI.
+   */
+  viaFallback: boolean;
 }
 
 export const CHATGPT_CONFIG: ProviderConfig = {
@@ -399,7 +405,9 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
         );
       });
 
-      if (bodies.length > 0) return { found: true, bodies, errorText, lastUserText };
+      if (bodies.length > 0) {
+        return { found: true, bodies, errorText, lastUserText, viaFallback: false };
+      }
 
       // Fallback for the other UI variants: the last visible match.
       for (const selector of fallbackSelectors) {
@@ -418,10 +426,11 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
           ],
           errorText,
           lastUserText,
+          viaFallback: true,
         };
       }
 
-      return { found: false, bodies: [], errorText, lastUserText };
+      return { found: false, bodies: [], errorText, lastUserText, viaFallback: true };
     },
     {
       bodySelectors: [...ASSISTANT_BODY_SELECTORS],
@@ -1128,7 +1137,7 @@ export const chatgptActions: ProviderActions = {
       const activity = ACTIVITY_TEXT.test(text);
 
       if (bodies.length > 0 && text !== baseline.latestText) {
-        if (text !== emittedText && !activity) {
+        if (text !== emittedText && !activity && !snapshot.viaFallback) {
           // The renderer re-creates the message while it streams, so the text
           // can change from the beginning. Emit only what was not emitted yet:
           // the answer must not repeat itself in the stream.
@@ -1136,6 +1145,10 @@ export const chatgptActions: ProviderActions = {
           // A label of the thinking UI ("Reviewed the diff") is not the answer:
           // it is not emitted, and it stays the base of the next delta, so the
           // answer that follows it is emitted whole.
+          //
+          // The fallback of the snapshot is the last visible match of the
+          // page: while the answer is still rendering it is a label of the
+          // thinking UI, and the renderer rewrites it. It is not streamed.
           const common = commonPrefixLength(emittedText, text);
           if (text.length > common) onChunk?.(text.slice(common));
           emittedText = text;
