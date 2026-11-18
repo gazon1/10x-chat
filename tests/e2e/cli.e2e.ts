@@ -177,13 +177,29 @@ describe('cli flows', () => {
       }
 
       // Every relative link of the installed skill must resolve in the
-      // installed copy — the paths differ from the repository checkout.
+      // installed copy — the paths differ from the repository checkout. The
+      // workflows link to each other, so every file is checked.
+      for (const file of [
+        'SKILL.md',
+        'workflows/pr-review.md',
+        'workflows/helix-development.md',
+        'workflows/report-format.md',
+      ]) {
+        const filePath = path.join(skillDir, file);
+        const content = await readFile(filePath, 'utf-8');
+        const links = [...content.matchAll(/\]\(([^)]+)\)/g)]
+          .map((m) => m[1])
+          .filter((link) => !/^[a-z]+:\/\//i.test(link));
+        for (const link of links) {
+          expect(existsSync(path.resolve(path.dirname(filePath), link))).toBe(true);
+        }
+      }
+
+      // The links of the skill must exist, too — the check above only fails
+      // when a link is broken, not when the skill has none.
       const skill = await readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
       const links = [...skill.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]);
       expect(links.length).toBeGreaterThan(0);
-      for (const link of links) {
-        expect(existsSync(path.resolve(skillDir, link))).toBe(true);
-      }
     });
   });
 });

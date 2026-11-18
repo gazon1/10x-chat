@@ -5,16 +5,28 @@ function createSubmitPage(options: {
   contenteditable: boolean;
   insertFails?: boolean;
   insertDoesNotLand?: boolean;
+  /** The first insertion lands only half of the prompt. */
+  insertLandsHalf?: boolean;
 }) {
-  const { contenteditable, insertFails = false, insertDoesNotLand = false } = options;
+  const {
+    contenteditable,
+    insertFails = false,
+    insertDoesNotLand = false,
+    insertLandsHalf = false,
+  } = options;
+  // The composer holds the text, so the tests can see what is really sent.
+  let text = '';
   const composer = {
     waitFor: vi.fn(async () => {}),
     click: vi.fn(async () => {}),
-    fill: vi.fn(async () => {}),
+    fill: vi.fn(async (value: string) => {
+      text = value;
+    }),
     evaluate: vi.fn(async (_fn: unknown, arg?: string) => {
       if (arg === undefined) return contenteditable;
-      // The text landed in the composer.
-      return !insertDoesNotLand;
+      // Did the text land in the composer?
+      const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+      return normalize(text).includes(normalize(arg));
     }),
   };
 
@@ -39,22 +51,39 @@ function createSubmitPage(options: {
     throw new Error(`Unexpected selector: ${selector}`);
   });
 
-  return {
-    page: {
-      locator,
-      keyboard: {
-        type: vi.fn(async () => {}),
-        insertText: insertFails
-          ? vi.fn(async () => {
-              throw new Error('insertText failed');
-            })
-          : vi.fn(async () => {}),
-        press: vi.fn(async () => {}),
-      },
-      waitForTimeout: vi.fn(async () => {}),
+  let insertions = 0;
+  const page = {
+    locator,
+    keyboard: {
+      type: vi.fn(async (value: string) => {
+        text += value;
+      }),
+      insertText: insertFails
+        ? vi.fn(async () => {
+            throw new Error('insertText failed');
+          })
+        : vi.fn(async (value: string) => {
+            insertions++;
+            if (insertDoesNotLand) return;
+            if (insertLandsHalf && insertions === 1) {
+              text += value.slice(0, Math.floor(value.length / 2));
+              return;
+            }
+            text += value;
+          }),
+      press: vi.fn(async (key: string) => {
+        if (key === 'Backspace') text = '';
+      }),
     },
+    waitForTimeout: vi.fn(async () => {}),
+  };
+
+  return {
+    page,
     composer,
     sendButton,
+    /** The text that is in the composer right now. */
+    composerText: () => text,
   };
 }
 
@@ -111,6 +140,23 @@ describe('submitPromptToComposer', () => {
     expect(typed.join('')).toBe(prompt);
     expect(Math.max(...typed.map((chunk) => chunk.length))).toBeLessThanOrEqual(400);
     expect(sendButton.click).toHaveBeenCalled();
+  });
+
+  it('clears a partly inserted prompt before it inserts it again', async () => {
+    const { page, composerText } = createSubmitPage({
+      contenteditable: true,
+      insertLandsHalf: true,
+    });
+    const prompt = 'Hello from ProseMirror';
+
+    await submitPromptToComposer(page as never, prompt, {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
+    // The half that landed must not stay: the composer holds the prompt once.
+    expect(composerText()).toBe(prompt);
+    expect(page.keyboard.type).not.toHaveBeenCalled();
   });
 
   it('still uses fill for textarea-style composers', async () => {

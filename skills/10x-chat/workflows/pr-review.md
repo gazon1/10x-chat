@@ -27,7 +27,8 @@ git remote get-url origin
 Then make the change reachable for the reviewers — **commit, push and open the pull request**, so that the PR the reviewers open is the change you reviewed:
 
 ```bash
-git add -A
+git status --short                 # read it: only the files of this change
+git add <path> …                   # add those paths — never `git add -A`
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD          # the SHA the reviewers get
@@ -37,6 +38,8 @@ gh pr view --json number,url >/dev/null 2>&1 \
   || gh pr create --base <base> --head <branch> --title "<title>" --body "<what changed and why>"
 gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
+
+**Never commit what you did not read.** `git add -A` sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the change by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
 
 **The prompt carries the pull request number and URL.** A reviewer that only gets a branch name does not find the change; the PR page carries the diff, the discussion and the head SHA. Without a pull request there is nothing to review — create it first.
 
@@ -106,6 +109,8 @@ If you find nothing blocking, say so explicitly. Do not invent problems, and do 
 Any provider that can reach the repository works — `chatgpt` first (it can browse GitHub), then `claude` or `gemini` if they can open the URLs as well. Check `10x-chat login --status` first: an unlogged-in provider wastes the whole run.
 
 **`chat --all` is not a role split.** It sends the *same* prompt to every chat provider in parallel. It is a good way to get several models to judge the same question; it cannot give one prompt per role. Role-specific reviews need one `--provider` run each.
+
+**A full context window is not a failed review.** A long review can exhaust the context window of the conversation (ChatGPT shows a "Context window full" banner). 10x-chat then continues in a new chat with an automatic summary of the old one and asks there — the same reviewer, the same conversation, a fresh window. The new chat stays bound to the same repository and branch. The protocol does not change: the reviewer still gets the GitHub coordinates and still reads the code itself. Do not restart a role because the chat was continued, and do not report a continued chat as a missing answer.
 
 **What is not on GitHub cannot be reviewed.** Uncommitted work, untracked files and local-only artifacts are invisible to the reviewer, and no file is attached to make them visible. If the change under review is not on `origin`, push it (step 1) before starting the review. If it cannot be pushed, the review does not run: report the review as `UNAVAILABLE` with the reason.
 

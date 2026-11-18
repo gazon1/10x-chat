@@ -177,6 +177,48 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     return true;
   };
 
+  /** Is the context window of the current conversation exhausted? */
+  const contextWindowFull = async (): Promise<boolean> => {
+    if (!provider.actions.contextWindowFull) return false;
+    return provider.actions.contextWindowFull(browser.page).catch(() => false);
+  };
+
+  /**
+   * Continue the conversation in a new chat with an automatic summary.
+   *
+   * The new chat replaces the stored one: it is the working chat of this
+   * repository and branch from now on, until its own context window runs out
+   * too.
+   */
+  const continueInNewChat = async (): Promise<boolean> => {
+    if (!provider.actions.continueInNewChat) return false;
+    console.log(
+      chalk.dim(
+        'The context window of the chat is full — continuing in a new chat with a summary.',
+      ),
+    );
+    const started = await provider.actions.continueInNewChat(browser.page).catch(() => false);
+    if (!started) return false;
+
+    usingStoredConversation = false;
+    storedConversation = undefined;
+    // The new chat is fresh: it must not be replaced by a blank one.
+    freshRequired = false;
+    await clearStoredConversation(conversationContext, providerName).catch(() => {});
+
+    // The new chat is stored right away: a failed run must not lose it.
+    const url = browser.page.url();
+    const id = conversationIdFromUrl(providerName, url);
+    if (id) {
+      await saveStoredConversation(conversationContext, providerName, {
+        url,
+        id,
+        updatedAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
+    return true;
+  };
+
   const sessionCheck = () =>
     checkProviderSession({
       page: browser.page,
@@ -210,6 +252,14 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
 
     // A client-side redirect can happen while the session check waits.
     if (await ensureStoredConversation()) {
+      await sessionCheck();
+    }
+
+    // A chat whose context window is exhausted cannot answer anymore. The
+    // provider continues it in a new chat with an automatic summary, so the
+    // work goes on instead of dying at the context limit.
+    if (await contextWindowFull()) {
+      await continueInNewChat();
       await sessionCheck();
     }
 
@@ -268,6 +318,17 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     const askWithRetry = async () => {
       let retried = false;
       for (;;) {
+        // The context window can run out during the run: continue in a new
+        // chat with a summary and ask there.
+        if (await contextWindowFull()) {
+          const continued = await continueInNewChat();
+          if (continued) {
+            await sessionCheck();
+            if (modelName && provider.actions.selectModel) {
+              await provider.actions.selectModel(browser.page, modelName);
+            }
+          }
+        }
         try {
           const captured = await submitAndCapture();
           if (!captured.truncated || retried || hasAttachments) return captured;

@@ -116,9 +116,16 @@ export async function submitPromptToComposer(
         .catch(() => {});
     };
 
-    await focusComposer();
-    await page.keyboard.press('ControlOrMeta+a');
-    await page.keyboard.press('Backspace');
+    // Empty the composer before every insertion: a partly inserted prompt that
+    // stays in the composer is sent twice — once as a half prompt, once as the
+    // whole one.
+    const clearComposer = async (): Promise<void> => {
+      await focusComposer();
+      await page.keyboard.press('ControlOrMeta+a');
+      await page.keyboard.press('Backspace');
+    };
+
+    await clearComposer();
 
     const landed = async (): Promise<boolean> =>
       composer
@@ -137,7 +144,7 @@ export async function submitPromptToComposer(
     // comes back.
     let inserted = false;
     for (let attempt = 0; attempt < 2 && !inserted; attempt++) {
-      if (attempt > 0) await focusComposer();
+      if (attempt > 0) await clearComposer();
       try {
         await page.keyboard.insertText(prompt);
         inserted = await landed();
@@ -147,7 +154,10 @@ export async function submitPromptToComposer(
     }
     if (!inserted) {
       // Typing is the last resort: one keystroke per character. Split it, so
-      // no single request runs into the deadline of the HTTP client.
+      // no single request runs into the deadline of the HTTP client. The
+      // composer is emptied first: a partly inserted prompt would be sent
+      // twice.
+      await clearComposer();
       const chunkSize = 400;
       for (let start = 0; start < prompt.length; start += chunkSize) {
         await page.keyboard.type(prompt.slice(start, start + chunkSize));

@@ -15,7 +15,15 @@ import { clickSendButton, submitPromptToComposer } from './submit.js';
 
 const chatgptSubmitBaseline = new WeakMap<
   Page,
-  { turnCount: number; latestText: string; errorText: string; url: string }
+  {
+    turnCount: number;
+    /** The text of every assistant message of the chat before the prompt. */
+    bodies: string[];
+    /** The joined text of the assistant messages before the prompt. */
+    latestText: string;
+    errorText: string;
+    url: string;
+  }
 >();
 const chatgptPendingFiles = new WeakMap<Page, string[]>();
 
@@ -52,6 +60,43 @@ const ASSISTANT_CONTENT_FALLBACK_SELECTORS = [
   '[data-message-author-role="assistant"]',
   '.markdown',
 ] as const;
+
+/**
+ * The strict selectors of an assistant message body.
+ *
+ * A single answer of ChatGPT can be split into several messages (a long
+ * review is streamed as two), and one message can hold several nested body
+ * elements. Every message must be captured — the last one alone is only the
+ * tail of the answer.
+ */
+const ASSISTANT_BODY_SELECTORS = [
+  '[data-markdown-text-style="assistant-message"]',
+  '[data-response-body]',
+  '[data-dil-response]',
+] as const;
+
+/** The container of one message of the current UI. */
+const MESSAGE_CONTAINER_SELECTORS = [
+  '[data-conversation-role="assistant"]',
+  '[data-message-author-role="assistant"]',
+  '[data-message-id]',
+  'article[data-testid^="conversation-turn-"]',
+  'div.agent-turn',
+] as const;
+
+/** One answer body of the assistant (one message of ChatGPT). */
+interface AssistantBody {
+  text: string;
+  html: string;
+}
+
+/** The state of the assistant messages of the page. */
+interface AssistantSnapshot {
+  found: boolean;
+  /** The bodies of the assistant messages, in the order of the document. */
+  bodies: AssistantBody[];
+  errorText: string;
+}
 
 export const CHATGPT_CONFIG: ProviderConfig = {
   name: 'chatgpt',
@@ -164,9 +209,14 @@ const ACTIVITY_TEXT =
 const GENERATION_ERROR_TEXT =
   /\b(?:streaming error|error (?:in|while) (?:the )?(?:message )?(?:stream|response)|there was an error (?:generating|while generating)|failed to generate (?:a )?response|network error|connection (?:lost|failed)|something (?:went|seems to have gone) wrong)\b/i;
 
-/** An unknown error message still starts with a failure word. */
+/**
+ * An unknown error message still starts with a failure word.
+ *
+ * The answer itself can talk about a failure — a review of the streaming code
+ * does — so only an answer that *starts* like a failure is a failure.
+ */
 const GENERATION_ERROR_START =
-  /^\s*(?:error|failed|failure|unable|couldn'?t|can'?t|network|connection|oops|something)\b/i;
+  /^\s*(?:sorry|oops|uh|error|failed|failure|unable|couldn'?t|can'?t|network|connection|something|there\s+(?:was|is)\s+an?\s+error|streaming\s+error)\b/i;
 
 /**
  * How many polls a short activity-like text may stay stable before it is taken
@@ -188,18 +238,34 @@ function generationErrorOf(
   const errorText = snapshot.errorText !== baseline.errorText ? snapshot.errorText.trim() : '';
   const text = snapshot.text !== baseline.latestText ? snapshot.text.trim() : '';
 
-  const known = GENERATION_ERROR_TEXT.exec(`${errorText} ${text}`);
-  if (known) return known[0];
-  if (errorText) return errorText.slice(0, 200);
-  if (text.length <= 200 && GENERATION_ERROR_START.test(text)) return text;
+  if (errorText) {
+    const known = GENERATION_ERROR_TEXT.exec(errorText);
+    if (known) return known[0];
+    return errorText.slice(0, 200);
+  }
+
+  // The answer itself can talk about a streaming error — a review of the
+  // streaming code does — so only an answer that starts like a failure is
+  // taken for one.
+  if (text.length > 0 && text.length <= 200) {
+    const known = GENERATION_ERROR_TEXT.exec(text);
+    if (known && GENERATION_ERROR_START.test(text)) return known[0];
+    if (GENERATION_ERROR_START.test(text)) return text;
+  }
   return undefined;
 }
 
-async function getLatestAssistantSnapshot(
-  page: Page,
-): Promise<{ found: boolean; text: string; html: string; errorText: string }> {
+/**
+ * The assistant messages of the page.
+ *
+ * The messages are grouped by the container they belong to: one answer can be
+ * split into several messages, and one message can hold several nested body
+ * elements (the markdown root, the response body, the dil renderer). The
+ * longest text of a group is the answer of that message.
+ */
+async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot> {
   return page.evaluate(
-    (selectors: readonly string[]) => {
+    ({ bodySelectors, fallbackSelectors, messageSelectors }) => {
       const errorText = Array.from(
         document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
       )
@@ -209,35 +275,95 @@ async function getLatestAssistantSnapshot(
         .trim()
         .slice(0, 400);
 
-      const isVisible = (element: Element | null): element is HTMLElement => {
-        if (!(element instanceof HTMLElement)) return false;
-        if (element.hidden) return false;
+      const isVisible = (element: Element): boolean => {
         const style = window.getComputedStyle(element);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
         const rect = element.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       };
 
-      for (const selector of selectors) {
+      const textOf = (element: Element): string =>
+        ((element as HTMLElement).innerText || element.textContent || '').trim();
+
+      const groups = new Map<Element, { text: string; html: string; element: Element }>();
+      for (const selector of bodySelectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          if (element.closest('[data-message-author-role="user"]')) continue;
+          const text = textOf(element);
+          if (!text) continue;
+          const container = element.closest(messageSelectors.join(',')) ?? element;
+          const known = groups.get(container);
+          if (!known || text.length > known.text.length) {
+            groups.set(container, { text, html: element.innerHTML || '', element });
+          }
+        }
+      }
+
+      const bodies = Array.from(groups.values())
+        .sort((a, b) =>
+          a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+        )
+        .map(({ text, html }) => ({ text, html }));
+
+      if (bodies.length > 0) return { found: true, bodies, errorText };
+
+      // Fallback for the other UI variants: the last visible match.
+      for (const selector of fallbackSelectors) {
         const matches = Array.from(document.querySelectorAll(selector));
         if (matches.length === 0) continue;
-
         const visibleMatches = matches.filter(isVisible);
         const last = (visibleMatches.length > 0 ? visibleMatches : matches).at(-1);
         if (!(last instanceof Element)) continue;
-
-        const text =
-          last instanceof HTMLElement
-            ? (last.innerText || last.textContent || '').trim()
-            : (last.textContent || '').trim();
-        const html = 'innerHTML' in last ? (last as HTMLElement).innerHTML || '' : '';
-        return { found: true, text, html, errorText };
+        return {
+          found: true,
+          bodies: [
+            {
+              text: textOf(last),
+              html: 'innerHTML' in last ? last.innerHTML || '' : '',
+            },
+          ],
+          errorText,
+        };
       }
 
-      return { found: false, text: '', html: '', errorText };
+      return { found: false, bodies: [], errorText };
     },
-    [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
+    {
+      bodySelectors: [...ASSISTANT_BODY_SELECTORS],
+      fallbackSelectors: [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
+      messageSelectors: [...MESSAGE_CONTAINER_SELECTORS],
+    },
   );
+}
+
+/**
+ * The assistant messages that are new since the baseline.
+ *
+ * The old messages of a reused chat stay in the DOM: the answer of this run
+ * is everything after them. The transcript can also be re-rendered, which
+ * loses the old messages — then the last old message that is still there
+ * marks the start of the new ones.
+ */
+function newAssistantBodies(baseline: string[], current: AssistantBody[]): AssistantBody[] {
+  if (baseline.length === 0) return current;
+  const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
+  let start = 0;
+  while (
+    start < baseline.length &&
+    start < current.length &&
+    normalize(baseline[start]) === normalize(current[start].text)
+  ) {
+    start++;
+  }
+  if (start > 0) return current.slice(start);
+
+  for (let index = baseline.length - 1; index >= 0; index--) {
+    const found = current.findIndex((body) => normalize(body.text) === normalize(baseline[index]));
+    if (found >= 0) return current.slice(found + 1);
+  }
+
+  return current;
 }
 
 async function getVisibleModelPickerState(page: Page): Promise<{ found: boolean; text: string }> {
@@ -457,7 +583,109 @@ async function dismissOverlays(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Is the context window of the chat exhausted?
+ *
+ * The app shows a banner ("Context window full") with a "New chat" button
+ * that continues the conversation in a new chat with an automatic summary.
+ */
+async function detectContextFull(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    for (const button of Array.from(document.querySelectorAll('button'))) {
+      const label = (button.innerText || button.getAttribute('aria-label') || '').trim();
+      if (!/^new chat$/i.test(label)) continue;
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      let node: HTMLElement | null = button.parentElement;
+      while (node) {
+        if (/context window full/i.test(node.innerText || '')) return true;
+        node = node.parentElement;
+      }
+    }
+    return false;
+  });
+}
+
+/**
+ * Click the "New chat" button of the "Context window full" banner.
+ *
+ * The app has several "New chat" buttons: the one of the sidebar, a hidden
+ * variant of it, and the one of the banner. The button of the banner is the
+ * one whose nearest ancestor with the text "Context window full" is the
+ * closest one — the sidebar button finds that text only in the body, many
+ * levels up.
+ */
+async function clickContextFullNewChat(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    let best: { button: HTMLElement; depth: number } | null = null;
+
+    for (const button of Array.from(document.querySelectorAll('button'))) {
+      const label = (button.innerText || button.getAttribute('aria-label') || '').trim();
+      if (!/^new chat$/i.test(label)) continue;
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      let depth = 0;
+      let found = -1;
+      let node: HTMLElement | null = button.parentElement;
+      while (node) {
+        depth++;
+        if (/context window full/i.test(node.innerText || '')) {
+          found = depth;
+          break;
+        }
+        node = node.parentElement;
+      }
+      if (found < 0) continue;
+      if (!best || found < best.depth) best = { button, depth: found };
+    }
+
+    if (!best) return false;
+    best.button.click();
+    return true;
+  });
+}
+
+/**
+ * Continue the conversation in a new chat with an automatic summary.
+ *
+ * This is the native mechanism of the app for an exhausted context window:
+ * the new chat starts with "Continued from <old chat>" and a summary of it,
+ * so the work goes on instead of dying at the context limit.
+ */
+async function startSummaryChat(page: Page): Promise<boolean> {
+  const clicked = await clickContextFullNewChat(page);
+  if (!clicked) return false;
+
+  // Wait until the banner is gone and the composer of the new chat is back.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await page.waitForTimeout(500);
+    const ready = await page.evaluate(() => {
+      const banner = /context window full/i.test(document.body?.innerText || '');
+      const composer = Array.from(
+        document.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
+      ).some((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      return !banner && composer;
+    });
+    if (ready) break;
+  }
+
+  return true;
+}
+
 export const chatgptActions: ProviderActions = {
+  async contextWindowFull(page: Page): Promise<boolean> {
+    return detectContextFull(page);
+  },
+
+  async continueInNewChat(page: Page): Promise<boolean> {
+    return startSummaryChat(page);
+  },
+
   async newChat(page: Page): Promise<void> {
     const debug = process.env.TEN_X_CHAT_DEBUG_NEWCHAT === '1';
     const log = (...args: unknown[]): void => {
@@ -660,7 +888,11 @@ export const chatgptActions: ProviderActions = {
       turnCount: await getAssistantTurnCount(page),
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
-      latestText: snapshot.text,
+      bodies: snapshot.bodies.map((body) => body.text),
+      latestText: snapshot.bodies
+        .map((body) => body.text)
+        .join('\n\n')
+        .trim(),
       // An error banner can outlive the run that showed it; only a new one
       // belongs to this answer.
       errorText: snapshot.errorText,
@@ -719,6 +951,7 @@ export const chatgptActions: ProviderActions = {
     const startTime = Date.now();
     const baseline = chatgptSubmitBaseline.get(page) ?? {
       turnCount: await getAssistantTurnCount(page),
+      bodies: [] as string[],
       latestText: '',
       errorText: '',
       url: page.url(),
@@ -732,11 +965,15 @@ export const chatgptActions: ProviderActions = {
     let truncated = true;
     while (Date.now() - startTime < timeoutMs) {
       const snapshot = await getLatestAssistantSnapshot(page);
-      const text = snapshot.text;
+      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies);
+      const text = bodies
+        .map((body) => body.text)
+        .join('\n\n')
+        .trim();
 
-      // The previous turn's answer is the last node until the new one appears;
-      // only an error that is new since the prompt belongs to this run.
-      const generationError = generationErrorOf(snapshot, baseline);
+      // The previous turn's answer is still in the DOM; only an error that is
+      // new since the prompt belongs to this run.
+      const generationError = generationErrorOf({ text, errorText: snapshot.errorText }, baseline);
       if (generationError) {
         throw new ProviderGenerationError(
           `ChatGPT reported an error while generating the answer: ${generationError}`,
@@ -746,7 +983,7 @@ export const chatgptActions: ProviderActions = {
       const streaming = await isGenerating();
       const activity = ACTIVITY_TEXT.test(text);
 
-      if (text && text !== baseline.latestText) {
+      if (bodies.length > 0 && text !== baseline.latestText) {
         if (text !== emittedText) {
           onChunk?.(
             emittedText && text.startsWith(emittedText) ? text.slice(emittedText.length) : text,
@@ -791,7 +1028,11 @@ export const chatgptActions: ProviderActions = {
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
     const finalSnapshot = await getLatestAssistantSnapshot(page);
-    const markdown = finalSnapshot.html;
+    const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies);
+    const markdown =
+      finalBodies.length > 0
+        ? finalBodies.map((body) => body.html).join('\n\n')
+        : finalSnapshot.bodies.map((body) => body.html).join('\n\n');
 
     // Extract generated images (DALL-E / GPT-Image)
     // ChatGPT uses alt="Generated image: <description>" and src containing

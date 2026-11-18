@@ -27,7 +27,7 @@ Keep it short: a reader should get the verdict, the evidence and the open risks 
 ## Findings
 | # | Severity | Location | Problem | Impact | Evidence | Status |
 |---|---|---|---|---|---|---|
-| 1 | BLOCKING | `path/file.ts:42` | <one line> | <failure scenario> | <proof> | Fixed / Open / Rejected / Accepted |
+| 1 | BLOCKING | `path/file.ts:42` | <one line> | <failure scenario> | <proof> | Fixed / Open / Unverified / Rejected / Accepted |
 
 ## Acceptance criteria
 | Criterion | Status | Evidence |
@@ -53,7 +53,7 @@ Rules that make the report trustworthy:
 - **`PASSED` means exit code 0.** Not "the failure looked unrelated", not "the previous run passed". A non-zero exit is `FAILED`, even if the failing test is unrelated to the change — say so in the notes.
 - **`SKIPPED` and `UNAVAILABLE` are different.** Skipped is a decision; unavailable is a missing capability. Both are listed under *Not verified* as well.
 - **Unverified is a first-class state.** A finding you could not reproduce is `UNVERIFIED` — visible, not promoted to a defect and not dropped.
-- **Every finding has a status.** `Fixed`, `Open`, `Rejected` (with the reason) or `Accepted` (with the human decision). A finding without a status is unresolved.
+- **Every finding has a status.** `Fixed`, `Open`, `Unverified`, `Rejected` (with the reason) or `Accepted` (with the human decision). A finding without a status is unresolved.
 - **No secrets.** Never paste credentials, tokens, `.env` contents or customer data into the report, even to quote a finding.
 
 For a development run, the *Verdict* section is replaced by the completion summary (what was built per checkpoint) and the *Acceptance criteria* table is the main body. Everything else stays the same.

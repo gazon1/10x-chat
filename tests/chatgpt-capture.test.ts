@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chatgptActions } from '../src/providers/chatgpt.js';
 
+interface Snapshot {
+  found: boolean;
+  bodies: { text: string; html: string }[];
+  errorText?: string;
+}
+
 function createCapturePage(opts: {
   turnCounts: number[];
-  snapshots: Array<{ found: boolean; text: string; html: string; errorText?: string }>;
+  snapshots: Snapshot[];
   /** Is the Stop button visible on the given capture poll? */
   stopVisible?: (poll: number) => boolean;
 }) {
@@ -42,9 +48,11 @@ function createCapturePage(opts: {
       return defaultLocator;
     }),
     evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
-      if (Array.isArray(arg)) {
+      if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
         const snapshot = snapshots[Math.min(snapshotIndex++, snapshots.length - 1)];
-        return snapshot ? { ...snapshot, errorText: snapshot.errorText ?? '' } : undefined;
+        return snapshot
+          ? { found: snapshot.found, bodies: snapshot.bodies, errorText: snapshot.errorText ?? '' }
+          : { found: false, bodies: [], errorText: '' };
       }
       return [];
     }),
@@ -59,11 +67,11 @@ describe('ChatGPT Provider', () => {
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
         ],
       });
 
@@ -80,12 +88,12 @@ describe('ChatGPT Provider', () => {
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [
-          { found: true, text: 'Hel', html: '<p>Hel</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
+          { found: true, bodies: [{ text: 'Hel', html: '<p>Hel</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
         ],
       });
 
@@ -100,12 +108,65 @@ describe('ChatGPT Provider', () => {
       expect(chunks).toContain('lo');
     });
 
+    it('joins an answer that the provider split into several messages', async () => {
+      const { page } = createCapturePage({
+        turnCounts: [0, 1],
+        snapshots: [
+          {
+            found: true,
+            bodies: [{ text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' }],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+        ],
+      });
+
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+      });
+
+      expect(response.text).toBe(
+        'SEVERITY: MAJOR\nLOCATION: src/a.ts:1\n\nSEVERITY: MINOR\nLOCATION: src/b.ts:2',
+      );
+      expect(response.markdown).toBe('<p>MAJOR</p>\n\n<p>MINOR</p>');
+    });
+
     it('does not end the capture on a stable activity label while generating', async () => {
-      const label = { found: true, text: 'Reviewed potential bugs', html: '<p>label</p>' };
+      const label = {
+        found: true,
+        bodies: [{ text: 'Reviewed potential bugs', html: '<p>label</p>' }],
+      };
       const answer = {
         found: true,
-        text: 'Verdict: APPROVE. No blocking findings.',
-        html: '<p>Verdict: APPROVE…</p>',
+        bodies: [
+          { text: 'Verdict: APPROVE. No blocking findings.', html: '<p>Verdict: APPROVE…</p>' },
+        ],
       };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
@@ -118,16 +179,20 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
       expect(response.truncated).toBe(false);
     });
 
     it('waits out a stable activity label even without the Stop button', async () => {
-      const label = { found: true, text: 'Reviewed potential bugs', html: '<p>label</p>' };
+      const label = {
+        found: true,
+        bodies: [{ text: 'Reviewed potential bugs', html: '<p>label</p>' }],
+      };
       const answer = {
         found: true,
-        text: 'Verdict: APPROVE. No blocking findings.',
-        html: '<p>Verdict: APPROVE…</p>',
+        bodies: [
+          { text: 'Verdict: APPROVE. No blocking findings.', html: '<p>Verdict: APPROVE…</p>' },
+        ],
       };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
@@ -139,7 +204,7 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
     });
 
     it('fails on a streaming error instead of waiting for the timeout', async () => {
@@ -148,8 +213,7 @@ describe('ChatGPT Provider', () => {
         snapshots: [
           {
             found: false,
-            text: '',
-            html: '',
+            bodies: [],
             errorText: 'Something went wrong while generating the response',
           },
         ],
@@ -167,8 +231,7 @@ describe('ChatGPT Provider', () => {
         snapshots: [
           {
             found: false,
-            text: '',
-            html: '',
+            bodies: [],
             errorText: 'Oops, the response could not be produced',
           },
         ],
@@ -180,8 +243,34 @@ describe('ChatGPT Provider', () => {
       ).rejects.toThrow(/reported an error while generating/);
     });
 
+    it('does not mistake a long answer about a streaming error for a failure', async () => {
+      const answer = {
+        found: true,
+        bodies: [
+          {
+            text: 'The capture reads the wrong node; a streaming error there loses half of the answer.',
+            html: '<p>The capture reads the wrong node…</p>',
+          },
+        ],
+      };
+      const { page } = createCapturePage({
+        turnCounts: [0, 1],
+        snapshots: [answer, answer, answer, answer, answer],
+        stopVisible: () => false,
+      });
+
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 30_000,
+      });
+
+      expect(response.text).toBe(answer.bodies[0].text);
+    });
+
     it('accepts a short answer that looks like an activity label after a grace period', async () => {
-      const answer = { found: true, text: 'Read the PR description.', html: '<p>Read…</p>' };
+      const answer = {
+        found: true,
+        bodies: [{ text: 'Read the PR description.', html: '<p>Read…</p>' }],
+      };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [answer],
@@ -192,7 +281,7 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
       expect(response.truncated).toBe(false);
     });
   });

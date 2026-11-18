@@ -71,7 +71,8 @@ A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is nev
 A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists:
 
 ```bash
-git add -A
+git status --short                 # read it: only the files of this checkpoint
+git add <path> …                   # add those paths — never `git add -A`
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD
@@ -81,6 +82,8 @@ gh pr view --json number,url >/dev/null 2>&1 \
   || gh pr create --base <base> --head <branch> --title "<title>" --body "<what this branch changes>"
 gh pr view --json number,url -q '"#\(.number) \(.url)"'
 ```
+
+**Never commit what you did not read.** `git add -A` sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the checkpoint by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
 
 The reviewer reads the change at the pull request: the diff, the discussion, the head SHA, in its real context. If the push or the pull request cannot be created — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
 
@@ -112,6 +115,8 @@ If you find nothing blocking, say so. Do not invent problems, and do not rewrite
 
 Use a second provider for the same checkpoint when the change is risky — two independent adversarial reviews catch more than one twice. `chat --all` sends the *same* prompt to every provider, so it works here as a second opinion on one role, but not as role-specific reviews.
 
+**A full context window is not a failed review.** When the conversation runs out of context (ChatGPT shows a "Context window full" banner), 10x-chat continues in a new chat with an automatic summary of the old one and asks there — the same conversation, a fresh window. The new chat stays bound to the same repository and branch, so the following checkpoint appends to it. Treat the answer as the answer of that reviewer; never restart a role because the chat was continued.
+
 ## 7. Resolve the findings
 
 Fix every `BLOCKING` finding. Fix or explicitly resolve every `MAJOR` one. `MINOR` and `INFO` are recorded, not silently dropped.
@@ -136,7 +141,7 @@ If a gate fails, stop and report. Do not push the problem into the next checkpoi
 
 ## 9. Never merge or release autonomously
 
-Committing and pushing the branch is part of the pipeline (step 5). Merging, opening a pull request, tagging a release or deploying never happen without an explicit instruction from the user.
+Committing, pushing the branch and opening the pull request are part of the pipeline (step 5) — the pull request is the reviewer's entry point, and it is opened for the branch under review. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
 
 ## 10. Integration review and completion report
 
