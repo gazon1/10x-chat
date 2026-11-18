@@ -9,6 +9,7 @@ import {
   conversationIdFromUrl,
   getStoredConversation,
   isConversationGone,
+  isReopenableConversationId,
   repoIdentityFromRemote,
   resolveConversationContext,
   type StoredConversation,
@@ -65,6 +66,18 @@ describe('conversationIdFromUrl', () => {
   it('returns undefined for a URL that cannot be parsed', () => {
     expect(conversationIdFromUrl('chatgpt', 'not a url')).toBeUndefined();
   });
+
+  it('knows that a local chat id cannot be reopened', () => {
+    // ChatGPT gives a fresh chat a local id until the first message is sent.
+    const id = conversationIdFromUrl(
+      'chatgpt',
+      'https://chatgpt.com/c/local-chatgpt%3A62043ce8-0c80-4d09-8a6e-75ffbfb89d5e',
+    );
+    expect(id).toBe('local-chatgpt:62043ce8-0c80-4d09-8a6e-75ffbfb89d5e');
+    expect(isReopenableConversationId(id)).toBe(false);
+    expect(isReopenableConversationId('6afdac5a-4c48-83eb-a5de-9c7e8e823d71')).toBe(true);
+    expect(isReopenableConversationId(undefined)).toBe(false);
+  });
 });
 
 describe('conversation cache', () => {
@@ -97,6 +110,18 @@ describe('conversation cache', () => {
     expect((await getStoredConversation(feature, 'chatgpt'))?.id).toBe('def');
     expect((await getStoredConversation(main, 'claude'))?.id).toBe('ghi');
     expect(await getStoredConversation(main, 'gemini')).toBeUndefined();
+  });
+
+  it('does not store a chat that has no permanent URL yet', async () => {
+    // The URL of a fresh ChatGPT chat points to the landing page when it is
+    // opened again — such a chat must not become the stored conversation.
+    await saveStoredConversation(
+      main,
+      'chatgpt',
+      conversation('local-chatgpt:62043ce8', 'https://chatgpt.com/c/local-chatgpt%3A62043ce8'),
+    );
+
+    expect(await getStoredConversation(main, 'chatgpt')).toBeUndefined();
   });
 
   it('writes the file atomically with owner-only permissions', async () => {

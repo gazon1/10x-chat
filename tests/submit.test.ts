@@ -7,12 +7,15 @@ function createSubmitPage(options: {
   insertDoesNotLand?: boolean;
   /** The first insertion lands only half of the prompt. */
   insertLandsHalf?: boolean;
+  /** A hidden composer sits in front of the visible one. */
+  hiddenFirst?: boolean;
 }) {
   const {
     contenteditable,
     insertFails = false,
     insertDoesNotLand = false,
     insertLandsHalf = false,
+    hiddenFirst = false,
   } = options;
   // The composer holds the text, so the tests can see what is really sent.
   let text = '';
@@ -28,6 +31,16 @@ function createSubmitPage(options: {
       const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
       return normalize(text).includes(normalize(arg));
     }),
+    isVisible: vi.fn(async () => contenteditable),
+  };
+
+  // ChatGPT puts a hidden composer in front of the visible one after a
+  // context-window transition: `locator.first()` would pick this one.
+  const hiddenComposer = {
+    ...composer,
+    waitFor: vi.fn(async () => {}),
+    click: vi.fn(async () => {}),
+    isVisible: vi.fn(async () => false),
   };
 
   const sendButton = {
@@ -36,10 +49,10 @@ function createSubmitPage(options: {
   };
 
   const locator = vi.fn((selector: string) => {
-    if (selector === '#composer') {
-      return {
-        first: () => ({ ...composer, isVisible: vi.fn(async () => contenteditable) }),
-      };
+    // The composer is looked up with the `:visible` filter first.
+    if (selector === '#composer' || selector === '#composer:visible') {
+      const target = hiddenFirst && selector === '#composer' ? hiddenComposer : composer;
+      return { first: () => target };
     }
 
     if (selector === '#send') {
@@ -81,6 +94,7 @@ function createSubmitPage(options: {
   return {
     page,
     composer,
+    hiddenComposer,
     sendButton,
     /** The text that is in the composer right now. */
     composerText: () => text,
@@ -157,6 +171,23 @@ describe('submitPromptToComposer', () => {
     // The half that landed must not stay: the composer holds the prompt once.
     expect(composerText()).toBe(prompt);
     expect(page.keyboard.type).not.toHaveBeenCalled();
+  });
+
+  it('skips a hidden composer that sits in front of the visible one', async () => {
+    const { page, composer, hiddenComposer } = createSubmitPage({
+      contenteditable: true,
+      hiddenFirst: true,
+    });
+
+    await submitPromptToComposer(page as never, 'Hello from ProseMirror', {
+      composerSelector: '#composer',
+      sendButtonSelector: '#send',
+    });
+
+    // The hidden one would never receive the text.
+    expect(hiddenComposer.waitFor).not.toHaveBeenCalled();
+    expect(composer.waitFor).toHaveBeenCalled();
+    expect(composer.click).toHaveBeenCalled();
   });
 
   it('still uses fill for textarea-style composers', async () => {

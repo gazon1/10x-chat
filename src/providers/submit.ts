@@ -81,12 +81,14 @@ export async function submitPromptToComposer(
   } = opts;
 
   // Find the first VISIBLE composer element.
-  // ChatGPT has a hidden fallback textarea that locator.first() picks up,
-  // so we try each sub-selector individually until we find a visible one.
+  // ChatGPT has a hidden fallback textarea that locator.first() picks up, and
+  // after a context-window transition a hidden ProseMirror sits in front of the
+  // visible one — so every sub-selector is tried with the `:visible` filter
+  // until one of them has a visible match.
   let composer = page.locator(composerSelector).first();
   const selectors = composerSelector.split(',').map((s) => s.trim());
   for (const sel of selectors) {
-    const candidate = page.locator(sel).first();
+    const candidate = page.locator(`${sel}:visible`).first();
     const visible = await candidate.isVisible().catch(() => false);
     if (visible) {
       composer = candidate;

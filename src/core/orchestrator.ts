@@ -13,6 +13,7 @@ import {
   conversationIdFromUrl,
   getStoredConversation,
   isConversationGone,
+  isReopenableConversationId,
   resolveConversationContext,
   type StoredConversation,
   saveStoredConversation,
@@ -207,14 +208,21 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     await clearStoredConversation(conversationContext, providerName).catch(() => {});
 
     // The new chat is stored right away: a failed run must not lose it.
+    // A chat that has no permanent URL yet (ChatGPT gives it a local id until
+    // the first message is sent) cannot be reopened — it is stored after the
+    // answer instead.
     const url = browser.page.url();
     const id = conversationIdFromUrl(providerName, url);
-    if (id) {
+    if (id && isReopenableConversationId(id)) {
       await saveStoredConversation(conversationContext, providerName, {
         url,
         id,
         updatedAt: new Date().toISOString(),
       }).catch(() => {});
+    } else {
+      console.log(
+        chalk.dim('The new chat has no permanent URL yet — it is stored after the answer.'),
+      );
     }
     return true;
   };
@@ -344,7 +352,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
 
     const durationMs = Date.now() - startTime;
     const conversationId = conversationIdFromUrl(providerName, browser.page.url());
-    if (conversationId) {
+    if (conversationId && isReopenableConversationId(conversationId)) {
       await saveStoredConversation(conversationContext, providerName, {
         url: browser.page.url(),
         id: conversationId,

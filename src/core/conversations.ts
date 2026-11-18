@@ -60,6 +60,21 @@ const CONVERSATION_PATTERNS: Partial<Record<ProviderName, RegExp[]>> = {
 };
 
 /**
+ * A transient id of a chat the provider has not stored on its server yet.
+ *
+ * ChatGPT gives a fresh chat a local id ("local-chatgpt:<uuid>") and replaces
+ * it with the permanent one when the first message is sent. Opening the local
+ * URL later lands on the landing page — it is not a conversation that can be
+ * reopened.
+ */
+const TRANSIENT_ID = /^local-[a-z0-9]+:/i;
+
+/** Can a conversation with this id be opened again? */
+export function isReopenableConversationId(id: string | undefined): boolean {
+  return typeof id === 'string' && id.length > 0 && !TRANSIENT_ID.test(id);
+}
+
+/**
  * The conversation id of a provider URL, or `undefined` when the URL is not a
  * conversation (the landing page, a share link, a login page, …).
  */
@@ -226,6 +241,9 @@ export async function getStoredConversation(
   if (!entry || typeof entry.url !== 'string' || typeof entry.id !== 'string') {
     return undefined;
   }
+  // A chat without a permanent URL lands on the landing page when it is
+  // opened again — it is not a conversation that can be reused.
+  if (!isReopenableConversationId(entry.id)) return undefined;
   return entry;
 }
 
@@ -235,6 +253,9 @@ export async function saveStoredConversation(
   provider: ProviderName,
   conversation: StoredConversation,
 ): Promise<void> {
+  // A transient chat has no permanent URL yet: storing it would send the next
+  // run to the landing page instead of back into the conversation.
+  if (!isReopenableConversationId(conversation.id)) return;
   await withStoreLock(async () => {
     const store = await readStore();
     const branches = store.repos[context.repo] ?? {};
