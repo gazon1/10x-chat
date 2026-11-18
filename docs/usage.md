@@ -13,8 +13,7 @@ in that order:
 config file  >  environment  >  no proxy
 ```
 
-There is no CLI flag for the proxy. The three states of the config file are
-different:
+The three states of the config file are different:
 
 | Config file | The proxy |
 |---|---|
@@ -22,8 +21,19 @@ different:
 | `proxy.enabled: false` | **no proxy at all** — the environment is not used as a fallback |
 | `proxy.enabled: true` | the proxy of the config file — the environment is ignored |
 
+```bash
+# persist a proxy (overrides the environment); omit --bypass to keep none
+10x-chat config proxy set http://127.0.0.1:3128 --bypass localhost,127.0.0.1,::1
+
+# disable without losing the settings (suppresses the environment fallback)
+10x-chat config proxy disable
+
+# remove the proxy section (back to the environment proxy, if any)
+10x-chat config proxy clear
+```
+
 ```json5
-// ~/.10x-chat/config.json
+// ~/.10x-chat/config.json (equivalent)
 {
   proxy: {
     enabled: true,
@@ -38,14 +48,19 @@ different:
   secrets store.
 - `bypass` is the list of hosts that must not go through the proxy. It replaces
   `NO_PROXY` while the config file names a proxy.
-- Without a `proxy` section the environment decides. The first variable with a
-  value wins:
+- **Migrating from environment-only proxy:** keep no `proxy` section and the
+  environment variables keep working (backward compatible). To persist them
+  once, run `config proxy set <server>` (and store credentials as secrets) so
+  later invocations no longer depend on the shell environment.
 
-  ```
-  HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy > ALL_PROXY > all_proxy
-  ```
+Without a `proxy` section the environment decides. The first variable with a
+value wins:
 
-  `NO_PROXY` / `no_proxy` becomes the bypass list.
+```
+HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy > ALL_PROXY > all_proxy
+```
+
+`NO_PROXY` / `no_proxy` becomes the bypass list.
 
 ### Proxy credentials
 
@@ -161,7 +176,7 @@ cd ~/src/my-project          # branch: feature/login
   conversation is kept for after `10x-chat login`.
 - `--new-chat` forces a fresh conversation and replaces the stored entry.
 - `chat --all` keeps one conversation per provider for the same repository and
-  branch.
+  branch (browser transport only).
 - The API transport has no conversation (`--transport api` is a single HTTP
   request), and `delegate` keeps its own long-lived browser session.
 
@@ -180,7 +195,9 @@ These are two different credentials:
   the shared profile mode one profile serves all providers.
 - **API transport** (`--transport api`) uses an API key from the secrets store,
   referred to by `providerKeys.<provider>` in the config file. It starts no
-  browser and uses no profile. Currently only DeepSeek has an API transport.
+  browser and uses no profile. DeepSeek currently has a native API transport
+  (OpenAI-compatible chat completions); as other native or OpenAI-compatible
+  providers gain API transports, configure their key the same way.
 
 ```bash
 10x-chat secrets set deepseek-key
@@ -189,4 +206,6 @@ These are two different credentials:
 ```
 
 A provider without an API transport fails with an error; it never falls back to
-the browser behind your back. See [transports.md](transports.md).
+the browser behind your back. `chat --all` runs the browser transport only and
+cannot be combined with `--transport api`, so paid API calls are never mixed in
+unexpectedly. See [transports.md](transports.md).

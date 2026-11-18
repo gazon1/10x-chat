@@ -68,19 +68,10 @@ Firefox/Camoufox was evaluated and rejected: the migration would invalidate ever
 The proxy comes from the config file, from the environment, or from nowhere — in that order. A config file without a `proxy` section keeps using the environment; `proxy.enabled: false` switches the proxy off completely.
 
 ```bash
-HTTPS_PROXY=http://user:password@proxy.example:3128 10x-chat chat -p "…"
-NO_PROXY=localhost,127.0.0.1                              10x-chat chat -p "…"
-```
-
-```json5
-// ~/.10x-chat/config.json
-{
-  proxy: {
-    enabled: true,
-    server: 'http://proxy.example:3128',
-    bypass: ['localhost', '127.0.0.1'],
-  },
-}
+# persist a proxy (config wins over the environment)
+10x-chat config proxy set http://proxy.example:3128 --bypass localhost,127.0.0.1
+10x-chat config proxy disable   # no proxy at all (suppresses the environment)
+10x-chat config proxy clear     # back to the environment proxy, if any
 ```
 
 The credentials of the proxy are not part of the config file — they live in the secrets store under the names `proxy.username` and `proxy.password`:
@@ -90,7 +81,10 @@ The credentials of the proxy are not part of the config file — they live in th
 10x-chat secrets set proxy.password
 ```
 
-The store keeps the values in the **system keyring** (the Secret Service of the desktop session) or — as a fallback — in `~/.10x-chat/secrets.json` (`chmod 600`):
+Migrating from environment-only proxy configuration is backward compatible: keep
+no `proxy` section and `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` keep working;
+persist them once with `config proxy set …` to stop depending on the shell
+environment.
 
 | Proxy | Supported |
 |---|---|
@@ -103,20 +97,27 @@ The full contract (the order of the variables, where the credentials live, why S
 
 ## Secrets
 
-API keys and proxy credentials are stored once — in the **system keyring** (the Secret Service of the desktop session) or, as a fallback, in `~/.10x-chat/secrets.json` (`0600` on Unix) — and are referred to by name in the config file.
-```bash
-10x-chat secrets set openai-key   # asks for the value, input hidden
-printf %s "$KEY" | 10x-chat secrets set openai-key
-10x-chat secrets list              # the names — never the values
-10x-chat secrets remove openai-key
+Provider API keys and proxy credentials are stored once — in the **system
+keyring** (the Secret Service of the desktop session) or, as a fallback, in
+`~/.10x-chat/secrets.json` (`0600` on Unix) — and referred to by name in the
+config file. `config show` never prints secret values and reports each
+reference as configured or missing.
 
-10x-chat config set provider-key chatgpt openai-key
-10x-chat config unset provider-key chatgpt
+```bash
+10x-chat secrets set deepseek-key   # asks for the value, input hidden
+10x-chat secrets list               # the names — never the values
+10x-chat secrets remove deepseek-key
+
+10x-chat config set provider-key deepseek deepseek-key
+10x-chat config unset provider-key deepseek
+10x-chat config show                # stored config + effective non-secret state
 ```
 
-The backend is chosen by the setting `credentialStorage` of the config file: `auto` (the default — the keyring when it is reachable, the file otherwise), `keyring` (the keyring only) or `file` (the file only). A store that was created before the keyring existed is migrated into it on the first use.
-
-The permissions, the platform limits, the backup and the rotation are in [docs/secrets.md](docs/secrets.md).
+DeepSeek currently has a native API transport (OpenAI-compatible chat
+completions). As other native or OpenAI-compatible providers gain API
+transports, configure their key the same way. The backend is chosen by
+`credentialStorage` (`auto`, `keyring`, or `file`). Details in
+[docs/secrets.md](docs/secrets.md).
 
 ## Login and sessions
 
@@ -197,10 +198,16 @@ The full practical guide — proxy precedence, proxy credentials, models, headle
 A prompt reaches a provider through the **browser** (the default — the web app is driven, a logged-in session is needed) or through the **HTTP API** of the provider (`--transport api` — an API key from the secrets store is needed, no browser is started).
 
 ```bash
+10x-chat secrets set deepseek-key
+10x-chat config set provider-key deepseek deepseek-key
 10x-chat chat -p "Explain this" --provider deepseek --transport api
 ```
 
-The capabilities that differ (attachments are rejected, no streaming, no cancellation), the setup of the key and the failures are in [docs/transports.md](docs/transports.md).
+`chat --all` runs the browser transport only and cannot be combined with
+`--transport api` (no mixed transports, no unexpected paid API calls). DeepSeek
+currently has a native API transport (OpenAI-compatible chat completions); as
+other native or OpenAI-compatible providers gain API transports, configure them
+the same way. See [docs/transports.md](docs/transports.md).
 
 ## Commands
 
@@ -234,7 +241,7 @@ Send a prompt to an AI provider via browser automation.
 |------|-------------|
 | `-p, --prompt <text>` | **(required)** The prompt to send |
 | `--provider <name>` | Provider: `chatgpt`, `gemini`, `claude`, `grok`, `perplexity`, `deepseek` (default: config) |
-| `--all` | Send to all chat providers in parallel and compare the answers |
+| `--all` | Send to all chat providers in parallel via browser and compare the answers (browser transport only) |
 | `--model <name>` | Model/mode to select in the provider UI (e.g. ChatGPT: `GPT-5.6 Sol High`, `Pro`; Gemini: `Fast`, `Thinking`, `Deep Think`, `Pro`) |
 | `-f, --file <paths...>` | Files/globs to bundle as context |
 | `-a, --attach <paths...>` | Images/files to upload as attachments |
@@ -243,7 +250,7 @@ Send a prompt to an AI provider via browser automation.
 | `--headed` | Show browser window during chat |
 | `--headless` | Force headless, also for the providers that normally run headed |
 | `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
-| `--transport <name>` | `browser` (default) or `api` — see [docs/transports.md](docs/transports.md) |
+| `--transport <name>` | `browser` (default) or `api` (requires `--provider` with API support) — see [docs/transports.md](docs/transports.md) |
 | `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |
@@ -357,7 +364,8 @@ View details of a specific session.
 
 ### `config`
 
-View or modify configuration.
+View or modify configuration (`config show` prints stored config plus effective
+non-secret state, with provider secret references marked configured/missing).
 
 ```bash
 10x-chat config show
@@ -365,6 +373,15 @@ View or modify configuration.
 10x-chat config set timeout 600000
 10x-chat config set headless false
 10x-chat config set profile-mode isolated
+
+# provider API key reference (value lives in the secrets store)
+10x-chat config set provider-key deepseek deepseek-key
+10x-chat config unset provider-key deepseek
+
+# proxy (config > environment > none)
+10x-chat config proxy set http://proxy.example:3128 --bypass localhost,127.0.0.1
+10x-chat config proxy disable
+10x-chat config proxy clear
 ```
 
 The order of the settings (CLI flag > config file > default), the rules of the
