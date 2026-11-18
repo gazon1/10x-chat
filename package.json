@@ -1,5 +1,5 @@
 {
-  "name": "10x-chat",
+  "name": "@gazon1/10x-chat",
   "version": "0.11.6",
   "description": "CLI to chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) via browser automation",
   "type": "module",
@@ -27,12 +27,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --fix .",
+    "knip": "knip",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "prepublishOnly": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "prepare": "node scripts/prepare.mjs",
-    "postinstall": "npx cloakbrowser install 2>/dev/null || true"
+    "postinstall": "npx cloakbrowser install"
   },
   "engines": {
     "node": ">=22"
@@ -71,13 +71,14 @@
     "commander": "^14.0.0",
     "fast-glob": "^3.3.3",
     "json5": "^2.2.3",
-    "patchright": "^1.59.4",
-    "playwright": "^1.58.2",
-    "playwright-core": "^1.61.0"
+    "playwright": "^1.65.0",
+    "playwright-core": "^1.65.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "knip": "^6.45.1",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"

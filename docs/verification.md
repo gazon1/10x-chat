@@ -19,7 +19,7 @@ The historical baseline of the first refactoring step is
 
 | # | Command | Result | Notes |
 |---|---------|--------|-------|
-| 1 | `bun install --frozen-lockfile` | **PASS** | 116 packages, lockfile unchanged; `prepare` builds `dist/`, `postinstall` downloads the CloakBrowser build |
+| 1 | `bun install --frozen-lockfile` | **PASS** | 116 packages, lockfile unchanged; `postinstall` downloads the CloakBrowser build |
 | 2 | `bun run typecheck` | **PASS** | `tsc --noEmit` |
 | 3 | `bun run lint` | **PASS** | `biome check .` — Biome 2.4.4 (the version the lockfile pins) |
 | 4 | `bun run test` | **PASS** | 33 files, **326 tests**, ~2.6 s |
@@ -35,10 +35,9 @@ findings in Markdown; the lockfile-pinned 2.4.4 is clean. Use `bun install --fro
 `bun install --frozen-lockfile` in an empty checkout:
 
 - installs the 116 packages of the lockfile without changing it,
-- runs `prepare` → `tsc -p tsconfig.build.json` → `dist/` (so an install from GitHub has a binary),
 - runs `postinstall` → `npx cloakbrowser install` → Chromium `146.0.7680.177.5` in `~/.cloakbrowser/`.
 
-The browser build is downloaded per machine, not per package — a second install reuses it.
+The browser build is downloaded per machine, not per package — a second install reuses it. The compiled CLI (`dist/`) is produced by `bun run build`; the published package carries it, so a consumer install compiles nothing.
 
 ## 3. The runtime decision
 
@@ -68,7 +67,7 @@ would have to authenticate through the URL in its command line.
 | Grok, Perplexity in the readiness matrix | **unverified** | they are not part of the matrix of PR #14 (no authorized Grok session; Perplexity does not submit through its web UI in that environment) — no claim is made about them |
 | DeepSeek | **new, unmeasured** | DeepSeek was added in [#7](https://github.com/gazon1/10x-chat/issues/7) and has an end-to-end scenario, but no authorized session was available for the run |
 | Windows / macOS hosts | **not supported** | the checks ran on Linux, and the lock of the browser profiles and of the secrets store is an abstract unix socket — Linux only. The browser build supports those hosts; the project does not |
-| npm registry name `10x-chat` | **taken by upstream** | the fork cannot be published under that name; the metadata now points at `gazon1/10x-chat`, the install instructions use the repository, and the release job needs a free name (open decision of the maintainer). Until that name is chosen, the `npm publish` step in `.github/workflows/release.yml` is disabled (`if: false`), so a `v*` tag still produces a GitHub Release instead of failing at the publish step |
+| npm registry name | **`@gazon1/10x-chat`** | **chosen** — the scoped name is free on the registry; the fork is published under it because the unscoped `10x-chat` belongs to the upstream project. The `npm publish` step of `.github/workflows/release.yml` is enabled and runs after the build of the package |
 | `SPEC.md` | **historical** | it is the original design document and still describes the removed NotebookLM/Flow/Dreamina integrations and the per-provider profiles of the first version; the current contract lives in `README.md` and `docs/config-contract.md` |
 | `docs/refactor-baseline.md`, `spike/` | **historical** | they describe the state before the refactoring, including the removed integrations |
 
@@ -88,8 +87,8 @@ end-to-end scenarios, which start the CLI as a subprocess.
 secret.
 
 `.github/workflows/release.yml` — on a `v*` tag: the same checks, then `npm publish`, then the
-GitHub Release. The publish step is currently disabled (`if: false`) because the registry name
-belongs to the upstream project — see the table in §4.
+GitHub Release. The publish step runs under the scoped name `@gazon1/10x-chat`. See the table in
+§4.
 
 ## 6. Reproducing the run
 

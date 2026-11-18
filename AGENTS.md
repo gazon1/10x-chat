@@ -113,13 +113,14 @@ Provider actions implement:
 
 ## Pre-Commit Checklist
 
-Run all four steps before every commit. CI will fail if any step fails.
+Run all steps before every commit. CI will fail if any step fails.
 
 ```bash
 bun run typecheck                          # 1. TypeScript type check (tsc --noEmit)
 bun run lint                               # 2. Lint + format (biome)
-bun run test                               # 3. Unit tests (vitest)
-bun run build                              # 4. Production build (tsc)
+bun run knip                               # 3. Unused dependencies (knip)
+bun run test                               # 4. Unit tests (vitest)
+bun run build                              # 5. Production build (tsc)
 ```
 
 The end-to-end scenarios of the CLI flows run in CI as well:

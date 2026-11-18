@@ -323,3 +323,45 @@ describe('the DeepSeek API transport', () => {
     expect(error.message).not.toContain(KEY);
   });
 });
+
+describe('api transport selection and --all', () => {
+  it('rejects --all on the API transport (no mixed transports)', async () => {
+    const transport = fakeTransport();
+    const error = await runApiChat(
+      { prompt: 'hello', provider: 'deepseek', providers: ['deepseek', 'chatgpt'] },
+      { transport },
+    ).catch((err: unknown) => err as Error);
+
+    expect(error.message).toMatch(/does not support --all|never mixed/i);
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it('covers config → secrets lookup → transport selection → request with a mocked client', async () => {
+    // config already points deepseek at secret "deepseek-key" (beforeEach)
+    const captured: { auth?: string; body?: string } = {};
+    const client: ApiHttpClient = {
+      async request(req) {
+        captured.auth = req.headers?.authorization;
+        captured.body = req.body;
+        return {
+          status: 200,
+          text: JSON.stringify({
+            model: 'deepseek-chat',
+            choices: [{ message: { content: 'from api' }, finish_reason: 'stop' }],
+          }),
+        };
+      },
+    };
+
+    const result = await runChat(
+      { prompt: 'hello flow', provider: 'deepseek', transport: 'api' },
+      { client },
+    );
+
+    expect(result.response).toBe('from api');
+    expect(captured.auth).toBe(`Bearer ${KEY}`);
+    expect(captured.body).toContain('hello flow');
+    const session = await getSession(result.sessionId);
+    expect(session.meta.status).toBe('completed');
+  });
+});

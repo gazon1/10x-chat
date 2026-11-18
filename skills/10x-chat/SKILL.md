@@ -34,11 +34,15 @@ Manual fallback: copy `skills/10x-chat/` into the agent's skills directory (`~/.
 ### The CLI (Linux only)
 
 ```bash
-npm install -g --install-links github:gazon1/10x-chat
+npm install -g @gazon1/10x-chat
 10x-chat --version
 ```
 
-npm 11 notes: `--install-links` is required for git installs; npm 11.20+ also needs `--allow-scripts=10x-chat` (or a manual `npx cloakbrowser install`) so the CloakBrowser build downloads. The npm registry name `10x-chat` belongs to the upstream project — install this fork from the repository.
+The published package contains the compiled CLI — no build step on install. The install downloads the CloakBrowser build (`postinstall`); if that fails, run `npx cloakbrowser install` once by hand.
+
+With npm 11.20+, allow the install script once: `npm install -g @gazon1/10x-chat --allow-scripts=@gazon1/10x-chat` (or run `npx cloakbrowser install` by hand).
+
+The fork is published under the scoped name `@gazon1/10x-chat`, because the unscoped `10x-chat` on npm belongs to the upstream project.
 
 ## First run — check before you send anything
 
