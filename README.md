@@ -54,7 +54,7 @@ The install builds the CLI (`prepare`) and downloads the CloakBrowser build (`po
 10x-chat login chatgpt
 
 # 2. Send a prompt
-10x-chat chat -p "Explain this error" --provider chatgpt --file "src/**/*.ts"
+10x-chat chat -p "Explain this error" --provider chatgpt
 
 # 3. View session history
 10x-chat status
@@ -231,8 +231,8 @@ Opens a headed browser for you to authenticate. The session persists across runs
 Send a prompt to an AI provider via browser automation.
 
 ```bash
-10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
-10x-chat chat -p "Debug this error" --file "logs/error.log"
+10x-chat chat -p "Review https://github.com/owner/repo/pull/42 (base <sha>, head <sha>)" --provider chatgpt
+10x-chat chat -p "Debug this error: <paste the output>" --provider chatgpt
 10x-chat chat -p "Explain this" --dry-run              # Preview bundle without sending
 10x-chat chat -p "Explain this" --copy                  # Copy bundle to clipboard
 10x-chat chat -p "Long task" --timeout 600000 --headed  # 10min timeout, visible browser
@@ -421,6 +421,8 @@ The `--file` flag accepts globs. Files are assembled into a markdown bundle sent
 
 Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically excluded.
 
+The skill's playbooks do not use it: a reviewer that receives a pasted diff cannot see the surrounding code, the conventions or the CI run. They get the GitHub coordinates instead — repository URL, pull request URL, commit SHAs — and read the code themselves. Nothing is attached either: the pipeline commits and pushes the branch to `origin` before the review, because a reviewer can only read what is on GitHub.
+
 ## Data Layout
 
 ```
@@ -450,6 +452,8 @@ Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically exc
 ```
 
 This lets agents like Codex or Claude Code use 10x-chat to query other models for cross-validation, code review, or debugging help.
+
+The skill ships two playbooks next to `SKILL.md`: `workflows/pr-review.md` (independent role-specific reviewers, a finding schema, verification and a final verdict) and `workflows/helix-development.md` (gated checkpoints with acceptance criteria and evidence). Both end in the shared report format in `workflows/report-format.md`.
 
 ## Supported Providers
 

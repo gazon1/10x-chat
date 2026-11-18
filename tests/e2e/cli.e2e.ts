@@ -156,4 +156,34 @@ describe('cli flows', () => {
       expect(history.output).toContain('No secret named "openai-key"');
     });
   });
+
+  it('installs the skill with its playbooks and working links', async () => {
+    await withTempHome(async (home) => {
+      const { existsSync } = await import('node:fs');
+      const { readFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+
+      const result = await runCli(['skill', 'install'], { HOME: home });
+      expect(result.code).toBe(0);
+
+      const skillDir = path.join(home, '.codex', 'skills', '10x-chat');
+      for (const file of [
+        'SKILL.md',
+        'workflows/pr-review.md',
+        'workflows/helix-development.md',
+        'workflows/report-format.md',
+      ]) {
+        expect(existsSync(path.join(skillDir, file))).toBe(true);
+      }
+
+      // Every relative link of the installed skill must resolve in the
+      // installed copy — the paths differ from the repository checkout.
+      const skill = await readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
+      const links = [...skill.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]);
+      expect(links.length).toBeGreaterThan(0);
+      for (const link of links) {
+        expect(existsSync(path.resolve(skillDir, link))).toBe(true);
+      }
+    });
+  });
 });

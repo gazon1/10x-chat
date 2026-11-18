@@ -1,11 +1,11 @@
 ---
 name: 10x-chat
-description: Ask another AI model (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) from the terminal using your logged-in browser — no API key. Use for a second opinion on a bug, cross-model code review, PR review, deep research, or image generation. Load when the user mentions 10x-chat or asks how to use it.
+description: Ask another AI model (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) from the terminal using your logged-in browser — no API key. Use for a second opinion on a bug, cross-model code review, PR review, gated Helix-style development, deep research, or image generation. Load when the user mentions 10x-chat or asks how to use it.
 ---
 
 # 10x-chat
 
-10x-chat sends a prompt — with files attached as context — to a web AI chat through a real, logged-in browser. It is a CLI over Playwright/CloakBrowser, not an API client.
+10x-chat sends a prompt to a web AI chat through a real, logged-in browser. It is a CLI over Playwright/CloakBrowser, not an API client. The model reads the code itself — from the GitHub coordinates in the prompt, not from files you send it.
 
 ## Why it exists
 
@@ -54,17 +54,18 @@ npm 11 notes: `--install-links` is required for git installs; npm 11.20+ also ne
 ## Core commands
 
 ```bash
-# Chat, files as context
-10x-chat chat --provider gemini -p "Review this for race conditions" --file src/queue.ts
+# The reviewer reads the repository on GitHub itself — point it at the URLs
+10x-chat chat --provider chatgpt --new-chat \
+  -p "Review https://github.com/owner/repo/pull/42 (base <sha>, head <sha>). Report only real problems."
 
 # Fresh conversation (default reuses the one stored per repo+branch+provider)
-10x-chat chat --provider claude --new-chat -p "..." --file pr.diff
+10x-chat chat --provider claude --new-chat -p "..."
 
 # Ask every chat provider in parallel
-10x-chat chat --all --new-chat -p "..." --file pr.diff
+10x-chat chat --all --new-chat -p "..."
 
 # Preview exactly what will be sent (no browser)
-10x-chat chat -p "..." --file "src/**/*.ts" --dry-run
+10x-chat chat -p "..." --dry-run
 
 # Deep research (minutes, not seconds)
 10x-chat research --provider perplexity --timeout 900000 \
@@ -81,35 +82,62 @@ npm 11 notes: `--install-links` is required for git installs; npm 11.20+ also ne
 
 Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
 
+**Never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed.
+
+## Playbooks
+
+Two ready-made workflows live next to this file. They are provider-neutral and language-neutral — they work in any repository, with any build system.
+
+| Playbook | File | Use it when |
+|---|---|---|
+| PR review | [workflows/pr-review.md](workflows/pr-review.md) | The user asks for a review of a PR, a branch, a patch or a diff. |
+| Helix-style development | [workflows/helix-development.md](workflows/helix-development.md) | The user asks for a change to be built and gated by checkpoints. |
+| Shared report format | [workflows/report-format.md](workflows/report-format.md) | Both playbooks end in this report shape. |
+
+**The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
+
+**The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, pull request URL, commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first, then asks for the review. `--file` and `--attach` are not used.
+
+Load the playbook file before starting one of these tasks — it carries the reviewer roles, the finding schema, the evidence rules and the report template.
+
 ## Workflow recipes
 
 ### 1. Review a pull request
 
-Build a focused diff first — the whole repo is noise:
+For a real review, use the [PR review playbook](workflows/pr-review.md). The short version:
 
 ```bash
 git fetch origin main --quiet
-git diff origin/main...HEAD > /tmp/pr.diff
+git add -A && git commit -m "<message>" && git push origin <branch>
+BASE=$(git rev-parse origin/main)
+HEAD=$(git rev-parse HEAD)
 
-10x-chat chat --provider claude --new-chat --timeout 900000 \
-  --file /tmp/pr.diff \
-  -p "You are reviewing a pull request. Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
+10x-chat chat --provider chatgpt --new-chat --timeout 900000 \
+  -p "You are reviewing a pull request. Read the code on GitHub yourself:
+       Repository:   https://github.com/<owner>/<name>
+       Pull request: https://github.com/<owner>/<name>/pull/<n>
+       Base: $BASE
+       Head: $HEAD
+     Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
 ```
 
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
-- For a cross-model verdict, run the same prompt with `--all` and compare. Two models agreeing on a finding is a much stronger signal than one.
-- The diff excludes untracked files. Add the ones that matter with another `--file`.
+- `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.
+- The reviewer sees what is pushed to `origin`, so commit and push before asking. Nothing is attached to the prompt — the reviewer reads the repository itself.
 
 ### 2. Second opinion on a failure
 
 ```bash
-10x-chat chat --provider gemini --new-chat --timeout 600000 \
-  --file src/problem.ts --file /tmp/test-output.log \
-  -p "Tests fail with the output in test-output.log. The source is problem.ts. Identify the root cause. Do not propose a rewrite."
+10x-chat chat --provider chatgpt --new-chat --timeout 600000 \
+  -p "In https://github.com/<owner>/<name> (branch <branch>, commit <sha>) the tests fail like this:
+
+<the failing output, pasted into the prompt>
+
+Identify the root cause. Do not propose a rewrite."
 ```
 
-Include the failing output and the smallest set of source files. Fewer, focused files produce better answers than the whole `src/`.
+The reviewer opens the failing file on GitHub itself — paste only the failing output. If the failure is in a state that is not on `origin`, push it first; there is no attachment fallback.
 
 ### 3. Cross-validation of a decision
 
@@ -126,8 +154,9 @@ Include the failing output and the smallest set of source files. Fewer, focused 
 
 ## Agent rules
 
+- **Never send files.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first — nothing that is not on GitHub can be reviewed.
 - **Check login first.** `login --status` before a batch of runs; a failed run wastes minutes.
-- **Keep bundles small.** `--file` accepts globs. Include the code under review, not the repository. Use `--dry-run` when unsure.
+- **Keep the brief short.** The prompt carries coordinates, the role and the expected output format — not the code. Use `--dry-run` when unsure what will be sent.
 - **Timeout deliberately.** Defaults are in seconds-to-minutes; research and reasoning models need `--timeout 600000`–`900000`. A truncated answer prints a warning — re-run with a larger timeout rather than trusting it.
 - **Conversation reuse is a feature.** Within the same git repo + branch + provider, follow-ups land in the same chat. Use that for "now fix it"; use `--new-chat` for independent judgments.
 - **Exit code 1 means failure**, with a hint printed. `antibot` → ask the user to solve it; `unauthorized` → `10x-chat login <provider>`; `unavailable` → retry later or another provider.
