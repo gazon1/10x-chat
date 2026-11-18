@@ -34,7 +34,10 @@ export function createChatCommand(): Command {
     .option('--headed', 'Show browser window during chat')
     .option('--headless', 'Force headless browser even for providers that prefer headed')
     .option('--timeout <ms>', 'Response timeout in milliseconds (overrides the config)')
-    .option('--transport <name>', 'Transport to use: browser (default) or api (requires --provider)')
+    .option(
+      '--transport <name>',
+      'Transport to use: browser (default) or api (requires --provider)',
+    )
     .option(
       '--new-chat',
       'Start a new conversation instead of reusing the one stored for this repo/branch',
@@ -64,16 +67,16 @@ export function createChatCommand(): Command {
         );
         process.exit(1);
       }
-      if (transport === 'api' && !provider) {
-        console.error(chalk.red('The --transport api option requires --provider <name>.'));
-        process.exit(1);
-      }
       if (options.all && transport === 'api') {
         console.error(
           chalk.red(
             'Cannot use --all with --transport api: API calls are billed per request and providers support different transports. Specify --provider <name>.',
           ),
         );
+        process.exit(1);
+      }
+      if (transport === 'api' && !provider) {
+        console.error(chalk.red('The --transport api option requires --provider <name>.'));
         process.exit(1);
       }
 

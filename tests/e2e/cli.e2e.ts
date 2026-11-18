@@ -204,68 +204,75 @@ describe('cli flows', () => {
   });
 });
 
-  it('rejects --all with the api transport', async () => {
-    await withTempHome(async (home) => {
-      const result = await runCli(
-        ['chat', '-p', 'hi', '--all', '--transport', 'api'],
-        { TEN_X_CHAT_HOME: home },
-      );
-      expect(result.code).toBe(1);
-      expect(result.output).toMatch(/--all.*--transport api|transport api.*--all|browser transport only/i);
+it('rejects --all with the api transport', async () => {
+  await withTempHome(async (home) => {
+    const result = await runCli(['chat', '-p', 'hi', '--all', '--transport', 'api'], {
+      TEN_X_CHAT_HOME: home,
     });
+    expect(result.code).toBe(1);
+    expect(result.output).toMatch(
+      /--all.*--transport api|transport api.*--all|browser transport only/i,
+    );
   });
+});
 
-  it('configures proxy and provider key via CLI and shows effective state', async () => {
-    await withTempHome(async (home) => {
-      const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+it('configures proxy and provider key via CLI and shows effective state', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
 
-      let res = await runCli(['config', 'proxy', 'set', 'http://proxy.example:3128', '--bypass', 'localhost'], env);
-      expect(res.code).toBe(0);
-      res = await runCli(['config', 'proxy', 'disable'], env);
-      expect(res.code).toBe(0);
-      res = await runCli(['config', 'proxy', 'clear'], env);
-      expect(res.code).toBe(0);
+    let res = await runCli(
+      ['config', 'proxy', 'set', 'http://proxy.example:3128', '--bypass', 'localhost'],
+      env,
+    );
+    expect(res.code).toBe(0);
+    res = await runCli(['config', 'proxy', 'disable'], env);
+    expect(res.code).toBe(0);
+    res = await runCli(['config', 'proxy', 'clear'], env);
+    expect(res.code).toBe(0);
 
-      const secretValue = 'sk-e2e-do-not-print';
-      res = await runCli(['secrets', 'set', 'deepseek-key'], env, secretValue);
-      expect(res.code).toBe(0);
-      res = await runCli(['config', 'set', 'provider-key', 'deepseek', 'deepseek-key'], env);
-      expect(res.code).toBe(0);
+    const secretValue = 'sk-e2e-do-not-print';
+    res = await runCli(['secrets', 'set', 'deepseek-key'], env, secretValue);
+    expect(res.code).toBe(0);
+    res = await runCli(['config', 'set', 'provider-key', 'deepseek', 'deepseek-key'], env);
+    expect(res.code).toBe(0);
 
-      const show = await runCli(['config', 'show'], env);
-      expect(show.code).toBe(0);
-      expect(show.output).toContain('deepseek-key');
-      expect(show.output).toContain('configured');
-      expect(show.output).toContain('browser, api');
-      expect(show.output).not.toContain(secretValue);
-    });
+    const show = await runCli(['config', 'show'], env);
+    expect(show.code).toBe(0);
+    expect(show.output).toContain('deepseek-key');
+    expect(show.output).toContain('configured');
+    expect(show.output).toContain('browser, api');
+    expect(show.output).not.toContain(secretValue);
   });
+});
 
-  it('rejects proxy URL with embedded credentials via CLI', async () => {
-    await withTempHome(async (home) => {
-      const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
-      const res = await runCli(['config', 'proxy', 'set', 'http://user:pass@proxy.example:3128'], env);
-      expect(res.code).toBe(1);
-      expect(res.output).toMatch(/must not contain credentials|credentials/i);
-      expect(res.output).not.toContain('user:pass');
-    });
+it('rejects proxy URL with embedded credentials via CLI', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const res = await runCli(
+      ['config', 'proxy', 'set', 'http://user:pass@proxy.example:3128'],
+      env,
+    );
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/must not contain credentials|credentials/i);
+    expect(res.output).not.toContain('user:pass');
   });
+});
 
-  it('rejects --transport api without --provider even when defaultProvider is configured for api', async () => {
-    await withTempHome(async (home) => {
-      const { writeFile } = await import('node:fs/promises');
-      const path = await import('node:path');
-      const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
-      await writeFile(
-        path.join(home, 'config.json'),
-        JSON.stringify({ defaultProvider: 'deepseek', providerKeys: { deepseek: 'deepseek-key' } }),
-      );
-      const set = await runCli(['secrets', 'set', 'deepseek-key'], env, 'sk-test-key');
-      expect(set.code).toBe(0);
+it('rejects --transport api without --provider even when defaultProvider is configured for api', async () => {
+  await withTempHome(async (home) => {
+    const { writeFile } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    await writeFile(
+      path.join(home, 'config.json'),
+      JSON.stringify({ defaultProvider: 'deepseek', providerKeys: { deepseek: 'deepseek-key' } }),
+    );
+    const set = await runCli(['secrets', 'set', 'deepseek-key'], env, 'sk-test-key');
+    expect(set.code).toBe(0);
 
-      const result = await runCli(['chat', '-p', 'hi', '--transport', 'api'], env);
-      expect(result.code).toBe(1);
-      expect(result.output).toMatch(/requires --provider/i);
-      expect(result.output).not.toContain('sk-test-key');
-    });
+    const result = await runCli(['chat', '-p', 'hi', '--transport', 'api'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toMatch(/requires --provider/i);
+    expect(result.output).not.toContain('sk-test-key');
   });
+});
