@@ -62,6 +62,8 @@ function createSubmitPage(options: {
   insertLandsHalf?: boolean;
   /** The composer swallows the whitespace of the prompt. */
   losesSeparators?: boolean;
+  /** The composer cannot be emptied — the old text stays in it. */
+  clearFails?: boolean;
   /** A hidden composer sits in front of the visible one. */
   hiddenFirst?: boolean;
 }) {
@@ -72,10 +74,11 @@ function createSubmitPage(options: {
     typeDoesNotLand = false,
     insertLandsHalf = false,
     losesSeparators = false,
+    clearFails = false,
     hiddenFirst = false,
   } = options;
   // The raw text of the composer, before the editor merges the paragraphs.
-  let raw = '';
+  let raw = clearFails ? 'old prompt ' : '';
   const element = new FakeElement();
   element.isContentEditable = contenteditable;
 
@@ -151,7 +154,7 @@ function createSubmitPage(options: {
             applyText(value);
           }),
       press: vi.fn(async (key: string) => {
-        if (key === 'Backspace') raw = '';
+        if (key === 'Backspace' && !clearFails) raw = '';
       }),
     },
     waitForTimeout: vi.fn(async () => {}),
@@ -319,6 +322,24 @@ describe('submitPromptToComposer', () => {
         sendButtonSelector: '#send',
       }),
     ).rejects.toThrow('could not be entered into the composer');
+
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a prompt that is mixed with the old text of the composer', async () => {
+    // The composer keeps the text of the previous prompt: the new one would
+    // be sent together with it.
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      clearFails: true,
+    });
+
+    await expect(
+      submitPromptToComposer(page as never, 'Hello world', {
+        composerSelector: '#composer',
+        sendButtonSelector: '#send',
+      }),
+    ).rejects.toThrow('composer');
 
     expect(sendButton.click).not.toHaveBeenCalled();
   });

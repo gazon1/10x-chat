@@ -118,27 +118,19 @@ export async function submitPromptToComposer(
         .catch(() => {});
     };
 
-    // Empty the composer before every insertion: a partly inserted prompt that
-    // stays in the composer is sent twice — once as a half prompt, once as the
-    // whole one.
-    const clearComposer = async (): Promise<void> => {
-      await focusComposer();
-      await page.keyboard.press('ControlOrMeta+a');
-      await page.keyboard.press('Backspace');
-    };
-
-    await clearComposer();
-
-    const landed = async (): Promise<boolean> =>
+    // The words of the composer, read per block: the composer turns the
+    // newlines of the prompt into paragraphs, and the text of the paragraphs
+    // is concatenated without a separator. A prompt that lost its word
+    // separators ("hello world" -> "helloworld") is one word and does not
+    // land.
+    const readWords = async (): Promise<string[]> =>
       composer
-        .evaluate((element, text) => {
-          // The composer turns the newlines of the prompt into paragraphs:
-          // the words land, but the whitespace between them does not. The
-          // comparison therefore works on the words — and the words of the
-          // composer are read per block, so a prompt that lost its word
-          // separators ("hello world" -> "helloworld") is one word and does
-          // not land. Ignoring every whitespace would accept that.
-          const words = (value: string): string[] => value.split(/\s+/).filter(Boolean);
+        .evaluate((element) => {
+          const words = (value: string): string[] =>
+            value
+              .replace(/[\u200b\ufeff]/g, '')
+              .split(/\s+/)
+              .filter(Boolean);
 
           const blocks = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'SECTION']);
           const collect = (node: Node, out: string[]): void => {
@@ -149,6 +141,13 @@ export async function submitPromptToComposer(
               }
               if (child.nodeType !== 1) continue;
               const childElement = child as HTMLElement;
+              // Hidden nodes hold no text of the prompt.
+              if (
+                typeof childElement.checkVisibility === 'function' &&
+                !childElement.checkVisibility()
+              ) {
+                continue;
+              }
               if (childElement.tagName === 'BR') {
                 out.push('\n');
                 continue;
@@ -160,31 +159,57 @@ export async function submitPromptToComposer(
             }
           };
 
-          const composerWords = (): string[] => {
-            const parts: string[] = [];
-            collect(element, parts);
-            const text2 = parts.join('');
-            if (text2.trim().length === 0) {
-              // No child nodes: the composer is a plain text holder.
-              const rendered = (element as HTMLElement).innerText;
-              return words(typeof rendered === 'string' ? rendered : (element.textContent ?? ''));
-            }
-            return words(text2);
-          };
+          // Only the editable part of the composer holds the prompt.
+          const editable =
+            element.getAttribute('contenteditable') === 'true' ||
+            (element as HTMLElement).isContentEditable
+              ? element
+              : (element.querySelector('[contenteditable="true"]') ?? element);
 
-          const expected = words(text);
-          if (expected.length === 0) return false;
-          const actual = composerWords();
-          if (actual.length < expected.length) return false;
-          // The words must appear in the same order.
-          let index = 0;
-          for (const word of actual) {
-            if (word === expected[index]) index += 1;
-            if (index === expected.length) break;
+          const parts: string[] = [];
+          collect(editable, parts);
+          const collected = parts.join('');
+          if (collected.trim().length === 0) {
+            // No child nodes: the composer is a plain text holder.
+            const rendered = (element as HTMLElement).innerText;
+            return words(typeof rendered === 'string' ? rendered : (editable.textContent ?? ''));
           }
-          return index === expected.length;
-        }, prompt)
-        .catch(() => false);
+          return words(collected);
+        })
+        .catch(() => [] as string[]);
+
+    // Empty the composer before every insertion: a partly inserted prompt that
+    // stays in the composer is sent twice — once as a half prompt, once as the
+    // whole one.
+    const clearComposer = async (): Promise<void> => {
+      await focusComposer();
+      await page.keyboard.press('ControlOrMeta+a');
+      await page.keyboard.press('Backspace');
+      // The composer must be empty now: an insertion into a composer that
+      // still holds the old text produces a prompt that is not the one asked
+      // for.
+      const left = await readWords();
+      if (left.length > 0) {
+        throw new Error('The composer could not be cleared — the old text is still in it.');
+      }
+    };
+
+    await clearComposer();
+
+    const landed = async (): Promise<boolean> => {
+      const expected = prompt
+        .replace(/[\u200b\ufeff]/g, '')
+        .split(/\s+/)
+        .filter(Boolean);
+      if (expected.length === 0) return false;
+      const actual = await readWords();
+      // Exactly the prompt, in the same order: extra words mean that the
+      // composer held something else — the old text of a previous prompt, for
+      // instance.
+      return (
+        actual.length === expected.length && actual.every((word, index) => word === expected[index])
+      );
+    };
 
     // One insertion instead of one keystroke per character: a rich composer
     // types slowly, and a long prompt took minutes — long enough to kill the
