@@ -9,6 +9,14 @@ import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { redactText } from './diagnostics.js';
 import { getChromium, getEngineName } from './engine.js';
+import {
+  CLOSE_TIMEOUT_MS,
+  InvalidatedHandles,
+  invalidateOnTimeout,
+  OPERATION_TIMEOUT_MS,
+  RPC_TIMEOUT_MS,
+  withOperationTimeout,
+} from './operation-timeout.js';
 import { CHROMIUM_ARGS } from './process.js';
 import { fingerprintProxy } from './proxy.js';
 import { detectChromeChannel, STEALTH_INIT_SCRIPT } from './stealth.js';
@@ -20,43 +28,12 @@ function redactError(error: unknown): string {
 }
 
 /**
- * How long a single page operation may take.
- *
- * Playwright's `evaluate` has no timeout of its own: a busy page blocks it
- * forever, and the RPC never answers. The bound turns a hung page into an
- * error the caller can act on.
- */
-const OPERATION_TIMEOUT_MS = 60_000;
-
-/**
  * The bound of a whole RPC.
  *
  * It stays below the deadline of the HTTP request of the client (Bun aborts a
  * fetch after 360 s), so a stuck call surfaces as an error instead of killing
  * the run.
  */
-const RPC_TIMEOUT_MS = 180_000;
-
-async function withOperationTimeout<T>(
-  operation: Promise<T>,
-  label: string,
-  timeoutMs = OPERATION_TIMEOUT_MS,
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} did not answer within ${timeoutMs}ms`)),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 type JsonPrimitive = boolean | number | string | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -143,6 +120,14 @@ const contexts = new Map<string, BrowserContext>();
 const pages = new Map<string, { page: Page; contextId: string }>();
 const fileChoosers = new Map<string, FileChooser>();
 const downloads = new Map<string, Download>();
+/**
+ * The sessions of the operations that did not answer in time.
+ *
+ * Their handle is refused from now on: the operation may still run in the
+ * browser, and a later operation on the same page would work on a
+ * half-changed document.
+ */
+const invalidatedHandles = new InvalidatedHandles();
 
 function touchActivity(): void {
   lastActivity = Date.now();
@@ -260,6 +245,12 @@ function getContext(contextId?: string): BrowserContext {
     throw new Error('Missing contextId');
   }
 
+  if (invalidatedHandles.isInvalidated('context', contextId)) {
+    throw new Error(
+      `Context ${contextId} was invalidated after a timed-out operation: this session is not usable any more.`,
+    );
+  }
+
   const context = contexts.get(contextId);
   if (!context) {
     throw new Error(`Context not found: ${contextId}`);
@@ -272,11 +263,56 @@ function getPage(pageId?: string): { page: Page; contextId: string } {
     throw new Error('Missing pageId');
   }
 
+  if (invalidatedHandles.isInvalidated('page', pageId)) {
+    throw new Error(
+      `Page ${pageId} was invalidated after a timed-out operation: this session is not usable any more.`,
+    );
+  }
+
   const page = pages.get(pageId);
   if (!page) {
     throw new Error(`Page not found: ${pageId}`);
   }
   return page;
+}
+
+/**
+ * Invalidate the session of an operation that did not answer in time.
+ *
+ * The operation may still run inside the browser. Closing the page aborts
+ * the pending action of Playwright, and the handle is refused from now on:
+ * the next operation on it fails with a clear error instead of working on a
+ * half-changed page.
+ */
+async function invalidateSession(handle: { kind: 'page' | 'context'; id: string }): Promise<void> {
+  if (handle.kind === 'page') {
+    const entry = pages.get(handle.id);
+    pages.delete(handle.id);
+    invalidatedHandles.invalidate('page', handle.id);
+    if (!entry) return;
+    activePageCount = Math.max(0, activePageCount - 1);
+    await withOperationTimeout(entry.page.close(), 'page.close', CLOSE_TIMEOUT_MS).catch(
+      () => undefined,
+    );
+    return;
+  }
+
+  const context = contexts.get(handle.id);
+  contexts.delete(handle.id);
+  invalidatedHandles.invalidate('context', handle.id);
+  for (const [pageId, entry] of pages.entries()) {
+    if (entry.contextId !== handle.id) continue;
+    pages.delete(pageId);
+    invalidatedHandles.invalidate('page', pageId);
+    activePageCount = Math.max(0, activePageCount - 1);
+    await withOperationTimeout(entry.page.close(), 'page.close', CLOSE_TIMEOUT_MS).catch(
+      () => undefined,
+    );
+  }
+  if (!context) return;
+  await withOperationTimeout(context.close(), 'context.close', CLOSE_TIMEOUT_MS).catch(
+    () => undefined,
+  );
 }
 
 function resolveLocator(page: Page, steps?: LocatorStep[]): Locator {
@@ -761,8 +797,9 @@ async function main(): Promise<void> {
 
     let rpcLabel = 'unknown';
     const startedAt = Date.now();
+    let body: RpcRequest | undefined;
     try {
-      const body = (await readJsonBody(req)) as RpcRequest;
+      body = (await readJsonBody(req)) as RpcRequest;
       rpcLabel = `${body.kind}.${body.method}`;
       // The bound is below the deadline of the client's HTTP request: a call
       // that never answers must fail here, not kill the whole run.
@@ -777,6 +814,14 @@ async function main(): Promise<void> {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
     } catch (error) {
+      // A timed-out operation may still run inside the browser: the session of
+      // the operation must not be used any more.
+      const invalidated = await invalidateOnTimeout(error, body?.target, invalidateSession);
+      if (invalidated) {
+        console.error(
+          `[rpc] ${rpcLabel} invalidated the session ${invalidated.kind} ${invalidated.id}`,
+        );
+      }
       console.error(`[rpc] ${rpcLabel} failed ${Date.now() - startedAt}ms: ${redactError(error)}`);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(

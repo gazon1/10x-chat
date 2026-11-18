@@ -514,5 +514,65 @@ describe('ChatGPT Provider', () => {
       expect(response.text).toBe(answer.bodies[0].text);
       expect(response.truncated).toBe(false);
     });
+
+    it('captures an answer that has the same text as the answer of the previous turn', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
+      // The answer of this turn is the same text as the answer of the previous
+      // turn: the difference is not visible in the text, only in the position
+      // of the body in the chat.
+      const answer = 'OK';
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            // The first snapshot is the baseline: the answer of the previous
+            // turn. The next ones hold the answer of this turn.
+            return {
+              found: true,
+              bodies: [{ text: answer, html: '<p>OK</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+              // The snapshot is scoped to the turn of the user: its body is
+              // the answer of this turn.
+              scoped: true,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+      });
+
+      expect(response.text).toBe(answer);
+    });
   });
 });

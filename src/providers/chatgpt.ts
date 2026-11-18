@@ -116,6 +116,14 @@ interface AssistantSnapshot {
    * answer is still rendering it is a label of the thinking UI.
    */
   viaFallback: boolean;
+  /**
+   * The bodies belong to the turn of the last message of the user.
+   *
+   * Then they are the answer of this run, even when their text is the same
+   * as the text of the answer of the previous turn: the difference is not
+   * visible in the text.
+   */
+  scoped: boolean;
 }
 
 export const CHATGPT_CONFIG: ProviderConfig = {
@@ -406,15 +414,35 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       });
 
       if (bodies.length > 0) {
-        return { found: true, bodies, errorText, lastUserText, viaFallback: false };
+        // The bodies were taken from the messages after the last message of
+        // the user: they are the answer of this turn.
+        return {
+          found: true,
+          bodies,
+          errorText,
+          lastUserText,
+          viaFallback: false,
+          scoped: lastUserTurn !== null,
+        };
       }
 
       // Fallback for the other UI variants: the last visible match.
       for (const selector of fallbackSelectors) {
         const matches = Array.from(document.querySelectorAll(selector));
         if (matches.length === 0) continue;
-        const visibleMatches = matches.filter(isVisible);
-        const last = (visibleMatches.length > 0 ? visibleMatches : matches).at(-1);
+        // The answer of this turn is after the last message of the user. If
+        // there is one, the fallback is scoped to it — the answer of the
+        // previous turn must not be taken for the answer of this run.
+        const afterUserTurn = lastUserTurn
+          ? matches.filter(
+              (element) =>
+                lastUserTurn.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING,
+            )
+          : [];
+        const scoped = afterUserTurn.length > 0;
+        const candidates = scoped ? afterUserTurn : matches;
+        const visibleMatches = candidates.filter(isVisible);
+        const last = (visibleMatches.length > 0 ? visibleMatches : candidates).at(-1);
         if (!(last instanceof Element)) continue;
         return {
           found: true,
@@ -427,10 +455,18 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
           errorText,
           lastUserText,
           viaFallback: true,
+          scoped,
         };
       }
 
-      return { found: false, bodies: [], errorText, lastUserText, viaFallback: true };
+      return {
+        found: false,
+        bodies: [],
+        errorText,
+        lastUserText,
+        viaFallback: true,
+        scoped: false,
+      };
     },
     {
       bodySelectors: [...ASSISTANT_BODY_SELECTORS],
@@ -470,8 +506,18 @@ function isPromptEcho(text: string, prompt: string): boolean {
  * is everything after them. The transcript can also be re-rendered, which
  * loses the old messages — then the last old message that is still there
  * marks the start of the new ones.
+ *
+ * A scoped snapshot holds the messages of the turn of the user only, so it
+ * needs no comparison with the baseline: the answer of this run can have the
+ * same text as the answer of the previous turn, and a comparison by text
+ * would drop it.
  */
-function newAssistantBodies(baseline: string[], current: AssistantBody[]): AssistantBody[] {
+function newAssistantBodies(
+  baseline: string[],
+  current: AssistantBody[],
+  scoped = false,
+): AssistantBody[] {
+  if (scoped) return current;
   if (baseline.length === 0) return current;
   const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
@@ -1098,7 +1144,11 @@ export const chatgptActions: ProviderActions = {
     const normalize = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
 
     // ponytail: direct text polling beats ChatGPT's constantly shifting turn DOM.
-    let lastText = baseline.latestText;
+    // The text of the last answer of this run: it starts empty, because a
+    // scoped snapshot is the answer of this turn even when its text is the
+    // text of the answer of the previous turn.
+    let lastText = '';
+    let lastScoped = false;
     let emittedText = '';
     let stableCount = 0;
     let activityPolls = 0;
@@ -1116,7 +1166,8 @@ export const chatgptActions: ProviderActions = {
         await page.waitForTimeout(1000);
         continue;
       }
-      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies).filter(
+      const scoped = snapshot.scoped === true;
+      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies, scoped).filter(
         (body) => !isPromptEcho(body.text, baseline.promptText),
       );
       const text = bodies
@@ -1136,7 +1187,12 @@ export const chatgptActions: ProviderActions = {
       const streaming = await isGenerating();
       const activity = ACTIVITY_TEXT.test(text);
 
-      if (bodies.length > 0 && text !== baseline.latestText) {
+      // A scoped snapshot holds the answer of this turn: it is new even when
+      // it has the same text as the answer of the previous turn. An unscoped
+      // one may still show the answer of the previous turn.
+      const fresh =
+        bodies.length > 0 && text.length > 0 && (scoped || text !== baseline.latestText);
+      if (fresh) {
         if (text !== emittedText && !activity && !snapshot.viaFallback) {
           // The renderer re-creates the message while it streams, so the text
           // can change from the beginning. Emit only what was not emitted yet:
@@ -1178,12 +1234,15 @@ export const chatgptActions: ProviderActions = {
           activityPolls = 0;
         }
         lastText = text;
+        lastScoped = scoped;
       }
 
       await page.waitForTimeout(1000);
     }
 
-    if (!lastText || lastText === baseline.latestText) {
+    // A scoped answer is the answer of this turn, even when it has the same
+    // text as the answer of the previous turn.
+    if (!lastText || (!lastScoped && lastText === baseline.latestText)) {
       throw new Error('Timed out waiting for ChatGPT assistant response');
     }
 
@@ -1191,9 +1250,11 @@ export const chatgptActions: ProviderActions = {
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
     const finalSnapshot = await getLatestAssistantSnapshot(page);
-    const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies).filter(
-      (body) => !isPromptEcho(body.text, baseline.promptText),
-    );
+    const finalBodies = newAssistantBodies(
+      baseline.bodies,
+      finalSnapshot.bodies,
+      finalSnapshot.scoped === true,
+    ).filter((body) => !isPromptEcho(body.text, baseline.promptText));
     const markdown =
       finalBodies.length > 0
         ? finalBodies.map((body) => body.html).join('\n\n')
