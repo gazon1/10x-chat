@@ -43,11 +43,7 @@ jobs:
       - name: Build
         run: bun run build
 
-      # The registry name `10x-chat` belongs to the upstream project, so
-      # `npm publish` fails and would block the GitHub Release. Publishing is
-      # disabled until a free name is chosen (docs/verification.md §4).
       - name: Publish to npm
-        if: false
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
