@@ -19,6 +19,7 @@ import {
 } from './conversations.js';
 import type { FailureKind } from './failures.js';
 import {
+  ContextWindowFullError,
   checkProviderSession,
   failureKind,
   ProviderGenerationError,
@@ -28,6 +29,14 @@ import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
 import { chatModel } from './model.js';
 import { chatTimeoutMs, isResponseTimeout } from './timeout.js';
+
+/**
+ * How many times a run continues the conversation in a new chat.
+ *
+ * Every continuation is a new chat with a summary: too many of them mean the
+ * work does not fit into any context window.
+ */
+const MAX_CONTINUATIONS = 3;
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
 const CHAT_PROVIDERS: ProviderName[] = [
@@ -98,6 +107,9 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
 
   const conversationContext = await resolveConversationContext();
   let storedConversation: StoredConversation | undefined;
+  // The files of the request: they are attached again when the conversation
+  // continues in a new chat.
+  let attachPaths: string[] | undefined;
   if (options.newChat) {
     // A new chat replaces the stored one, even if this run fails.
     await clearStoredConversation(conversationContext, providerName).catch(() => {});
@@ -206,6 +218,13 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     // The new chat is fresh: it must not be replaced by a blank one.
     freshRequired = false;
 
+    // The files of the request belong to the old chat: they are attached
+    // again in the new one, so the answer is not produced without them.
+    if (attachPaths && provider.actions.attachFiles) {
+      console.log(chalk.dim(`Attaching ${attachPaths.length} file(s) to the new chat...`));
+      await provider.actions.attachFiles(browser.page, attachPaths).catch(() => {});
+    }
+
     // The new chat replaces the stored one: it is the working chat of this
     // repository and branch from now on, until its own context window runs out
     // too. The previous conversation stays until the new one has a permanent
@@ -294,6 +313,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       } else {
         const resolvedPaths = await resolveAttachPaths(options.attach);
         if (resolvedPaths.length > 0) {
+          attachPaths = resolvedPaths;
           console.log(chalk.dim(`Attaching ${resolvedPaths.length} file(s)...`));
           await provider.actions.attachFiles(browser.page, resolvedPaths);
         }
@@ -337,6 +357,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     const hasAttachments = Boolean(options.attach && options.attach.length > 0);
     const askWithRetry = async () => {
       let retried = false;
+      let continuations = 0;
       for (;;) {
         // The context window can run out during the run: continue in a new
         // chat with a summary and ask there.
@@ -349,6 +370,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
               'The context window of the chat is full and the chat could not be continued in a new one.',
             );
           }
+          continuations++;
           await sessionCheck();
           if (modelName && provider.actions.selectModel) {
             await provider.actions.selectModel(browser.page, modelName);
@@ -359,6 +381,15 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
           if (!captured.truncated || retried || hasAttachments) return captured;
           console.log(chalk.dim('The response was cut off — asking again.'));
         } catch (error) {
+          // The context window ran out while the answer was generated: the
+          // next iteration continues the conversation in a new chat and asks
+          // again. The files of the request are attached to the new chat.
+          if (error instanceof ContextWindowFullError) {
+            if (continuations >= MAX_CONTINUATIONS) throw error;
+            continuations++;
+            console.log(chalk.dim('The context window ran out — continuing in a new chat.'));
+            continue;
+          }
           if (retried || hasAttachments || !(error instanceof ProviderGenerationError)) throw error;
           console.log(chalk.dim('The provider reported an error while generating — asking again.'));
         }

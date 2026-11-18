@@ -6,7 +6,7 @@
  * its first message is sent: a run that fails in between must leave the
  * previous conversation in place, so the next run can pick the work up.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,7 @@ import {
   resolveConversationContext,
   saveStoredConversation,
 } from '../src/core/conversations.js';
+import { ContextWindowFullError } from '../src/core/failures.js';
 import type { ProviderActions, ProviderConfig } from '../src/types.js';
 
 const fake = {
@@ -93,5 +94,79 @@ describe('the continuation of an exhausted chat', () => {
     await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow();
 
     expect((await getStoredConversation(context, 'chatgpt'))?.id).toBe('abc');
+  });
+
+  it('continues the conversation when the context runs out during the answer', async () => {
+    // The answer of an exhausted chat never comes: the run continues the
+    // conversation in a new chat and asks again.
+    let banner = false;
+    let attempts = 0;
+    const submitPrompt = vi.fn(async () => {});
+    fake.page = {
+      url: () => 'https://chatgpt.com/c/abc',
+      evaluate: async () => '',
+      title: async () => '',
+      locator: () => ({ first: () => ({ isVisible: async () => false }) }),
+    } as never;
+    fake.provider = {
+      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      actions: {
+        isLoggedIn: async () => true,
+        contextWindowFull: async () => banner,
+        continueInNewChat: async () => {
+          banner = false;
+          return true;
+        },
+        submitPrompt,
+        captureResponse: async () => {
+          attempts++;
+          if (attempts === 1) {
+            // The context runs out while the answer is generated.
+            banner = true;
+            throw new ContextWindowFullError();
+          }
+          return { text: 'the answer', markdown: 'the answer', truncated: false };
+        },
+      } as unknown as ProviderActions,
+    };
+
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+
+    expect(result.response).toBe('the answer');
+    expect(submitPrompt).toHaveBeenCalledTimes(2);
+  });
+
+  it('attaches the files again in the new chat', async () => {
+    // The files of the request belong to the old chat: the new chat must get
+    // them too, so the answer is not produced without them.
+    const file = path.join(tempHome, 'note.txt');
+    await writeFile(file, 'hello', 'utf8');
+    const attachFiles = vi.fn(async () => {});
+    fake.page = {
+      url: () => 'https://chatgpt.com/c/abc',
+      evaluate: async () => '',
+      title: async () => '',
+      locator: () => ({ first: () => ({ isVisible: async () => false }) }),
+    } as never;
+    fake.provider = {
+      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      actions: {
+        isLoggedIn: async () => true,
+        contextWindowFull: async () => true,
+        continueInNewChat: async () => true,
+        attachFiles,
+        submitPrompt: async () => {},
+        captureResponse: async () => ({
+          text: 'the answer',
+          markdown: 'the answer',
+          truncated: false,
+        }),
+      } as unknown as ProviderActions,
+    };
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] });
+
+    // Once for the old chat, once for the new one.
+    expect(attachFiles).toHaveBeenCalledTimes(2);
   });
 });

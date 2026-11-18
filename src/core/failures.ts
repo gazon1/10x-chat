@@ -53,6 +53,20 @@ export class ProviderGenerationError extends Error {
   }
 }
 
+/**
+ * The context window of the chat ran out.
+ *
+ * The answer of such a chat never comes: the provider has to continue the
+ * conversation in a new chat with a summary. The run does that instead of
+ * waiting for a timeout.
+ */
+export class ContextWindowFullError extends ProviderGenerationError {
+  constructor(message = 'The context window of the chat is full.') {
+    super(message);
+    this.name = 'ContextWindowFullError';
+  }
+}
+
 /** No API key is configured for the provider. */
 export class MissingCredentialError extends Error {
   constructor(message: string) {

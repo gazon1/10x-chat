@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import { conversationIdFromUrl } from '../core/conversations.js';
 import {
   AntibotChallengeError,
+  ContextWindowFullError,
   isChallengeVisible,
   ProviderGenerationError,
 } from '../core/failures.js';
@@ -269,6 +270,14 @@ const GENERATION_ERROR_START =
  * answer ("Read the PR description.") must not wait for the whole timeout.
  */
 const ACTIVITY_GRACE_POLLS = 20;
+
+/**
+ * How many polls pass between two checks of the context window.
+ *
+ * The banner is read from the page: a check on every poll would cost an
+ * evaluation per second for nothing.
+ */
+const CONTEXT_CHECK_POLLS = 5;
 
 /**
  * The error the page reports instead of the answer, if any.
@@ -1153,7 +1162,16 @@ export const chatgptActions: ProviderActions = {
     let stableCount = 0;
     let activityPolls = 0;
     let truncated = true;
+    let polls = 0;
     while (Date.now() - startTime < timeoutMs) {
+      polls++;
+      // The context window can run out while the answer is generated: the
+      // banner appears and the answer never comes. The run continues the
+      // conversation in a new chat instead of waiting for the timeout.
+      if (polls % CONTEXT_CHECK_POLLS === 0) {
+        const full = await detectContextFull(page).catch(() => false);
+        if (full === true) throw new ContextWindowFullError();
+      }
       const snapshot = await getLatestAssistantSnapshot(page);
       // The prompt of this run is not in the DOM yet: the last message of the
       // chat is still the answer of the previous turn, and it is not the

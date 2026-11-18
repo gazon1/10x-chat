@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ContextWindowFullError } from '../src/core/failures.js';
 import { chatgptActions } from '../src/providers/chatgpt.js';
 
 interface Snapshot {
@@ -12,6 +13,8 @@ function createCapturePage(opts: {
   snapshots: Snapshot[];
   /** Is the Stop button visible on the given capture poll? */
   stopVisible?: (poll: number) => boolean;
+  /** Is the banner of the exhausted context window visible? */
+  contextFull?: boolean;
 }) {
   const { turnCounts, snapshots } = opts;
   let turnCountIndex = 0;
@@ -47,7 +50,12 @@ function createCapturePage(opts: {
       }
       return defaultLocator;
     }),
-    evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+    evaluate: vi.fn(async (fn: unknown, arg?: unknown) => {
+      // The banner of the exhausted context window is read by its own
+      // evaluation.
+      if (typeof fn === 'function' && fn.toString().includes('context window full')) {
+        return opts.contextFull === true;
+      }
       if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
         const snapshot = snapshots[Math.min(snapshotIndex++, snapshots.length - 1)];
         return snapshot
@@ -573,6 +581,20 @@ describe('ChatGPT Provider', () => {
       });
 
       expect(response.text).toBe(answer);
+    });
+
+    it('fails with the context error when the banner appears during the answer', async () => {
+      // The answer of a chat whose context window ran out never comes: the
+      // capture has to say so instead of waiting for the timeout.
+      const { page } = createCapturePage({
+        turnCounts: [1],
+        snapshots: [{ found: true, bodies: [{ text: '', html: '' }] }],
+        contextFull: true,
+      });
+
+      await expect(
+        chatgptActions.captureResponse(page as never, { timeoutMs: 5_000 }),
+      ).rejects.toThrow(ContextWindowFullError);
     });
   });
 });
