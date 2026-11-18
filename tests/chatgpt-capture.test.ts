@@ -267,17 +267,24 @@ describe('ChatGPT Provider', () => {
     });
 
     it('does not stream the answer of the previous turn before the prompt is in the DOM', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
       const oldAnswer = {
         found: true,
         bodies: [{ text: 'Answer of the previous turn', html: '<p>old</p>' }],
+      };
+      // The answer of the previous turn is still being rendered when the
+      // prompt is sent: it grows after the baseline was taken.
+      const growingOldAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of the previous', html: '<p>old</p>' }],
       };
       const newAnswer = {
         found: true,
         bodies: [{ text: 'Answer of this turn', html: '<p>new</p>' }],
       };
       // The DOM lags behind the submit: the prompt lands after two polls.
-      let countCalls = 0;
-      let userTurns = 1;
+      let polls = 0;
       const defaultLocator = {
         count: vi.fn(async () => 0),
         first: () => defaultLocator,
@@ -305,18 +312,27 @@ describe('ChatGPT Provider', () => {
         },
         evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
           if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
-            return userTurns > 1 ? newAnswer : oldAnswer;
+            polls++;
+            const landed = polls > 2;
+            return {
+              found: true,
+              bodies:
+                polls === 1
+                  ? growingOldAnswer.bodies
+                  : landed
+                    ? newAnswer.bodies
+                    : oldAnswer.bodies,
+              errorText: '',
+              lastUserText: landed ? prompt : 'the prompt of the chat before this run',
+            };
           }
-          if (typeof arg === 'string') {
-            countCalls++;
-            if (countCalls > 2) userTurns = 2;
-            return userTurns;
-          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
           return false;
         }),
       };
 
-      await chatgptActions.submitPrompt(page as never, 'the prompt');
+      await chatgptActions.submitPrompt(page as never, prompt);
       const chunks: string[] = [];
       const response = await chatgptActions.captureResponse(page as never, {
         timeoutMs: 5_000,

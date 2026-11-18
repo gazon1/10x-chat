@@ -18,11 +18,11 @@ const chatgptSubmitBaseline = new WeakMap<
   {
     turnCount: number;
     /**
-     * The number of messages of the user that the answer must come after.
-     * The DOM lags behind the submit: until the prompt is in the DOM, the
-     * answer of the previous turn is the last message of the chat.
+     * The pieces of the prompt that must be in the DOM when it has landed.
+     * The chat collapses its history, so the number of messages of the user
+     * is not a reliable sign that the prompt is there.
      */
-    minUserTurns: number;
+    markers: string[];
     /** The text of every assistant message of the chat before the prompt. */
     bodies: string[];
     /** The joined text of the assistant messages before the prompt. */
@@ -105,6 +105,8 @@ interface AssistantSnapshot {
   /** The bodies of the assistant messages, in the order of the document. */
   bodies: AssistantBody[];
   errorText: string;
+  /** The text of the last message of the user. */
+  lastUserText: string;
 }
 
 export const CHATGPT_CONFIG: ProviderConfig = {
@@ -206,13 +208,21 @@ async function getAssistantTurnCount(page: Page): Promise<number> {
     .catch(() => 0);
 }
 
-/** The number of messages of the user in the chat. */
-async function getUserTurnCount(page: Page): Promise<number> {
-  // The count runs in the page: the daemon does not proxy the selector engine
-  // of Playwright reliably.
-  return page
-    .evaluate((selectors) => document.querySelectorAll(selectors).length, USER_MESSAGE_SELECTORS)
-    .catch(() => 0);
+/**
+ * The pieces of the prompt that must be in the DOM when it has landed.
+ *
+ * The chat collapses its history ("Show more"), so the number of the messages
+ * of the user is not a reliable sign. The text of the message of the user is:
+ * the tail of the prompt is in the DOM even when the message is collapsed.
+ */
+function promptMarkers(prompt: string): string[] {
+  const flat = prompt.replace(/\s+/g, '').toLowerCase();
+  const markers: string[] = [];
+  const tail = flat.slice(-60);
+  if (tail.length >= 20) markers.push(tail);
+  const middle = flat.slice(Math.floor(flat.length / 2), Math.floor(flat.length / 2) + 60);
+  if (middle.length >= 20) markers.push(middle);
+  return markers;
 }
 
 /**
@@ -281,17 +291,12 @@ function generationErrorOf(
  * elements (the markdown root, the response body, the dil renderer). The
  * longest text of a group is the answer of that message.
  *
- * `minUserTurns` is the number of messages of the user that the answer must
- * come after. The DOM lags behind the submit: without the gate the capture
- * sees the answer of the previous turn and streams it as the answer of this
- * one.
+ * The snapshot carries the text of the last message of the user: the caller
+ * needs it to know that the prompt of this run has landed.
  */
-async function getLatestAssistantSnapshot(
-  page: Page,
-  minUserTurns = 0,
-): Promise<AssistantSnapshot> {
+async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot> {
   return page.evaluate(
-    ({ bodySelectors, fallbackSelectors, messageSelectors, userSelectors, minUserTurns }) => {
+    ({ bodySelectors, fallbackSelectors, messageSelectors, userSelectors }) => {
       const errorText = Array.from(
         document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
       )
@@ -317,13 +322,16 @@ async function getLatestAssistantSnapshot(
       // A chat that continues an exhausted conversation keeps the old turns,
       // and their answers are not the answer of this run.
       const userTurns = Array.from(document.querySelectorAll(userSelectors));
-      // The prompt of this run is not in the DOM yet: the answer of the
-      // previous turn is still the last one, and it is not the answer of this
-      // run.
-      if (userTurns.length > 0 && userTurns.length < minUserTurns) {
-        return { found: false, bodies: [], errorText };
-      }
       const lastUserTurn = userTurns.length > 0 ? userTurns[userTurns.length - 1] : null;
+      // The text of the message of the user: the prompt of this run has landed
+      // when it is in there.
+      const lastUserText = lastUserTurn
+        ? (
+            ((lastUserTurn.parentElement as HTMLElement)?.innerText ??
+              lastUserTurn.textContent ??
+              '') as string
+          ).slice(-800)
+        : '';
 
       // Every body element of the page, no matter which selector found it.
       const matched = new Set<Element>();
@@ -388,7 +396,7 @@ async function getLatestAssistantSnapshot(
         );
       });
 
-      if (bodies.length > 0) return { found: true, bodies, errorText };
+      if (bodies.length > 0) return { found: true, bodies, errorText, lastUserText };
 
       // Fallback for the other UI variants: the last visible match.
       for (const selector of fallbackSelectors) {
@@ -406,17 +414,17 @@ async function getLatestAssistantSnapshot(
             },
           ],
           errorText,
+          lastUserText,
         };
       }
 
-      return { found: false, bodies: [], errorText };
+      return { found: false, bodies: [], errorText, lastUserText };
     },
     {
       bodySelectors: [...ASSISTANT_BODY_SELECTORS],
       fallbackSelectors: [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
       messageSelectors: [...MESSAGE_CONTAINER_SELECTORS],
       userSelectors: USER_MESSAGE_SELECTORS,
-      minUserTurns,
     },
   );
 }
@@ -982,9 +990,8 @@ export const chatgptActions: ProviderActions = {
     const snapshot = await getLatestAssistantSnapshot(page);
     chatgptSubmitBaseline.set(page, {
       turnCount: await getAssistantTurnCount(page),
-      // The number of messages of the user before the prompt: the answer of
-      // this run comes after the message of the prompt.
-      minUserTurns: (await getUserTurnCount(page)) + 1,
+      // The pieces of the prompt that must be in the DOM when it has landed.
+      markers: promptMarkers(prompt),
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
       bodies: snapshot.bodies.map((body) => body.text),
@@ -1051,14 +1058,14 @@ export const chatgptActions: ProviderActions = {
     const baseline = chatgptSubmitBaseline.get(page) ?? {
       turnCount: await getAssistantTurnCount(page),
       // Without a prompt in this process there is no baseline: the gate of
-      // the messages of the user stays off.
-      minUserTurns: 0,
+      // the prompt stays off.
+      markers: [] as string[],
       bodies: [] as string[],
       latestText: '',
       errorText: '',
       url: page.url(),
     };
-    const minUserTurns = baseline.minUserTurns;
+    const normalize = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
 
     // ponytail: direct text polling beats ChatGPT's constantly shifting turn DOM.
     let lastText = baseline.latestText;
@@ -1067,14 +1074,18 @@ export const chatgptActions: ProviderActions = {
     let activityPolls = 0;
     let truncated = true;
     while (Date.now() - startTime < timeoutMs) {
+      const snapshot = await getLatestAssistantSnapshot(page);
       // The prompt of this run is not in the DOM yet: the last message of the
       // chat is still the answer of the previous turn, and it is not the
       // answer of this run.
-      if (minUserTurns > 0 && (await getUserTurnCount(page)) < minUserTurns) {
+      const lastUserText = normalize(snapshot.lastUserText ?? '');
+      const landed =
+        baseline.markers.length === 0 ||
+        baseline.markers.some((marker) => lastUserText.includes(marker));
+      if (!landed) {
         await page.waitForTimeout(1000);
         continue;
       }
-      const snapshot = await getLatestAssistantSnapshot(page, minUserTurns);
       const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies);
       const text = bodies
         .map((body) => body.text)
@@ -1139,7 +1150,7 @@ export const chatgptActions: ProviderActions = {
     // Extract the final HTML content using page.evaluate instead of locator.textContent/innerHTML.
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
-    const finalSnapshot = await getLatestAssistantSnapshot(page, minUserTurns);
+    const finalSnapshot = await getLatestAssistantSnapshot(page);
     const finalBodies = newAssistantBodies(baseline.bodies, finalSnapshot.bodies);
     const markdown =
       finalBodies.length > 0
