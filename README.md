@@ -250,7 +250,7 @@ Send a prompt to an AI provider via browser automation.
 | `--dry-run` | Preview the bundle without sending |
 | `--headed` | Show browser window during chat |
 | `--headless` | Force headless, also for the providers that normally run headed |
-| `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
+| `--timeout <ms>` | Response timeout in milliseconds (default: the provider's — 1800000 for ChatGPT) |
 | `--transport <name>` | `browser` (default) or `api` — see [docs/transports.md](docs/transports.md) |
 | `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
 | `--save-images <dir>` | Save the generated images to a directory |

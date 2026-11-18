@@ -73,7 +73,9 @@ export const CHATGPT_CONFIG: ProviderConfig = {
     'o3',
   ],
   defaultModel: 'Pro',
-  defaultTimeoutMs: 5 * 60 * 1000,
+  // Pro and Thinking need minutes, not seconds: a full PR review takes
+  // ~11 min, and the old 5 min cut the answer off mid-stream.
+  defaultTimeoutMs: 30 * 60 * 1000,
   botProtected: true,
 };
 
