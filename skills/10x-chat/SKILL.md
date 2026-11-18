@@ -1,229 +1,184 @@
 ---
 name: 10x-chat
-description: Chat with web AI agents (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) via browser automation. Use when stuck, need cross-validation, want a second-model review, need image generation, want deep research, or need to inspect ChatGPT chats, download ChatGPT artifacts/ZIPs, or upload files to ChatGPT.
+description: Ask another AI model (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek) from the terminal using your logged-in browser — no API key. Use for a second opinion on a bug, cross-model code review, PR review, deep research, or image generation. Load when the user mentions 10x-chat or asks how to use it.
 ---
 
-# 10x-chat — AI Agent Skill
+# 10x-chat
 
-Use 10x-chat to send prompts to web-based AI agents via automated browser sessions. Supports chat, image generation, and deep research. Sessions use a shared persisted profile by default.
+10x-chat sends a prompt — with files attached as context — to a web AI chat through a real, logged-in browser. It is a CLI over Playwright/CloakBrowser, not an API client.
 
-## Runtime
+## Why it exists
 
-- **Browser**: CloakBrowser (a patched Chromium). It is the only supported engine — there is no Firefox/Camoufox runtime.
-- **Shared daemon**: one Chromium serves every parallel run over a local HTTP RPC; it stops itself after 30 minutes of idleness.
-- **Profiles**: the shared profile (`~/.10x-chat/profiles/default`) holds the login of every provider; `--isolated-profile` gives each provider its own.
-- **Proxy**: the environment only (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`). SOCKS proxies with credentials are refused.
-- **Debug artifacts**: `TEN_X_CHAT_BROWSER_DEBUG=1` writes redacted artifacts (metadata, console, screenshot, page source) into `~/.10x-chat/debug/`.
+- **No API key, no per-token bill.** It reuses the subscriptions the user already pays for (ChatGPT, Gemini, Claude Pro, etc.).
+- **A different model, not a bigger context window.** The point is a second opinion: a reviewer that did not write the code, a model with different training data, a cross-check before shipping.
+- **One command, scriptable.** Output goes to stdout, so it drops into any agent workflow or CI-ish shell script.
 
-## Installation
+Use it when the user says "ask another model", "get a second opinion", "cross-review this", "review this PR", "does this look right", or when you are stuck and a different model's take is worth more than another pass of your own.
+
+## Install
+
+### The skill (for the coding agent)
+
+```bash
+npx skills add gazon1/10x-chat --skill 10x-chat -g -y
+```
+
+`-g` installs for the user (all projects), `-y` skips prompts. Without `-g` it lands in the current project. Drop `-g` and add `-a claude-code cursor` (or `-a '*'`) to target specific agents. The bundled installer is equivalent for Codex-style layouts:
+
+```bash
+10x-chat skill install        # → ~/.codex/skills/10x-chat
+```
+
+Manual fallback: copy `skills/10x-chat/` into the agent's skills directory (`~/.agents/skills/`, `~/.claude/skills/`, `.claude/skills/`, or whatever the agent reads).
+
+### The CLI (Linux only)
 
 ```bash
 npm install -g --install-links github:gazon1/10x-chat
 10x-chat --version
 ```
 
-The npm registry name `10x-chat` belongs to the upstream project — install this fork from the repository.
+npm 11 notes: `--install-links` is required for git installs; npm 11.20+ also needs `--allow-scripts=10x-chat` (or a manual `npx cloakbrowser install`) so the CloakBrowser build downloads. The npm registry name `10x-chat` belongs to the upstream project — install this fork from the repository.
 
-`--install-links` is required with npm 11: it installs the git dependency as a copy instead of a symlink into a temporary clone that npm deletes afterwards. Set it once with `npm config set install-links true --location=user`. npm 11.20+ also needs `--allow-scripts=10x-chat` (or a manual `npx cloakbrowser install`) to download the CloakBrowser build.
+## First run — check before you send anything
 
-## When to use
+```bash
+10x-chat --version
+10x-chat login --status        # login state of every provider
+```
 
-- **Stuck on a bug**: ask another model for a fresh perspective
-- **Code review**: send PR diff to GPT / Claude / Gemini for cross-review
-- **Cross-validation**: compare answers from multiple models
-- **Knowledge gaps**: leverage a model with different training data
-- **Image generation**: DALL-E via ChatGPT or Imagen via Gemini
-- **Deep research**: long-form analysis via Perplexity, ChatGPT, or Gemini
+- If a provider is **not logged in**, stop and ask the user to run `10x-chat login <provider>`. It opens a browser window that needs a human. Never try to type credentials, solve a CAPTCHA, or reuse the user's cookies yourself.
+- Providers marked **headed** (`claude`, `perplexity`) need a display. On a headless machine wrap the command: `xvfb-run -a 10x-chat ...`.
+- `chatgpt` and `perplexity` are Cloudflare-protected. An `antibot` failure means a human must solve the challenge in the window that stays open — tell the user, don't retry in a loop.
+
+## Core commands
+
+```bash
+# Chat, files as context
+10x-chat chat --provider gemini -p "Review this for race conditions" --file src/queue.ts
+
+# Fresh conversation (default reuses the one stored per repo+branch+provider)
+10x-chat chat --provider claude --new-chat -p "..." --file pr.diff
+
+# Ask every chat provider in parallel
+10x-chat chat --all --new-chat -p "..." --file pr.diff
+
+# Preview exactly what will be sent (no browser)
+10x-chat chat -p "..." --file "src/**/*.ts" --dry-run
+
+# Deep research (minutes, not seconds)
+10x-chat research --provider perplexity --timeout 900000 \
+  -p "..." --save-dir ./notes
+
+# Image generation
+10x-chat image --provider gemini --save-dir ./assets -p "..."
+
+# History and past sessions
+10x-chat history --provider gemini --limit 10
+10x-chat status
+10x-chat session <id> --render
+```
+
+Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
+
+## Workflow recipes
+
+### 1. Review a pull request
+
+Build a focused diff first — the whole repo is noise:
+
+```bash
+git fetch origin main --quiet
+git diff origin/main...HEAD > /tmp/pr.diff
+
+10x-chat chat --provider claude --new-chat --timeout 900000 \
+  --file /tmp/pr.diff \
+  -p "You are reviewing a pull request. Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
+```
+
+- Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
+- `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
+- For a cross-model verdict, run the same prompt with `--all` and compare. Two models agreeing on a finding is a much stronger signal than one.
+- The diff excludes untracked files. Add the ones that matter with another `--file`.
+
+### 2. Second opinion on a failure
+
+```bash
+10x-chat chat --provider gemini --new-chat --timeout 600000 \
+  --file src/problem.ts --file /tmp/test-output.log \
+  -p "Tests fail with the output in test-output.log. The source is problem.ts. Identify the root cause. Do not propose a rewrite."
+```
+
+Include the failing output and the smallest set of source files. Fewer, focused files produce better answers than the whole `src/`.
+
+### 3. Cross-validation of a decision
+
+```bash
+10x-chat chat --all --new-chat -p "Compare PostgreSQL advisory locks and a Redis lock for this use case. Name the failure mode of each." > /tmp/compare.txt
+```
+
+### 4. Long-form research
+
+```bash
+10x-chat research --provider perplexity --timeout 900000 \
+  -p "State of the art in browser automation anti-bot evasion in 2026" --save-dir ./docs/notes
+```
+
+## Agent rules
+
+- **Check login first.** `login --status` before a batch of runs; a failed run wastes minutes.
+- **Keep bundles small.** `--file` accepts globs. Include the code under review, not the repository. Use `--dry-run` when unsure.
+- **Timeout deliberately.** Defaults are in seconds-to-minutes; research and reasoning models need `--timeout 600000`–`900000`. A truncated answer prints a warning — re-run with a larger timeout rather than trusting it.
+- **Conversation reuse is a feature.** Within the same git repo + branch + provider, follow-ups land in the same chat. Use that for "now fix it"; use `--new-chat` for independent judgments.
+- **Exit code 1 means failure**, with a hint printed. `antibot` → ask the user to solve it; `unauthorized` → `10x-chat login <provider>`; `unavailable` → retry later or another provider.
+- **Never send secrets.** Do not bundle `.env`, keys, tokens, or private customer data. Treat the session like the user's own browser — it is.
 
 ## Providers
 
-| Provider | Chat | Image | Research | Models | Notes |
-|----------|------|-------|----------|--------|-------|
-| chatgpt | ✅ | ✅ (DALL-E) | ✅ | — | Headless by default |
-| gemini | ✅ | ✅ (Imagen) | ✅ | Fast, **Thinking** (default), Deep Think, Pro | `--model` switches mode |
-| claude | ✅ | ❌ | ❌ | — | Runs headed by default |
-| grok | ✅ | ✅ | ❌ | — | UI changes often; keep the local checkout current |
-| perplexity | ✅ | ❌ | ✅ | — | Runs headed by default (anti-bot) |
-| deepseek | ✅ | ❌ | ❌ | deepseek-chat, deepseek-reasoner | `--model` switches the model |
+| Provider | Chat | Image | Research | Default mode | Notes |
+|---|---|---|---|---|---|
+| chatgpt | yes | DALL-E | yes | headless | Cloudflare-protected; strongest general model |
+| gemini | yes | Imagen | yes | headless | Modes: Fast, Thinking (default), Deep Think, Pro via `--model` |
+| claude | yes | no | no | **headed** | Best for code review |
+| grok | yes | yes | no | headless | UI changes often; use `--headed` if flaky |
+| perplexity | yes | no | yes | **headed** | Cloudflare-protected; best for research |
+| deepseek | yes | no | no | headless | `--model deepseek-chat` or `deepseek-reasoner` |
 
-## Commands
+`--headed` / `--headless` override the default. Parallel runs share one Chromium daemon (tabs, ref-counted), so `chat --all` and backgrounded runs are safe.
 
-```bash
-# Login (one-time per provider — opens browser for auth)
-10x-chat login chatgpt
-10x-chat login gemini
-10x-chat login claude
-10x-chat login grok
-10x-chat login perplexity
-10x-chat login deepseek
-10x-chat login --status          # check the login state of every provider
+## Delegate (advanced)
 
-# Chat
-10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
-10x-chat chat -p "Hard reasoning task" --provider chatgpt --model "GPT-5.6 Sol High"
-10x-chat chat --provider gemini --file "path/to/prompt.md" -p "Complete this task"
-10x-chat chat --provider gemini --model Pro -p "Solve this math problem"
-10x-chat chat --all -p "Compare the answers"          # every chat provider in parallel
-# Chats are reused per git repo + branch and provider:
-10x-chat chat -p "Now add tests" --provider chatgpt    # same conversation
-10x-chat chat -p "Start over" --provider chatgpt --new-chat
-
-# Multi-step provider delegate for external AI callers (JSONL over stdin/stdout)
-10x-chat delegate gemini --model Pro
-# then send JSON lines: {"action":"status"}, {"action":"submit","prompt":"..."}, {"action":"capture"}, {"action":"close"}
-
-# Image generation
-10x-chat image -p "A fox astronaut in space" --provider chatgpt
-10x-chat image -p "Watercolor landscape" --provider gemini --save-dir ./images
-
-# Deep research (long-form, 5-10 min)
-10x-chat research -p "Latest breakthroughs in quantum computing" --provider perplexity
-10x-chat research -p "Hard technical research" --provider gemini --model "Deep Think"
-10x-chat research -p "Market analysis of EVs" --provider chatgpt --timeout 900000
-
-# Dry run / clipboard
-10x-chat chat --dry-run -p "Debug this error" --file src/
-10x-chat chat --copy -p "Explain this" --file "src/**"
-
-# Provider chat history + local session management
-10x-chat history --provider gemini
-10x-chat history --provider all --limit 10
-10x-chat status
-10x-chat session <id> --render
-
-# Install bundled skill to coding agent
-10x-chat skill install
-```
-
-## Provider delegate
-
-Use `delegate <provider>` when an external AI caller needs flexible multi-step control instead of a single one-shot `chat`, `image`, or `research` command. It opens one provider tab, keeps it alive, reads JSONL commands from stdin, and emits JSONL responses on stdout.
+For multi-step scripted control from another program, `delegate <provider>` keeps one tab alive and speaks JSONL over stdin/stdout:
 
 ```bash
 10x-chat delegate gemini --model Pro <<'EOF'
 {"id":1,"action":"status"}
-{"id":2,"action":"submit","prompt":"Draft three launch angles for this product."}
-{"id":3,"action":"capture","timeoutMs":600000}
-{"id":4,"action":"close"}
+{"id":2,"action":"chat","prompt":"Review this plan."}
+{"id":3,"action":"close"}
 EOF
-
-printf '%s\n' '{"action":"chat","model":"Thinking","prompt":"Review this pasted plan."}' \
-  | 10x-chat delegate gemini
 ```
 
-Actions:
-- `status`: return url/title/login state
-- `goto`: navigate with `{ "url": "https://..." }`
-- `selectModel`: provider UI model/mode switch with `{ "model": "Pro" }`
-- `attach`: attach files with `{ "files": ["path/to/file.png"] }`
-- `submit`: submit prompt without waiting
-- `capture`: wait for and extract the current response
-- `chat`: select optional model/files, submit, then capture
-- `eval`: run a page evaluation script for inspection/debugging
-- `close`: close the browser tab and end the delegate
+Actions: `status`, `goto`, `selectModel`, `attach`, `submit`, `capture`, `chat`, `eval`, `close`.
 
-Flags: `--model`, `--headed`, `--timeout <ms>`, `--isolated-profile`, `--no-login-check`.
+## ChatGPT file helper
 
-## Parallel sessions
-
-The daemon makes parallel runs stable. All providers share one Chromium:
+`scripts/chatgpt-files.mjs` (same directory as this skill) lists ChatGPT chats, inspects a conversation, downloads artifacts, and uploads files:
 
 ```bash
-# Login all once
-10x-chat login gemini
-10x-chat login claude
-10x-chat login chatgpt
-
-# Run concurrently — each opens a tab in the shared daemon
-10x-chat chat --provider gemini -p "Your prompt" --file context.md &
-10x-chat chat --provider claude -p "Your prompt" --file context.md &
-10x-chat chat --provider chatgpt -p "Your prompt" --file context.md &
-wait
-```
-
-## Browser mode
-
-- **Headless (default for chatgpt, gemini, grok, deepseek)**: no visible window
-- **Headed (default for claude, perplexity)**: visible Chromium window (anti-bot protection)
-- **Force headed**: `--headed` flag on any provider
-- **Force headless**: `--headless` flag on any provider
-
-The daemon stores the headless/headed mode in its state file. If you switch modes, the daemon restarts automatically.
-
-## Profile modes
-
-**Shared (default):** One browser profile, all providers share cookies.
-
-**Isolated:** Separate profile per provider: `--isolated-profile`
-
-```bash
-# Migrate from isolated to shared
-10x-chat migrate
-```
-
-## ChatGPT artifacts (helper script)
-
-For ChatGPT sidebar inspection, downloading artifact buttons, uploading files and polling, use the bundled helper. It drives the same CloakBrowser build as the CLI. Resolve `$SKILL_DIR` to this skill directory.
-
-```bash
-SKILL_DIR=~/.codex/skills/10x-chat   # wherever `10x-chat skill install` put it
-
-# List visible ChatGPT chats
+SKILL_DIR=~/.agents/skills/10x-chat   # wherever the skill was installed
 xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" list --limit 12
-
-# Inspect a conversation for downloadable artifacts/buttons
-xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" inspect \
-  --url "https://chatgpt.com/c/<conversation-id>"
-
-# Download the latest matching artifact button from a conversation
-xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" download \
-  --url "https://chatgpt.com/c/<conversation-id>" \
-  --label "Download the full updated code ZIP" \
-  --out-dir ./downloads
-
-# Upload files into ChatGPT and submit a prompt
-xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" upload \
-  --file /path/to/file.zip \
-  --prompt "Use this uploaded file and summarize the implementation."
+xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" inspect --url "https://chatgpt.com/c/<id>"
+xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" download --url "https://chatgpt.com/c/<id>" --label "..." --out-dir ./downloads
+xvfb-run -a node "$SKILL_DIR/scripts/chatgpt-files.mjs" upload --file ./x.zip --prompt "Summarize this."
 ```
 
-The helper reads the shared profile (`~/.10x-chat/profiles/default`); `TEN_X_CHAT_CHATGPT_PROFILE`, `TEN_X_CHAT_REPO` and `TEN_X_CHAT_DOWNLOAD_DIR` override the defaults.
+Verify any downloaded ZIP before reporting success: `sha256sum file.zip && unzip -t file.zip`.
 
-After downloading a ZIP, always verify it before claiming success:
+## Troubleshooting
 
-```bash
-sha256sum /path/to/file.zip
-unzip -t /path/to/file.zip
-```
-
-## Daemon management
-
-```bash
-# Check daemon state
-cat ~/.10x-chat/browser-daemon.json
-
-# Force stop daemon
-# (the CLI calls stopDaemon() on Ctrl+C automatically)
-kill $(cat ~/.10x-chat/browser-daemon.json | python3 -c "import sys,json; print(json.load(sys.stdin)['pid'])")
-```
-
-## Tips
-
-- **Login first**: `login <provider>` once per provider. Sessions persist in `~/.10x-chat/profiles/`
-- **Use `--headed`** if a provider is flaky (Grok especially)
-- **Keep file sets small**: fewer files + focused prompt = better answers
-- **Research needs longer timeouts**: `--timeout 600000` for 10-min research jobs
-- **Image gen can take 1-2 min**: use `--timeout 120000` when needed
-- **Use `--dry-run`** to preview what will be sent
-- **Debug with artifacts**: `TEN_X_CHAT_BROWSER_DEBUG=1` before the failing command
-
-## Known issues
-
-- **Grok**: UI changes frequently. Keep the local checkout current and use `--headed` for best reliability
-- **ChatGPT/Grok sessions expire quickly**: login again if you get "Not logged in" errors
-- **Some provider UIs are flaky under automation**: retry with `--headed` before assuming a hard failure
-
-## Safety
-
-- Never include credentials, API keys, or tokens in the bundled files
-- The tool opens a real browser with real login state. Treat it like your own browser session
+- **"Not logged in"** → `10x-chat login <provider>` (human required).
+- **Bot challenge** → leave the window open and ask the user to solve it; the clearance is saved for the next run.
+- **Empty or truncated answer** → raise `--timeout`, retry with `--headed`.
+- **Flaky UI** → retry `--headed`; if it persists, the provider's selectors changed — use another provider.
+- **Debug artifacts** → `TEN_X_CHAT_BROWSER_DEBUG=1` before the command writes to `~/.10x-chat/debug/`.
+- **Proxy** → `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`, or the `proxy` section of `~/.10x-chat/config.json`.
