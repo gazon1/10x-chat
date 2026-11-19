@@ -86,7 +86,7 @@ The fork is published under the scoped name `@gazon1/10x-chat`, because the unsc
 
 Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
 
-**In the playbooks below, never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the pull request URL and the commit SHAs, and it reads the code, the conventions and the CI run itself. The review target has to be pushed to `origin` first, because nothing that is not on GitHub can be reviewed — and the push happens when the user asked for that publication: a request to review is not a request to publish. Outside the playbooks, `--file` and `--attach` stay available: an ordinary chat about a local file is a normal use of the CLI.
+**In the playbooks below, never send files.** Not `--file` (inlined into the prompt) and not `--attach` (uploaded) — the model has GitHub: give it the repository URL, the target (the pull request URL, or the compare URL of a pushed branch) and the commit SHAs, and it reads the code, the conventions and the CI run itself. A pull request is the best entry point but not the only one — a pushed branch is reviewed by its base and head SHA, and a change that is not on `origin` at all is reviewed **locally** by the coding agent itself, because no file is ever attached to make it visible. The push happens when the user asked for that publication: a request to review is not a request to publish. Outside the playbooks, `--file` and `--attach` stay available: an ordinary chat about a local file is a normal use of the CLI.
 
 ## Playbooks
 
@@ -100,15 +100,22 @@ Two ready-made workflows live next to this file. They are provider-neutral and l
 
 **The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
 
-**The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, pull request URL, commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first — with the user's word — then asks for the review. `--file` and `--attach` are not used.
+**The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, the target (pull request URL or compare URL), commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first — with the user's word — then asks for the review. `--file` and `--attach` are not used.
 
 Load the playbook file before starting one of these tasks — it carries the reviewer roles, the finding schema, the evidence rules and the report template.
 
 ## Workflow recipes
 
-### 1. Review a pull request
+### 1. Review a pull request, a branch, a patch or a diff
 
-For a real review, use the [PR review playbook](workflows/pr-review.md). The short version:
+For a real review, use the [PR review playbook](workflows/pr-review.md). Pick the target first — a pull request is the best entry point, but it is not the only one:
+
+| Target | How you recognise it | How it is reviewed |
+|---|---|---|
+| An existing pull request | `gh pr view` prints a number | remotely, by the PR number/URL and the base/head SHA |
+| A pushed branch, no pull request | the branch is on `origin`, `gh pr view` prints nothing | remotely, by the base/head SHA and the compare URL — **no pull request required** |
+| Local changes only | `git status --short` is not empty, nothing pushed | ask whether to publish; if no, the agent reviews the diff locally |
+| A patch or diff only | the user pasted a patch or gave a patch file | the agent reviews the patch locally |
 
 Read the state — this block never publishes:
 
@@ -119,7 +126,7 @@ git fetch origin "$BASE_REF" --quiet
 git status --short                 # read it — add the paths of the change by name
 BASE=$(git rev-parse "origin/$BASE_REF")
 HEAD=$(git rev-parse HEAD)
-PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"')
+PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"' 2>/dev/null || echo "")
 ```
 
 Publication — **only after the user's word**, and only when the change is not on `origin` yet:
@@ -128,25 +135,26 @@ Publication — **only after the user's word**, and only when the change is not 
 git add <path> …                   # add those paths by name — never everything at once
 git commit -m "<message>" && git push origin <branch>
 HEAD=$(git rev-parse HEAD)
-gh pr view --json number,url >/dev/null 2>&1 \
-  || echo "no pull request yet — ask the user before opening one"
 ```
 
-Then ask for the review:
+Then ask for the review — the brief carries the PR coordinates, or the compare coordinates when the branch has no pull request:
 
 ```bash
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
-  -p "You are reviewing pull request $PR of https://github.com/$REPO. Read the code on GitHub yourself:
+  -p "You are reviewing a change of https://github.com/$REPO. Read the code on GitHub yourself:
        Repository:   https://github.com/$REPO
        Pull request: $PR
+       Compare:      https://github.com/$REPO/compare/$BASE...$HEAD
        Base: $BASE
        Head: $HEAD
      Report only real problems: bugs, security issues, data loss, broken callers, and risky logic without tests. For each finding give file:line, why it is wrong, and the minimal fix. If there are no blocking issues, say so."
 ```
 
-- The **pull request** is the reviewer's entry point — put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
+- The **pull request** is the best entry point — put its number and URL into the prompt. A reviewer that only gets a branch name does not find the change.
+- **A pull request is not required.** A pushed branch is reviewed by its base and head SHA; the reviewer opens the compare URL and the commit page itself — leave the `Pull request:` line empty for that target. Do not ask the user to open a pull request just to make the review possible — a PR is a convenience, not a precondition.
+- **Local changes and pasted patches are reviewed locally.** The remote reviewers read the repository on GitHub and no file is ever attached, so they cannot see such a change. Ask the user whether to publish it (commit + push) — only after an explicit "yes" — and if the answer is no, or the push is impossible, the agent reviews the diff or the patch itself, in the same roles and the same finding schema; the report then says explicitly that no independent check on GitHub happened.
 - **The read-only review and the publication are separate procedures.** A request to *review* is not a request to *publish*: a request that only asks for a review commits and pushes nothing. Ask the user first — *"The change is not on `origin` yet — may I commit and push it?"* — and run the publication block only after the answer.
-- **The pull request is opened only with the user's word.** If no pull request exists yet, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes `gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"`. Without that answer the review is `UNAVAILABLE` and the report says so.
+- **A pull request is opened only with the user's word — and it is optional.** If the user wants one, ask: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes `gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"`. Without that answer nothing is created — and the review still runs on the branch.
 - **Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in a leftover file, a local config, a `.env` with credentials. Read `git status --short`, add the paths of the change by name, and read the staged diff before the commit.
 - Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
@@ -181,7 +189,7 @@ The reviewer opens the failing file on GitHub itself — paste only the failing 
 
 ## Agent rules
 
-- **Never send files in the playbooks.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, pull request URL, commit SHAs) and it reads the code, the conventions and the CI run itself. The review target has to be committed and pushed to `origin` first, when the user asked for that publication — nothing that is not on GitHub can be reviewed. In an ordinary chat, `--file` and `--attach` are still the way to show a local file to the model.
+- **Never send files in the playbooks.** No `--file` (inlined into the prompt), no `--attach` (uploaded). Give the model the GitHub coordinates (repository URL, the target — pull request URL or compare URL — and the commit SHAs) and it reads the code, the conventions and the CI run itself. A pull request is the best entry point, but it is not the only one: a pushed branch without a pull request is reviewed by its base and head SHA, and a change that is not on `origin` at all (uncommitted work, a pasted patch) is reviewed **locally** by the coding agent — with the same roles and the same finding schema — and the report says that no independent check on GitHub happened. The review target has to be committed and pushed to `origin` first when the user asked for that publication — nothing that is not on GitHub can be reviewed by a remote reviewer. In an ordinary chat, `--file` and `--attach` are still the way to show a local file to the model.
 - **Check login first.** `login --status` before a batch of runs; a failed run wastes minutes.
 - **Keep the brief short.** The prompt carries coordinates, the role and the expected output format — not the code. Use `--dry-run` when unsure what will be sent.
 - **Timeout deliberately.** Defaults are in seconds-to-minutes; research and reasoning models need `--timeout 600000`–`900000`. A truncated answer prints a warning — re-run with a larger timeout rather than trusting it.
