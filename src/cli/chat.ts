@@ -87,7 +87,9 @@ export function createChatCommand(): Command {
       // ask for one of them are refused, not ignored.
       const backendName = options.backend as string | undefined;
       if (backendName) {
-        const available = listBackends();
+        // A test double answers with canned text: it is never offered to a
+        // user, even when it is registered.
+        const available = listBackends().filter((name) => !getBackend(name).testDouble);
         if (!available.includes(backendName)) {
           console.error(
             chalk.red(`Unknown backend: ${backendName}. Available: ${available.join(', ')}`),

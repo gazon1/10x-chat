@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,42 @@ async function tempHome(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), '10x-chat-backend-cli-'));
 }
 
+/**
+ * A directory with a `chatgpt-use` that answers with an envelope.
+ *
+ * The CLI runs the real backend: the stub stands in for the CLI, so the test
+ * covers the adapter — the arguments, the envelope and the answer — without a
+ * browser and without ChatGPT.
+ */
+async function stubCli(): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), '10x-chat-stub-cli-'));
+  const stub = path.join(dir, 'chatgpt-use');
+  await writeFile(
+    stub,
+    [
+      '#!/bin/sh',
+      'id=""',
+      'while [ $# -gt 0 ]; do',
+      '  if [ "$1" = "--request-id" ]; then id="$2"; fi',
+      '  shift',
+      'done',
+      'printf \'{"status":"completed","request_id":"%s","conversation_id":"conv-stub","result":{"text":"the answer of the stub"}}\' "$id"',
+      '',
+    ].join('\n'),
+  );
+  await chmod(stub, 0o755);
+  return dir;
+}
+
+/** The environment of a run that finds the stub of the CLI first. */
+async function stubEnv(): Promise<Record<string, string>> {
+  const dir = await stubCli();
+  return {
+    TEN_X_CHAT_HOME: await tempHome(),
+    PATH: `${dir}:${process.env.PATH ?? ''}`,
+  };
+}
+
 describe('the --backend option of chat (CLI)', () => {
   it('rejects an unknown backend and names the ones that exist', async () => {
     const res = await runCli(['chat', '-p', 'hi', '--backend', 'nope'], {
@@ -17,6 +53,14 @@ describe('the --backend option of chat (CLI)', () => {
     expect(res.code).toBe(1);
     expect(res.output).toMatch(/Unknown backend: nope/);
     expect(res.output).toMatch(/chatgpt-use/);
+  });
+
+  it('does not offer the test double to a user', async () => {
+    const res = await runCli(['chat', '-p', 'hi', '--backend', 'fake'], {
+      TEN_X_CHAT_HOME: await tempHome(),
+    });
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Unknown backend: fake/);
   });
 
   it('refuses the options that a backend cannot honour', async () => {
@@ -37,12 +81,13 @@ describe('the --backend option of chat (CLI)', () => {
     }
   });
 
-  it('runs a chat through a backend without a browser', async () => {
-    const res = await runCli(['chat', '-p', 'hi there', '--backend', 'fake'], {
-      TEN_X_CHAT_HOME: await tempHome(),
-    });
+  it('runs a chat through the backend without a browser', async () => {
+    const res = await runCli(
+      ['chat', '-p', 'hi there', '--backend', 'chatgpt-use'],
+      await stubEnv(),
+    );
     expect(res.code).toBe(0);
-    expect(res.stdout).toContain('Backend: fake');
-    expect(res.stdout).toContain('Fake answer for: hi there');
+    expect(res.stdout).toContain('Backend: chatgpt-use');
+    expect(res.stdout).toContain('the answer of the stub');
   });
 });

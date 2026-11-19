@@ -44,8 +44,12 @@ export function resetBackends(): void {
 }
 
 /**
- * The fake backend is registered from the start: it is the backend of the
- * tests and the proof that the contract works without a browser.
+ * The backends of a run: the ones that answer for real.
+ *
+ * The fake backend is a test double: it stays registered (the tests and the
+ * proof that the contract works without a browser need it), but a run of the
+ * CLI must not offer it to a user — an answer that is canned must never look
+ * like the answer of a provider.
  */
 registerBackend(createFakeBackend());
 registerBackend(createChatgptUseBackend());

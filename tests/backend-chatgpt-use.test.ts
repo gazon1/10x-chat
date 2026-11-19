@@ -444,6 +444,77 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(outcome.failure.kind).toBe('invalid_output');
   });
 
+  it('rejects a cancellation without the id of the request', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({ status: 'cancelled', submitted: 'yes' }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.cancel('req-1');
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('rejects the receipt of another request', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({
+          request_id: 'other-request',
+          state: 'completed',
+          submitted: 'yes',
+        }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const state = await backend.status('req-1');
+
+    expect(state.submission).toBe('unknown');
+  });
+
+  it('reports a request the CLI never heard of as not submitted', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 1,
+        stdout: '',
+        stderr: 'error: no receipt for request "req-1"',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.resume(request);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    // The request was never submitted: it is safe to send it again.
+    expect(outcome.failure.submission).toBe('not_submitted');
+  });
+
+  it('gives an empty request id a receipt of its own', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    await backend.ask({ requestId: '', prompt: 'hello' });
+    await backend.ask({ requestId: 'request', prompt: 'hello' });
+
+    const ids = calls.map((call) => call.args[call.args.indexOf('--request-id') + 1]);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   it('reports a CLI that does not finish in time as an unknown submission', async () => {
     const { runner, calls } = fakeRunner([{ code: null, stdout: '', stderr: '', timedOut: true }]);
     const backend = createChatgptUseBackend({ runner });

@@ -441,14 +441,15 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
     }
     const envelope = parseJson(result.stdout);
     if (!envelope) {
-      // The CLI does not know the request: nothing was submitted by it.
+      // The CLI does not know the request: it was never submitted by it — the
+      // same state `status` reports for a request without a receipt.
       if (/no receipt|unknown request/i.test(result.stderr)) {
         return {
           ok: false,
           failure: {
-            kind: 'unknown_submission',
-            message: `chatgpt-use does not know the request '${request.requestId}'.`,
-            submission: 'unknown',
+            kind: 'invalid_output',
+            message: `chatgpt-use does not know the request '${request.requestId}' — it was never submitted.`,
+            submission: 'not_submitted',
           },
         };
       }
@@ -480,6 +481,10 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       if (!receipt) {
         // No receipt: the request was never submitted by this backend.
         if (/no receipt/i.test(result.stderr)) return { requestId, submission: 'not_submitted' };
+        return { requestId, submission: 'unknown' };
+      }
+      // The receipt of another request is not the receipt of this one.
+      if (receipt.request_id !== id) {
         return { requestId, submission: 'unknown' };
       }
       const state = typeof receipt.state === 'string' ? receipt.state : '';
@@ -518,7 +523,7 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
         };
       }
       // The answer of another request is not the answer of this one.
-      if (typeof envelope.request_id === 'string' && envelope.request_id !== id) {
+      if (envelope.request_id !== id) {
         return {
           ok: false,
           failure: {
@@ -542,8 +547,8 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
  * as `_` and its hex code, so two different request ids never share a
  * receipt: the escape is reversible, so `a/b` and `a_2Fb` stay apart.
  *
- * An id that is too long for the CLI becomes a hash of it — the receipt of a
- * request is unique, not readable.
+ * An id that is empty or too long for the CLI becomes a hash of it — the
+ * receipt of a request is unique, not readable.
  */
 function encodeId(requestId: string): string {
   let encoded = '';
@@ -551,8 +556,7 @@ function encodeId(requestId: string): string {
     const char = String.fromCharCode(byte);
     encoded += /[A-Za-z0-9.-]/.test(char) ? char : `_${byte.toString(16).padStart(2, '0')}`;
   }
-  if (encoded === '') return 'request';
-  if (encoded.length <= MAX_ID_LENGTH) return encoded;
+  if (encoded !== '' && encoded.length <= MAX_ID_LENGTH) return encoded;
   return createHash('sha256').update(requestId).digest('hex');
 }
 
