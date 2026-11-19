@@ -112,28 +112,50 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     };
   };
 
+  /**
+   * A failure of the fake backend.
+   *
+   * The state of a failure always is one its kind allows: a failure that
+   * contradicts itself cannot be used.
+   */
+  const failure = (
+    kind: BackendFailureKind,
+    message: string,
+    submission: BackendSubmission,
+  ): BackendFailure => {
+    const allowed = SUBMISSIONS_OF_FAILURE[kind];
+    return {
+      kind,
+      message,
+      submission: allowed.includes(submission) ? submission : allowed[0],
+    };
+  };
+
   const run = async (
     request: BackendRequest,
     override?: FakeBackendOutcome,
   ): Promise<BackendOutcome<BackendResponse>> => {
     const rule = override ?? ruleFor(request.prompt);
     const previous = known.get(request.requestId);
-    // A backend that is busy or not there never sent the request: the state of
-    // the request says so from the start, not only after the failure.
-    const submission: BackendSubmission =
-      rule?.failure && SUBMISSIONS_OF_FAILURE[rule.failure][0] === 'not_submitted'
-        ? 'not_submitted'
-        : 'submitted';
+    // The state of the request follows the failure the rule produces: a
+    // backend that is busy or not there never sent the request — the state
+    // says so from the start, not only after the failure.
+    const submission: BackendSubmission = rule?.failure
+      ? SUBMISSIONS_OF_FAILURE[rule.failure][0]
+      : 'submitted';
+    // Only a request that reached the model runs: there is nothing to cancel
+    // in a request the backend refused.
+    const running = submission === 'submitted';
     // The request runs now: a cancel that arrives before the answer ends it.
     known.set(request.requestId, {
       request,
       submission,
-      cancelled: previous?.cancelled === true,
-      running: true,
+      cancelled: previous?.cancelled === true && running,
+      running,
     });
     // The yield opens the window in which a cancel reaches the request.
     await Promise.resolve();
-    if (known.get(request.requestId)?.cancelled === true) {
+    if (running && known.get(request.requestId)?.cancelled === true) {
       const failure: BackendFailure = {
         kind: 'cancelled',
         message: 'The request was cancelled.',
@@ -220,11 +242,12 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       if (entry.running) {
         return {
           ok: false,
-          failure: {
-            kind: 'busy',
-            message: `The request '${request.requestId}' is still running.`,
-            submission: entry.submission,
-          },
+          failure: failure(
+            'busy',
+            `The request '${request.requestId}' is still running.`,
+            // The request reached the model — the backend is busy with it.
+            entry.submission,
+          ),
         };
       }
       // A cancelled request stays cancelled: it is not continued.
@@ -243,11 +266,11 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       if (entry.submission === 'not_submitted') {
         return {
           ok: false,
-          failure: {
-            kind: entry.failure?.kind ?? 'unknown_submission',
-            message: `The request '${request.requestId}' was never submitted — it must be sent again.`,
-            submission: 'not_submitted',
-          },
+          failure: failure(
+            entry.failure?.kind ?? 'unknown_submission',
+            `The request '${request.requestId}' was never submitted — it must be sent again.`,
+            'not_submitted',
+          ),
         };
       }
       // The prompt of a resume is the prompt of the recorded request: a

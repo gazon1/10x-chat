@@ -60,7 +60,9 @@ export type BackendFailureKind =
  * cannot use it. The first state of a kind is the one a backend reports.
  */
 export const SUBMISSIONS_OF_FAILURE: Record<BackendFailureKind, readonly BackendSubmission[]> = {
-  busy: ['not_submitted'],
+  // A busy backend either refused the request (it never reached the model) or
+  // is still busy with it (the request reached the model and runs).
+  busy: ['not_submitted', 'submitted'],
   unavailable: ['not_submitted'],
   timeout: ['submitted'],
   cancelled: ['submitted'],

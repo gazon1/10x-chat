@@ -135,15 +135,22 @@ export async function runBackendChat(
     // A backend is an implementation of another program: its failure is
     // checked, not trusted. A malformed failure is a failure too.
     const failure = validFailure(outcome.failure);
-    // The answer that arrived before the failure belongs to the session —
-    // otherwise the partial output of a timeout is lost.
-    if (failure.partialText) {
-      await saveResponse(session.id, failure.partialText);
-    }
+    // The session leaves 'running' before anything else can fail: a stored
+    // output that cannot be written must not keep the session alive.
     await updateSession(session.id, {
       status: failure.kind === 'timeout' ? 'timeout' : 'failed',
       durationMs,
     });
+    // The answer that arrived before the failure belongs to the session —
+    // otherwise the partial output of a timeout is lost.
+    if (failure.partialText) {
+      try {
+        await saveResponse(session.id, failure.partialText);
+      } catch {
+        // The output cannot be stored — the failure of the run is reported
+        // anyway.
+      }
+    }
     throw new BackendError(failure);
   }
 
@@ -155,7 +162,13 @@ export async function runBackendChat(
     await updateSession(session.id, { status: 'failed', durationMs });
     throw new BackendError(invalid);
   }
-  await saveResponse(session.id, response.text);
+  try {
+    await saveResponse(session.id, response.text);
+  } catch (error) {
+    // The answer cannot be stored — the session must not stay 'running'.
+    await updateSession(session.id, { status: 'failed', durationMs });
+    throw error;
+  }
   await updateSession(session.id, {
     status: response.truncated ? 'timeout' : 'completed',
     durationMs,

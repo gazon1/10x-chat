@@ -17,7 +17,12 @@ import {
   resetBackends,
 } from '../src/backend/index.js';
 import { runChat } from '../src/core/orchestrator.js';
-import { getSession, listSessions } from '../src/session/index.js';
+import { getSession, listSessions, saveResponse } from '../src/session/index.js';
+
+vi.mock('../src/session/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/session/index.js')>();
+  return { ...actual, saveResponse: vi.fn(actual.saveResponse) };
+});
 
 describe('Backend contract', () => {
   it('does not depend on the browser implementation', async () => {
@@ -212,7 +217,21 @@ describe('Fake backend', () => {
     expect(resumed.ok).toBe(false);
     if (resumed.ok) return;
     expect(resumed.failure.kind).toBe('busy');
+    // The request reached the model — the backend is busy with it.
+    expect(resumed.failure.submission).toBe('submitted');
     await running;
+  });
+
+  it('does not cancel a request that was never submitted', async () => {
+    const backend = createFakeBackend([{ prompt: 'boom', failure: 'busy' }]);
+    const pending = backend.ask({ requestId: 'req-1', prompt: 'boom' });
+    await pending;
+
+    const cancelled = await backend.cancel('req-1');
+    expect(cancelled.ok).toBe(true);
+    if (!cancelled.ok) return;
+    expect(cancelled.value.cancelled).toBe(false);
+    expect((await backend.status('req-1')).cancelled).toBe(false);
   });
 
   it('recovers a failed request with a resume', async () => {
@@ -373,7 +392,7 @@ describe('Chat through the backend contract', () => {
       ask: async () =>
         ({
           ok: false,
-          failure: { kind: 'busy', message: 'Busy', submission: 'submitted' },
+          failure: { kind: 'unavailable', message: 'Gone', submission: 'submitted' },
         }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
     };
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
@@ -384,6 +403,37 @@ describe('Chat through the backend contract', () => {
     if (error instanceof BackendError) {
       expect(error.failure.submission).toBe('unknown');
     }
+  });
+
+  it('accepts a busy failure of a request that reached the model', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({
+          ok: false,
+          failure: { kind: 'busy', message: 'Busy', submission: 'submitted' },
+        }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('busy');
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
+  });
+
+  it('fails the session when the answer cannot be stored', async () => {
+    vi.mocked(saveResponse).mockImplementationOnce(async () => {
+      throw new Error('the disk is full');
+    });
+    const backend = createFakeBackend([{ prompt: 'hello', answer: 'Hi there' }]);
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend })).rejects.toThrow(
+      'the disk is full',
+    );
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
   });
 
   it('fails the run when the backend answers without an outcome', async () => {
