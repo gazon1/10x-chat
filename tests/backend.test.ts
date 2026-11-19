@@ -237,6 +237,13 @@ describe('Fake backend', () => {
     expect(status.submission).toBe('submitted');
   });
 
+  it('never claims that a busy request was sent', async () => {
+    const backend = createFakeBackend([{ prompt: 'boom', failure: 'busy' }]);
+    const pending = backend.ask({ requestId: 'req-1', prompt: 'boom' });
+    expect((await backend.status('req-1')).submission).toBe('not_submitted');
+    await pending;
+  });
+
   it('maps every failure kind and never answers with an empty success', async () => {
     const kinds: BackendFailureKind[] = [
       'busy',
@@ -506,6 +513,26 @@ describe('Chat through the backend contract', () => {
           ok: true,
           value: { requestId: 'req-1', text: undefined, truncated: false, submission: 'submitted' },
         }) as unknown as BackendOutcome<BackendResponse>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('fails the run when the backend answers with malformed images', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return {
+          ok: true as const,
+          value: { ...outcome.value, text: '', images: [null] } as unknown as BackendResponse,
+        };
+      },
     };
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
       (thrown: unknown) => thrown,

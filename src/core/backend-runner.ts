@@ -205,6 +205,22 @@ function invalidOutput(response: BackendResponse, requestId: string): BackendFai
       submission,
     };
   }
+  // The images of an answer are used by the caller: a malformed one is a
+  // malformed answer.
+  if (response.images !== undefined) {
+    const malformed =
+      !Array.isArray(response.images) ||
+      response.images.some(
+        (image) => !image || typeof image.url !== 'string' || image.url.trim() === '',
+      );
+    if (malformed) {
+      return {
+        kind: 'invalid_output',
+        message: 'The backend answered with malformed images.',
+        submission,
+      };
+    }
+  }
   const hasImages = Array.isArray(response.images) && response.images.length > 0;
   if (response.text.trim() === '' && !hasImages) {
     return {

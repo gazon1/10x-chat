@@ -133,10 +133,16 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
   ): Promise<BackendOutcome<BackendResponse>> => {
     const rule = override ?? ruleFor(request.prompt);
     const previous = known.get(request.requestId);
+    // A backend that is busy or not there never sent the request: the state of
+    // the request says so from the start, not only after the failure.
+    const submission: BackendSubmission =
+      rule?.failure && SUBMISSION_OF_FAILURE[rule.failure] === 'not_submitted'
+        ? 'not_submitted'
+        : 'submitted';
     // The request runs now: a cancel that arrives before the answer ends it.
     known.set(request.requestId, {
       request,
-      submission: 'submitted',
+      submission,
       cancelled: previous?.cancelled === true,
       running: true,
     });
