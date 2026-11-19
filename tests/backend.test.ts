@@ -1,10 +1,12 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  type AiBackend,
   BackendError,
   type BackendFailureKind,
+  type BackendRequest,
   createFakeBackend,
   getBackend,
   listBackends,
@@ -103,6 +105,51 @@ describe('Fake backend', () => {
     expect(unknown.failure.kind).toBe('unknown_submission');
   });
 
+  it('keeps the submission state of a failed request', async () => {
+    const backend = createFakeBackend([{ prompt: 'boom', failure: 'timeout' }]);
+    await backend.ask({ requestId: 'req-1', prompt: 'boom' });
+    const status = await backend.status('req-1');
+    expect(status.submission).toBe('submitted');
+    expect(status.text).toBeUndefined();
+  });
+
+  it('keeps the submission state of every failure in the status', async () => {
+    const kinds: BackendFailureKind[] = [
+      'busy',
+      'unavailable',
+      'timeout',
+      'invalid_output',
+      'cancelled',
+      'unknown_submission',
+    ];
+    for (const kind of kinds) {
+      const backend = createFakeBackend([{ prompt: 'boom', failure: kind }]);
+      const outcome = await backend.ask({ requestId: 'req-1', prompt: 'boom' });
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      const status = await backend.status('req-1');
+      expect(status.submission).toBe(outcome.failure.submission);
+    }
+  });
+
+  it('resumes the recorded request and never sends a new prompt', async () => {
+    const backend = createFakeBackend([{ prompt: 'first task', answer: 'the first answer' }]);
+    await backend.ask({ requestId: 'req-1', prompt: 'first task' });
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'second task' });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.text).toBe('the first answer');
+  });
+
+  it('reports an unknown submission when it cannot resume a request', async () => {
+    const backend = createFakeBackend();
+    const outcome = await backend.resume({ requestId: 'nope', prompt: 'hello' });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('unknown_submission');
+    expect(outcome.failure.submission).toBe('unknown');
+  });
+
   it('maps every failure kind and never answers with an empty success', async () => {
     const kinds: BackendFailureKind[] = [
       'busy',
@@ -160,6 +207,18 @@ describe('Chat through the backend contract', () => {
   const originalEnv = process.env;
   let tempHome = '';
 
+  /** A fake backend that records the requests it receives. */
+  const recordingBackend = (requests: BackendRequest[]): AiBackend => {
+    const base = createFakeBackend();
+    return {
+      ...base,
+      ask: async (request) => {
+        requests.push(request);
+        return base.ask(request);
+      },
+    };
+  };
+
   beforeEach(async () => {
     tempHome = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-backend-'));
     process.env = { ...originalEnv, TEN_X_CHAT_HOME: tempHome };
@@ -186,6 +245,39 @@ describe('Chat through the backend contract', () => {
     await expect(runChat({ prompt: 'boom', provider: 'chatgpt' }, { backend })).rejects.toThrow(
       BackendError,
     );
+  });
+
+  it('passes the timeout of the config file to the backend', async () => {
+    await writeFile(
+      path.join(tempHome, 'config.json'),
+      JSON.stringify({
+        defaultProvider: 'chatgpt',
+        headless: true,
+        profileMode: 'shared',
+        defaultTimeoutMs: 30_000,
+      }),
+    );
+    const requests: BackendRequest[] = [];
+    const backend = recordingBackend(requests);
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    expect(requests[0].timeoutMs).toBe(30_000);
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt', timeoutMs: 5_000 }, { backend });
+    expect(requests[1].timeoutMs).toBe(5_000);
+  });
+
+  it('fails the session when the backend throws', async () => {
+    const backend = createFakeBackend();
+    const broken = {
+      ...backend,
+      ask: async () => {
+        throw new Error('the backend exploded');
+      },
+    };
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend: broken }),
+    ).rejects.toThrow('the backend exploded');
   });
 
   it('rejects the browser flags — a backend run uses no browser', async () => {

@@ -63,7 +63,10 @@ export const FAKE_BACKEND_CAPABILITIES: BackendCapabilities = {
 /** The state of a request the fake backend knows. */
 interface KnownRequest {
   request: BackendRequest;
-  response: BackendResponse;
+  /** The answer — a failed request has none. */
+  response?: BackendResponse;
+  /** Whether the request reached the model. */
+  submission: BackendSubmission;
   cancelled: boolean;
 }
 
@@ -109,14 +112,23 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
 
   const run = async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
     const rule = ruleFor(request.prompt);
+    const previous = known.get(request.requestId);
     if (rule?.failure) {
-      return { ok: false, failure: failureFor(request, rule.failure) };
+      const failure = failureFor(request, rule.failure);
+      // The request is remembered even when it failed: a timeout was sent,
+      // and the status of the request must say so.
+      known.set(request.requestId, {
+        request,
+        submission: failure.submission,
+        cancelled: previous?.cancelled === true,
+      });
+      return { ok: false, failure };
     }
     const response = answer(request);
-    const previous = known.get(request.requestId);
     known.set(request.requestId, {
       request,
       response,
+      submission: 'submitted',
       cancelled: previous?.cancelled === true,
     });
     return { ok: true, value: response };
@@ -134,26 +146,34 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       if (!entry) return { requestId, submission: 'not_submitted' };
       return {
         requestId,
-        submission: 'submitted',
-        text: entry.response.text,
-        truncated: entry.response.truncated,
+        submission: entry.submission,
+        ...(entry.response
+          ? {
+              text: entry.response.text,
+              truncated: entry.response.truncated,
+              conversationId: entry.response.conversationId,
+            }
+          : {}),
         cancelled: entry.cancelled,
-        conversationId: entry.response.conversationId,
       };
     },
 
     resume: async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
-      if (!known.has(request.requestId)) {
+      const entry = known.get(request.requestId);
+      if (!entry) {
         return {
           ok: false,
           failure: {
             kind: 'unknown_submission',
             message: `The fake backend does not know the request '${request.requestId}'.`,
-            submission: 'not_submitted',
+            // The backend cannot tell whether the request ran.
+            submission: 'unknown',
           },
         };
       }
-      return run(request);
+      // The prompt of a resume is the prompt of the recorded request: a
+      // resume never sends a new prompt.
+      return run(entry.request);
     },
 
     cancel: async (requestId: string): Promise<BackendOutcome<{ cancelled: boolean }>> => {
@@ -164,7 +184,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
           failure: {
             kind: 'unknown_submission',
             message: `The fake backend does not know the request '${requestId}'.`,
-            submission: 'not_submitted',
+            submission: 'unknown',
           },
         };
       }

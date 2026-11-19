@@ -1,5 +1,11 @@
 import chalk from 'chalk';
-import { type AiBackend, BackendError, type BackendRequest } from '../backend/contract.js';
+import {
+  type AiBackend,
+  BackendError,
+  type BackendOutcome,
+  type BackendRequest,
+  type BackendResponse,
+} from '../backend/contract.js';
 import { loadConfig } from '../config.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ChatOptions } from '../types.js';
@@ -12,6 +18,10 @@ import type { ChatResult } from './orchestrator.js';
  *
  * This is the application side of the seam: no page, no selector, no session
  * of a browser — only the request and the answer of the backend.
+ *
+ * The conversation of a backend run is not reused yet: the contract carries
+ * the conversation id, the reuse itself comes with the migration of the
+ * providers.
  */
 export async function runBackendChat(
   options: ChatOptions,
@@ -41,6 +51,8 @@ export async function runBackendChat(
   const attachments =
     options.attach && options.attach.length > 0 ? await resolveAttachPaths(options.attach) : [];
 
+  const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
+
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
   const session = await createSession(provider, options.prompt, options.model);
   await saveBundle(session.id, bundle);
@@ -54,11 +66,21 @@ export async function runBackendChat(
     prompt: bundle,
     ...(model ? { model } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
-    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+    // The timeout of a chat: the flag of the command, then the config file.
+    // The default of a provider does not apply — a backend has its own.
+    ...(timeoutMs ? { timeoutMs } : {}),
   };
 
   const startTime = Date.now();
-  const outcome = await backend.ask(request);
+  let outcome: BackendOutcome<BackendResponse>;
+  try {
+    outcome = await backend.ask(request);
+  } catch (error) {
+    // A backend that throws is a backend that failed: the session must not
+    // stay 'running' forever.
+    await updateSession(session.id, { status: 'failed', durationMs: Date.now() - startTime });
+    throw error;
+  }
   const durationMs = Date.now() - startTime;
 
   if (!outcome.ok) {
