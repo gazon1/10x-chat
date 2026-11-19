@@ -1101,12 +1101,64 @@ function continuationDomOptions(): ContinuationDomOptions {
  *
  * The document is an argument so that the check can be run against a fake one
  * in the test; in the browser it is the document of the page.
+ *
+ * The function is serialized into the page by `page.evaluate`: it may not
+ * reference anything of the module — a helper, a constant — because the page
+ * does not have them. A test runs the function the same way the page runs it.
  */
 export function readContinuationDomState(
   options: ContinuationDomOptions,
   doc: Document = document,
 ): ContinuationDomState {
-  const banner = findContextFullBanner(options, doc);
+  // The whole check lives in this one function: it is serialized into the page
+  // by `page.evaluate`, and a helper of the module is not there — the free
+  // reference of a helper would throw a ReferenceError in the page and the
+  // continuation would never be detected. The function may only use its
+  // arguments and what it defines itself.
+  //
+  // The banner of the exhausted window: the box that holds the words of the
+  // banner and the visible "New chat" button and does not hold the
+  // conversation. The button of the sidebar is not the banner: it finds the
+  // words of the banner only in the body of the app, and the body holds the
+  // conversation.
+  const conversation = doc.querySelector(options.scopeSelector);
+  const buttons = Array.from(doc.querySelectorAll('button'));
+  const bannerWords = new RegExp(options.bannerPattern, 'i');
+  const newChatLabel = new RegExp(options.newChatLabel, 'i');
+  let bannerPresent = false;
+  let bannerButtonIndex = -1;
+  let bannerDepth = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < buttons.length; index++) {
+    const button = buttons[index];
+    const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
+    if (!newChatLabel.test(text)) continue;
+    const rect = button.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    let depth = 0;
+    let node: HTMLElement | null = button.parentElement;
+    while (node && node !== doc.body && node !== doc.documentElement) {
+      depth++;
+      const box = node.innerText || node.textContent || '';
+      if (bannerWords.test(box)) {
+        const holdsConversation = conversation ? node.contains(conversation) : false;
+        const short = box.length <= options.bannerMaxText;
+        // The box of the banner does not hold the conversation, and it is
+        // short: the text around the banner is the whole app, and the words of
+        // the banner are in it as well.
+        if (!holdsConversation && short) {
+          if (depth < bannerDepth) {
+            bannerDepth = depth;
+            bannerPresent = true;
+            bannerButtonIndex = index;
+          }
+          break;
+        }
+      }
+      node = node.parentElement;
+    }
+  }
 
   const composerUsable = Array.from(
     doc.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
@@ -1129,74 +1181,32 @@ export function readContinuationDomState(
   });
 
   // The text of the conversation: the container of the chat when the app has
-  // one, the rest of the page without the navigation otherwise.
+  // one, the rest of the page without the navigation otherwise. The tree is
+  // walked with a stack instead of a recursive helper: a named function inside
+  // this body would not exist in the page either.
   const scope = doc.querySelector(options.scopeSelector) ?? doc.body;
   const parts: string[] = [];
-  const walk = (node: Node): void => {
+  const stack: Node[] = scope ? [scope] : [];
+  while (stack.length > 0) {
+    const node = stack.pop() as Node;
     if (node.nodeType === 3) {
       parts.push(node.textContent || '');
-      return;
+      continue;
     }
-    if (node.nodeType === 1 && (node as Element).closest(options.navigationSelector)) return;
-    for (const child of Array.from(node.childNodes)) walk(child);
-  };
-  if (scope) walk(scope);
+    if (node.nodeType === 1 && (node as Element).closest(options.navigationSelector)) continue;
+    const children = Array.from(node.childNodes);
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index]);
+    }
+  }
 
   return {
-    bannerPresent: banner.present,
-    newChatButtonIndex: banner.buttonIndex,
+    bannerPresent,
+    newChatButtonIndex: bannerButtonIndex,
     composerUsable,
     summaryMarker: new RegExp(options.markerPattern, 'i').test(parts.join(' ')),
     oldConversationGone: !stale,
   };
-}
-
-/**
- * Find the banner of the exhausted context window.
- *
- * The banner is the box that holds the words of the banner and the visible
- * "New chat" button and does not hold the conversation. The button of the
- * sidebar is not the banner: it finds the words of the banner only in the
- * body of the app, and the body holds the conversation.
- */
-function findContextFullBanner(
-  options: ContinuationDomOptions,
-  doc: Document,
-): { present: boolean; buttonIndex: number } {
-  const conversation = doc.querySelector(options.scopeSelector);
-  const buttons = Array.from(doc.querySelectorAll('button'));
-  const words = new RegExp(options.bannerPattern, 'i');
-  const label = new RegExp(options.newChatLabel, 'i');
-
-  let best: { index: number; depth: number } | null = null;
-  for (let index = 0; index < buttons.length; index++) {
-    const button = buttons[index];
-    const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
-    if (!label.test(text)) continue;
-    const rect = button.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) continue;
-
-    let depth = 0;
-    let node: HTMLElement | null = button.parentElement;
-    while (node && node !== doc.body && node !== doc.documentElement) {
-      depth++;
-      const box = node.innerText || node.textContent || '';
-      if (words.test(box)) {
-        const holdsConversation = conversation ? node.contains(conversation) : false;
-        const short = box.length <= options.bannerMaxText;
-        // The box of the banner does not hold the conversation, and it is
-        // short: the text around the banner is the whole app, and the words of
-        // the banner are in it as well.
-        if (!holdsConversation && short) {
-          if (!best || depth < best.depth) best = { index, depth };
-          break;
-        }
-      }
-      node = node.parentElement;
-    }
-  }
-
-  return best ? { present: true, buttonIndex: best.index } : { present: false, buttonIndex: -1 };
 }
 
 /**

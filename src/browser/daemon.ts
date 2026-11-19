@@ -9,7 +9,7 @@ import { loadConfig, resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { getPackageVersion } from '../version.js';
 import { acquireProfileLock } from './lock.js';
-import { requestedTimeoutMs, timeoutPlan } from './operation-timeout.js';
+import { declaredBoundMs, requestedTimeoutMs, timeoutPlan } from './operation-timeout.js';
 import { isProcessAlive } from './process.js';
 import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
@@ -112,7 +112,8 @@ class BrowserDaemonHttpClient {
       // has to be able to read that answer. The bound is still there: a daemon
       // that never answers must not hang the run forever.
       const plan = timeoutPlan(
-        requestedTimeoutMs(request.kind, request.method, request.args as unknown[] | undefined),
+        requestedTimeoutMs(request.kind, request.method, request.args as unknown[] | undefined) ??
+          declaredBoundMs(request.kind, request.method),
       );
       response = await fetch(`http://127.0.0.1:${this.state.port}/rpc`, {
         method: 'POST',
@@ -964,7 +965,14 @@ export function decideDaemonSwitch(result: DaemonSwitchResult, reason: string): 
   return { action: 'stop' };
 }
 
-async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
+/**
+ * The daemon that serves the request.
+ *
+ * A running daemon that fits the request is reused. A daemon that does not
+ * fit it may only be replaced when it has no session of another process any
+ * more — the barrier of the switch decides that.
+ */
+export async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
   // The daemon runs the browser with the effective proxy: the config file
   // first, the environment second. The fingerprint of it decides whether the
   // running daemon can serve the request.
@@ -1135,7 +1143,7 @@ export async function daemonStatus(): Promise<DaemonStatus> {
 }
 
 /** What a stop of the daemon did. */
-export type DaemonStopOutcome = 'stopped' | 'not-running' | 'busy';
+export type DaemonStopOutcome = 'stopped' | 'not-running' | 'busy' | 'refused';
 
 /**
  * Stop the daemon, but not the session of another process.
@@ -1143,6 +1151,11 @@ export type DaemonStopOutcome = 'stopped' | 'not-running' | 'busy';
  * A daemon that still has the session of another process must not be stopped:
  * that session would lose its browser. The caller decides what to do with a
  * busy daemon.
+ *
+ * The stop goes through the barrier of the switch: the daemon stops accepting
+ * new sessions and waits for the session creations that are already running.
+ * Without it a session of another process could start between the check of the
+ * load and the stop — and it would lose its browser.
  */
 export async function requestDaemonStop(
   options: { force?: boolean } = {},
@@ -1150,8 +1163,37 @@ export async function requestDaemonStop(
   const state = await readDaemonState();
   if (!state) return 'not-running';
 
-  const health = await fetchDaemonHealth(state);
-  if (!options.force && daemonIsBusy(health)) return 'busy';
+  if (options.force) {
+    // The caller asks for it explicitly: the daemon is stopped without the
+    // barrier, and the session of another process ends with it.
+    await stopDaemon();
+    return 'stopped';
+  }
+
+  const result = await beginDaemonSwitch(state);
+
+  if (result.outcome === 'unavailable') {
+    // The daemon does not answer at all: it is really gone.
+    await clearDaemonState();
+    return 'not-running';
+  }
+
+  if (result.outcome === 'failed') {
+    // The daemon answered, but not with the result of the switch: it does not
+    // know the endpoint, refused the request, or answered something
+    // unreadable. It may still serve the session of another process, so it is
+    // left running — the caller has to ask again with `--force`.
+    await abortDaemonSwitch(state);
+    return 'refused';
+  }
+
+  if (!daemonMayBeStopped(result.health)) {
+    // The daemon has the session of another process, or a session of another
+    // process is still being created: it keeps running and serves sessions
+    // again.
+    await abortDaemonSwitch(state);
+    return 'busy';
+  }
 
   await stopDaemon();
   return 'stopped';
@@ -1172,6 +1214,14 @@ export async function restartDaemon(
       'The shared browser daemon has the session of another process and cannot be stopped: ' +
         'stopping it would end that session. Wait for the other session to finish, ' +
         'then run the command again (or pass --force).',
+    );
+  }
+
+  if (outcome === 'refused') {
+    throw new Error(
+      'The shared browser daemon could not be stopped: it did not confirm that it is idle, ' +
+        'and it may still serve the session of another process. It was left running. ' +
+        'Run the command again (or pass --force).',
     );
   }
 

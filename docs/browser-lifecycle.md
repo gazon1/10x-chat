@@ -36,6 +36,8 @@ An operation that does not answer in time may still run inside the browser: the 
 
 The bound of the caller is read from the options argument of the call and from nowhere else — the declaration in `src/browser/operation-timeout.ts` (`DISPATCHED_METHODS`) names every dispatched method and the position of that argument, and the test in `tests/operation-timeout.test.ts` reads the dispatcher and fails when a method is dispatched and not declared. `waitForFunction` is the one that is easy to get wrong: its options are the third argument, the second one being the argument of the function.
 
+A method that takes no bound of the caller may still declare a bound of its own (`boundMs` in the same table): the typing of a prompt is one keystroke per character, and a chunk of a long prompt took 70–80 seconds — the default bound of 60 seconds killed calls that used to answer in time. The declared bound of the method is used by the server and by the client, so both sides wait for the same time.
+
 ## Ownership and cleanup
 
 - Each caller owns the returned `BrowserSession` and must `await close()` (orchestrators/CLI do this in `finally`).

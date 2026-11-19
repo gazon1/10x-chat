@@ -17,13 +17,14 @@ import { redactText } from './diagnostics.js';
 import { getEngineName } from './engine.js';
 import {
   CLOSE_TIMEOUT_MS,
+  declaredBoundMs,
+  effectiveOperationBoundMs,
   InvalidatedHandles,
   invalidateOnTimeout,
   OPERATION_TIMEOUT_MS,
-  operationBoundMs,
   RPC_TIMEOUT_MS,
   requestedTimeoutMs,
-  timeoutPlan,
+  rpcBoundMs,
   withLateResultCleanup,
   withOperationTimeout,
 } from './operation-timeout.js';
@@ -221,6 +222,13 @@ export class RpcService {
   private readonly browser: Browser | null;
   private readonly switchGate: SwitchGate;
   private readonly operationTimeoutMs: number;
+  /**
+   * Whether the service was given its own bound of an operation.
+   *
+   * A bound that was set on purpose is the choice of whoever started the
+   * service: it wins over the bound that a method declares for itself.
+   */
+  private readonly ownOperationTimeout: boolean;
   private readonly rpcTimeoutMs: number;
   private readonly closeTimeoutMs: number;
 
@@ -242,6 +250,7 @@ export class RpcService {
     this.browser = options.browser;
     this.switchGate = options.switchGate ?? new SwitchGate();
     this.operationTimeoutMs = options.operationTimeoutMs ?? OPERATION_TIMEOUT_MS;
+    this.ownOperationTimeout = options.operationTimeoutMs !== undefined;
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? RPC_TIMEOUT_MS;
     this.closeTimeoutMs = options.closeTimeoutMs ?? CLOSE_TIMEOUT_MS;
   }
@@ -275,20 +284,15 @@ export class RpcService {
     try {
       body = (await readJsonBody(req)) as RpcRequest;
       rpcLabel = `${body.kind}.${body.method}`;
-      // The bound is derived from the bound the caller asked for: a call that
+      // The bound is derived from the bound of the operation: a call that
       // waits for a long answer gets a long wait, and the final boundary of
       // the RPC stays above the bound of the operation — the operation reports
       // its own timeout first.
-      const plan = timeoutPlan(
-        requestedTimeoutMs(body.kind, body.method, body.args as unknown[] | undefined),
-        this.operationTimeoutMs,
+      const rpcMs = rpcBoundMs(
+        this.operationBound(body.kind, body.method, body.args as unknown[] | undefined),
         this.rpcTimeoutMs,
       );
-      const response = await withOperationTimeout(
-        this.handleRpc(body),
-        `rpc ${rpcLabel}`,
-        plan.rpcMs,
-      );
+      const response = await withOperationTimeout(this.handleRpc(body), `rpc ${rpcLabel}`, rpcMs);
       // One line per call: a hung page operation is only visible in the
       // timings, not in the error of the client that waited for it.
       console.log(`[rpc] ${rpcLabel} ok ${Date.now() - startedAt}ms`);
@@ -407,7 +411,12 @@ export class RpcService {
    * operation that names no bound of its own.
    */
   private operationBound(kind: string, method: string, args: unknown[] | undefined): number {
-    return operationBoundMs(requestedTimeoutMs(kind, method, args), this.operationTimeoutMs);
+    return effectiveOperationBoundMs(
+      requestedTimeoutMs(kind, method, args),
+      declaredBoundMs(kind, method),
+      this.operationTimeoutMs,
+      this.ownOperationTimeout,
+    );
   }
 
   /**

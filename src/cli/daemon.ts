@@ -58,6 +58,27 @@ export function createDaemonCommand(): Command {
         return;
       }
 
+      if (outcome === 'refused') {
+        // The daemon did not confirm that it is idle: it may still serve the
+        // session of another process, so it is left running.
+        if (options.ifIdle) {
+          console.log(
+            chalk.dim(
+              'The browser daemon did not confirm that it is idle — left running. ' +
+                'Run `10x-chat daemon restart` when the other session is finished.',
+            ),
+          );
+          return;
+        }
+        console.error(
+          chalk.red(
+            'The browser daemon did not confirm that it is idle and was not stopped. ' +
+              'Wait for the other session to finish, or pass --force.',
+          ),
+        );
+        process.exit(1);
+      }
+
       if (outcome === 'busy') {
         if (options.ifIdle) {
           console.log(

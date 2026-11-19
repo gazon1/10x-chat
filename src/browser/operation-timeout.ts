@@ -44,6 +44,16 @@ export const CLIENT_BOUND_MARGIN_MS = 60_000;
 export const CLOSE_TIMEOUT_MS = 5_000;
 
 /**
+ * The bound of a method that writes a long text into the composer.
+ *
+ * The typing of a prompt is one keystroke per character, and a rich composer
+ * types slowly: a chunk of a long prompt took 70–80 seconds, and the default
+ * bound of 60 seconds killed calls that used to answer in time. The declared
+ * bound of the method is above the time such a chunk needs.
+ */
+export const TYPING_TIMEOUT_MS = 120_000;
+
+/**
  * The bound that the caller asked for, if the call names one.
  *
  * Playwright carries the bound of an operation in its options (`timeout`).
@@ -58,11 +68,15 @@ export const CLOSE_TIMEOUT_MS = 5_000;
  * table is the declaration of the timeout contract: a method that is
  * dispatched but not declared here has no declared bound, and the test that
  * reads the dispatcher fails until it is declared.
+ *
+ * `boundMs` is the bound of a method that needs more than the default bound
+ * of the service and takes no bound of its own.
  */
 export const DISPATCHED_METHODS: readonly {
   kind: string;
   method: string;
   optionsIndex: number | null;
+  boundMs?: number;
 }[] = [
   { kind: 'browser', method: 'newContext', optionsIndex: null },
   { kind: 'context', method: 'newPage', optionsIndex: null },
@@ -81,7 +95,7 @@ export const DISPATCHED_METHODS: readonly {
   { kind: 'page', method: 'close', optionsIndex: null },
   { kind: 'page', method: 'title', optionsIndex: null },
   { kind: 'keyboard', method: 'press', optionsIndex: null },
-  { kind: 'keyboard', method: 'type', optionsIndex: null },
+  { kind: 'keyboard', method: 'type', optionsIndex: null, boundMs: TYPING_TIMEOUT_MS },
   { kind: 'keyboard', method: 'insertText', optionsIndex: null },
   { kind: 'locator', method: 'waitFor', optionsIndex: 0 },
   { kind: 'locator', method: 'isVisible', optionsIndex: 0 },
@@ -137,6 +151,21 @@ export function requestedTimeoutMs(
 }
 
 /**
+ * The bound that a method declares, if it declares one.
+ *
+ * A method that takes no bound of the caller may still need more than the
+ * default bound of the service: the typing of a long prompt takes longer than
+ * a default operation. The declared bound of the method is the bound of that
+ * operation, and it is above the default one.
+ */
+export function declaredBoundMs(kind: string, method: string): number | undefined {
+  const entry = DISPATCHED_METHODS.find(
+    (candidate) => candidate.kind === kind && candidate.method === method,
+  );
+  return entry?.boundMs;
+}
+
+/**
  * The bound of one operation.
  *
  * The bound of the caller wins: an operation that waits longer than the
@@ -147,6 +176,35 @@ export function requestedTimeoutMs(
  */
 export function operationBoundMs(requestedMs: number | undefined, defaultMs: number): number {
   return requestedMs === undefined ? defaultMs : requestedMs + OPERATION_MARGIN_MS;
+}
+
+/**
+ * The bound of one operation, with every bound that is known.
+ *
+ * The bound of the caller wins: an operation that waits longer than the
+ * default bound of the service gets that time.
+ *
+ * A method that declares a bound of its own gets it as well — the declared
+ * bound raises the default bound of the service. A bound that the service was
+ * given on purpose wins over it: it is the choice of whoever started the
+ * service.
+ *
+ * @param requestedMs the bound the caller asked for
+ * @param declaredMs the bound the method declares
+ * @param serviceMs the default bound of the service
+ * @param serviceBoundIsOwn whether the bound of the service was set on purpose
+ */
+export function effectiveOperationBoundMs(
+  requestedMs: number | undefined,
+  declaredMs: number | undefined,
+  serviceMs: number,
+  serviceBoundIsOwn: boolean,
+): number {
+  if (requestedMs !== undefined) return operationBoundMs(requestedMs, serviceMs);
+  if (declaredMs !== undefined && !serviceBoundIsOwn) {
+    return operationBoundMs(declaredMs, serviceMs);
+  }
+  return serviceMs;
 }
 
 /**

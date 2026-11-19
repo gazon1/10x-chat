@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DISPATCHED_METHODS,
+  declaredBoundMs,
+  effectiveOperationBoundMs,
   InvalidatedHandles,
   invalidatedHandle,
   invalidateOnTimeout,
@@ -10,6 +12,7 @@ import {
   OperationTimeoutError,
   RPC_TIMEOUT_MS,
   requestedTimeoutMs,
+  TYPING_TIMEOUT_MS,
   timeoutPlan,
   withLateResultCleanup,
   withOperationTimeout,
@@ -39,6 +42,60 @@ describe('the bounds of a call', () => {
 
   it('keep the RPC bound above the default bound of the RPC', () => {
     expect(timeoutPlan(undefined).rpcMs).toBe(RPC_TIMEOUT_MS);
+  });
+});
+
+/**
+ * The bound that a method declares.
+ *
+ * The typing of a long prompt is one keystroke per character: a chunk of a
+ * prompt took 70–80 seconds, and the default bound of 60 seconds killed calls
+ * that used to answer in time. The declared bound of the method is above that.
+ */
+describe('declaredBoundMs', () => {
+  it('gives the typing of a prompt the time it needs', () => {
+    expect(declaredBoundMs('keyboard', 'type')).toBe(TYPING_TIMEOUT_MS);
+    expect(TYPING_TIMEOUT_MS).toBeGreaterThan(OPERATION_TIMEOUT_MS);
+  });
+
+  it('leaves a method without a declared bound to the default one', () => {
+    expect(declaredBoundMs('keyboard', 'press')).toBeUndefined();
+    expect(declaredBoundMs('page', 'goto')).toBeUndefined();
+  });
+
+  it('keeps the plan of such a call above the bound of the operation', () => {
+    const plan = timeoutPlan(declaredBoundMs('keyboard', 'type'));
+    expect(plan.operationMs).toBeGreaterThan(TYPING_TIMEOUT_MS);
+    expect(plan.rpcMs).toBeGreaterThan(plan.operationMs);
+    expect(plan.clientMs).toBeGreaterThan(plan.rpcMs);
+  });
+});
+
+describe('effectiveOperationBoundMs', () => {
+  it('gives the bound of the caller to the operation', () => {
+    expect(
+      effectiveOperationBoundMs(120_000, undefined, OPERATION_TIMEOUT_MS, false),
+    ).toBeGreaterThan(120_000);
+  });
+
+  it('gives the declared bound of the method to the operation', () => {
+    // The typing of a prompt declares the time it needs: the default bound of
+    // the service would kill a call that answers in time.
+    expect(
+      effectiveOperationBoundMs(undefined, TYPING_TIMEOUT_MS, OPERATION_TIMEOUT_MS, false),
+    ).toBeGreaterThan(TYPING_TIMEOUT_MS);
+  });
+
+  it('keeps a bound of the service that was set on purpose', () => {
+    // A service that was given its own bound keeps it: the bound was chosen
+    // on purpose.
+    expect(effectiveOperationBoundMs(undefined, TYPING_TIMEOUT_MS, 100, true)).toBe(100);
+  });
+
+  it('leaves a method without a declared bound to the bound of the service', () => {
+    expect(effectiveOperationBoundMs(undefined, undefined, OPERATION_TIMEOUT_MS, false)).toBe(
+      OPERATION_TIMEOUT_MS,
+    );
   });
 });
 

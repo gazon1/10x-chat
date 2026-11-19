@@ -11,6 +11,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  type ContinuationDomState,
   type ContinuationSignals,
   continuationReady,
   conversationIdChanged,
@@ -484,5 +485,44 @@ describe('the banner of the exhausted context window', () => {
 
     const state = readContinuationDomState(DOM_OPTIONS, page);
     expect(state.bannerPresent).toBe(false);
+  });
+});
+
+/**
+ * The check of the continuation runs in the page.
+ *
+ * `page.evaluate` serializes the function into the page: the page does not
+ * have the scope of the module. A helper of the module called by the function
+ * is a ReferenceError there — the continuation is never detected, and the run
+ * continues in the exhausted chat. The test runs the function the way the page
+ * runs it: the source of the function, without the scope of the module.
+ */
+describe('the state of the page in the browser', () => {
+  it('is read by the function as the page runs it', () => {
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const banner = fakeElement({
+      tag: 'div',
+      text: 'Context window full',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: SUMMARY_WITH_BANNER_WORDS })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, banner, chat] }));
+
+    // The page runs the function with the document of the page as its
+    // default: the function is serialized into the page, where the global
+    // `document` is the one of the page.
+    const inPage = new Function('document', `return (${readContinuationDomState.toString()});`)(
+      page,
+    ) as (options: typeof DOM_OPTIONS, doc?: Document) => ContinuationDomState;
+
+    const state = inPage(DOM_OPTIONS);
+    expect(state.bannerPresent).toBe(true);
+    expect(state.newChatButtonIndex).toBe(1);
   });
 });
