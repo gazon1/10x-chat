@@ -127,9 +127,9 @@ export interface JsonCandidate {
  *
  * A model wraps its JSON in a fence, in a sentence, or in both — and a
  * sentence may carry brackets of its own before the payload. Every balanced
- * object and array of the answer is therefore read. The same payload is
- * seen twice when it sits in a fence, so the copies are told apart by their
- * text.
+ * object and array of the answer is therefore read. A fence is read on its
+ * own and is blanked out of the plain text, so that the delimiters of a
+ * payload are counted once.
  */
 export function jsonCandidates(text: string): JsonCandidates {
   const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -163,7 +163,7 @@ export function jsonCandidates(text: string): JsonCandidates {
       if (!slice) {
         if (inside) continue;
         broken += 1;
-        if (broken >= MAX_JSON_CANDIDATES) {
+        if (broken > MAX_JSON_CANDIDATES) {
           // The payload of the answer may lie behind this delimiter: the
           // answer is not read as "no findings" but as a failure.
           exhausted = true;
@@ -181,7 +181,7 @@ export function jsonCandidates(text: string): JsonCandidates {
       } catch {
         if (inside) continue;
         broken += 1;
-        if (broken >= MAX_JSON_CANDIDATES) {
+        if (broken > MAX_JSON_CANDIDATES) {
           exhausted = true;
           break;
         }

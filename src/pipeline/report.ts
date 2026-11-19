@@ -1,4 +1,4 @@
-import type { Finding, ReviewRun, StepOutcome } from './types.js';
+import type { Finding, ReviewRun, ReviewVerdict, StepOutcome } from './types.js';
 
 /** What the report needs beyond the run itself. */
 export interface ReportOptions {
@@ -78,7 +78,7 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
  * that did not finish: a run whose reviewers all failed has found nothing, and
  * nothing is not an approval.
  */
-function verdictOf(run: ReviewRun): { verdict: string; reason: string } {
+export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: string } {
   const grave = run.findings.filter(
     (finding) =>
       finding.verification !== 'rejected' &&
@@ -132,7 +132,8 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
     ? `pull request #${context.pr}${context.prUrl ? ` — ${context.prUrl}` : ''}`
     : `branch ${context?.headRef ?? 'HEAD'}${context ? ` (${context.headSha.slice(0, 7)})` : ''}`;
   const provider = options.backendLabel ?? 'backend';
-  const { verdict, reason } = verdictOf(run);
+  const verdict = run.verdict;
+  const reason = run.verdictReason;
 
   const lines: string[] = [];
   lines.push(`# PR review — ${subject}`);

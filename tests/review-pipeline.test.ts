@@ -560,6 +560,10 @@ describe('the review pipeline', () => {
 
     expect(run.report).toContain('REQUEST CHANGES');
     expect(run.report).toContain('not settled');
+    // The verdict is data of the run, not only a line of the report: the
+    // caller reads it to decide what to do with the review.
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.verdictReason).toContain('not settled');
   });
 
   it('does not approve a review with an unconfirmed blocking finding', async () => {
@@ -588,6 +592,23 @@ describe('the review pipeline', () => {
     });
 
     expect(run.report).toContain('REQUEST CHANGES');
+  });
+
+  it('approves a review whose findings are all settled', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.verdict).toBe('APPROVE');
+    expect(run.report).toContain('APPROVE');
   });
 
   it('reports a backend that failed instead of an empty review', async () => {
@@ -754,6 +775,22 @@ describe('the parsing of the answers', () => {
     // candidates is reached, and the answer is no answer — not an answer
     // without findings.
     const prose = Array.from({ length: 60 }, () => '{').join(' ');
+    const answer = `${prose} ${answerWith([FINDING])}`;
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(0);
+    expect(parsed.invalid.join(' ')).toContain('more than 50 delimiters without JSON');
+  });
+
+  it('tolerates exactly fifty delimiters of prose', () => {
+    const prose = Array.from({ length: 50 }, () => '{').join(' ');
+    const answer = `${prose} ${answerWith([FINDING])}`;
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+  });
+
+  it('fails an answer whose payload lies behind fifty-one delimiters of prose', () => {
+    const prose = Array.from({ length: 51 }, () => '{').join(' ');
     const answer = `${prose} ${answerWith([FINDING])}`;
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.findings).toHaveLength(0);

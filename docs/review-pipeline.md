@@ -111,6 +111,10 @@ and the *Checks* table carries the steps of the pipeline.
 The run is written to `~/.10x-chat/reviews/<run-id>/`: `review.json` (the
 steps, the findings and the context) and `report.md` (the report).
 
+The exit code of the command is the verdict of the review: `0` when the
+verdict is `APPROVE`, `1` when the review is incomplete or asks for changes.
+A caller must not read a clean exit of an incomplete review as an approval.
+
 ## The bounds
 
 - The diff of the bundle is cut at 120 000 characters; the cut is written into
@@ -144,6 +148,10 @@ may be the defect that matters, and a review does not approve on the strength
 of a guess — **and** every step of the pipeline passed. A run whose reviewer,
 whose collection or whose verification did not finish says `REQUEST CHANGES` —
 a review that found nothing because it could not run is not an approval.
+
+The verdict is a field of the run (`verdict` and `verdictReason` of
+`review.json`), not only a line of the report: the caller of the pipeline reads
+it without parsing the markdown.
 
 ## What the pipeline never does
 

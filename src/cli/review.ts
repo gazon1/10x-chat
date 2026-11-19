@@ -102,6 +102,13 @@ export function createReviewCommand(): Command {
           );
           process.exit(1);
         }
+
+        // A review that asks for changes says so in its exit code too: the
+        // caller of the command must not read a clean exit as an approval.
+        if (run.verdict !== 'APPROVE') {
+          console.error(chalk.red(`${run.verdict} — ${run.verdictReason}`));
+          process.exit(1);
+        }
       } catch (error) {
         console.error(
           chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`),

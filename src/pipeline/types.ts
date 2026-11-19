@@ -110,6 +110,9 @@ export interface ReviewContext {
   diffTruncated: boolean;
 }
 
+/** The verdict of a review — the two the report format knows. */
+export type ReviewVerdict = 'APPROVE' | 'REQUEST CHANGES';
+
 /** The result of a review run. */
 export interface ReviewRun {
   /** The id of the run — the name of its directory. */
@@ -122,6 +125,10 @@ export interface ReviewRun {
   steps: StepOutcome[];
   /** The findings of the run — normalized, deduplicated and verified. */
   findings: Finding[];
+  /** The verdict of the run — the machine-readable answer of the review. */
+  verdict: ReviewVerdict;
+  /** The reason of the verdict, in one sentence. */
+  verdictReason: string;
   /** The report of the run, in the format of the repository. */
   report: string;
   startedAt: string;

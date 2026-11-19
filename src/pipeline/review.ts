@@ -12,7 +12,7 @@ import {
   resolveInRepo,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
-import { renderReviewReport } from './report.js';
+import { renderReviewReport, verdictOf } from './report.js';
 import type {
   Finding,
   ReviewContext,
@@ -545,10 +545,17 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ...(context ? { context } : {}),
     steps,
     findings,
+    verdict: 'APPROVE',
+    verdictReason: '',
     report: '',
     startedAt,
     finishedAt: new Date().toISOString(),
   };
+  // The verdict is data of the run, not only a line of the report: the caller
+  // reads it to decide what to do with the review.
+  const verdict = verdictOf(run);
+  run.verdict = verdict.verdict;
+  run.verdictReason = verdict.reason;
   run.report = renderReviewReport(run, {
     backendLabel: options.backendLabel ?? backend.name,
   });
