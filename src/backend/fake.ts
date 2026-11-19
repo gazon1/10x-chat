@@ -200,7 +200,11 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
               truncated: entry.response.truncated,
               conversationId: entry.response.conversationId,
             }
-          : {}),
+          : // A failed request has no answer — but the output it produced
+            // before it failed is still there.
+            entry.failure?.partialText
+            ? { text: entry.failure.partialText }
+            : {}),
         cancelled: entry.cancelled,
       };
     },

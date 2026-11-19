@@ -229,6 +229,14 @@ describe('Fake backend', () => {
     expect((await backend.status('req-1')).submission).toBe('submitted');
   });
 
+  it('reports the output of a failed request in its status', async () => {
+    const backend = createFakeBackend([{ prompt: 'boom', failure: 'timeout', partial: 'half' }]);
+    await backend.ask({ requestId: 'req-1', prompt: 'boom' });
+    const status = await backend.status('req-1');
+    expect(status.text).toBe('half');
+    expect(status.submission).toBe('submitted');
+  });
+
   it('maps every failure kind and never answers with an empty success', async () => {
     const kinds: BackendFailureKind[] = [
       'busy',
