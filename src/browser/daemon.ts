@@ -5,8 +5,9 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } from 'playwright';
-import { resolveEffectiveProxy } from '../config.js';
+import { loadConfig, resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
+import { getPackageVersion } from '../version.js';
 import { acquireProfileLock } from './lock.js';
 import { requestedTimeoutMs, timeoutPlan } from './operation-timeout.js';
 import { isProcessAlive } from './process.js';
@@ -79,6 +80,8 @@ export interface DaemonState {
   headless: boolean;
   /** Fingerprint of the proxy the daemon was started with (no secrets). */
   proxy?: string;
+  /** The version of the package the daemon was started from. */
+  version?: string;
   createdAt: string;
 }
 
@@ -171,16 +174,44 @@ function getErrorMessage(error: unknown): string {
  * The headless mode is a property of the browser process: a daemon that runs
  * headed must not serve a headless request (the user would get a visible
  * window) and a headless daemon must not serve a headed request.
+ *
+ * The version is a property of the code: the daemon runs the code of the
+ * package it was started from, so a daemon of an older version must not serve
+ * a client of a newer one.
  */
 export function isDaemonCompatible(
   state: DaemonState,
   requestedHeadless: boolean,
   requestedProxy: string,
+  requestedVersion: string,
 ): boolean {
   if (state.headless !== requestedHeadless) return false;
   // The proxy is a property of the browser process: a daemon that runs with
   // another proxy cannot be reused.
-  return state.proxy === requestedProxy;
+  if (state.proxy !== requestedProxy) return false;
+  return state.version === requestedVersion;
+}
+
+/**
+ * Why the running daemon cannot serve the request.
+ *
+ * The reason is the first difference between the daemon and the request: it
+ * is what the user has to know when the daemon cannot be switched.
+ */
+export function describeDaemonMismatch(
+  state: DaemonState,
+  requestedHeadless: boolean,
+  requestedProxy: string,
+  requestedVersion: string,
+): string {
+  if (state.headless !== requestedHeadless) {
+    return (
+      `a different headless mode (${state.headless ? 'headless' : 'headed'} → ` +
+      `${requestedHeadless ? 'headless' : 'headed'})`
+    );
+  }
+  if (state.proxy !== requestedProxy) return 'a different proxy';
+  return `an older version (${state.version ?? 'unknown'} → ${requestedVersion})`;
 }
 
 function serializeValue(value: unknown): SerializedValue {
@@ -520,6 +551,7 @@ async function readDaemonState(): Promise<DaemonState | null> {
       token: state.token,
       headless: Boolean(state.headless),
       proxy: typeof state.proxy === 'string' ? state.proxy : undefined,
+      version: typeof state.version === 'string' ? state.version : undefined,
       createdAt: typeof state.createdAt === 'string' ? state.createdAt : new Date().toISOString(),
     };
   } catch {
@@ -842,12 +874,16 @@ function getServerEntryPoint(): { command: string; args: string[] } {
   };
 }
 
-async function waitForDaemonReady(headless: boolean, proxy: string): Promise<DaemonState> {
+async function waitForDaemonReady(
+  headless: boolean,
+  proxy: string,
+  version: string,
+): Promise<DaemonState> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const state = await readDaemonState();
-    if (state && isDaemonCompatible(state, headless, proxy)) {
+    if (state && isDaemonCompatible(state, headless, proxy, version)) {
       const healthy = await pingDaemon(state);
       if (healthy) return state;
     }
@@ -877,7 +913,7 @@ async function startDaemon(headless: boolean, proxy: string): Promise<DaemonStat
   } finally {
     closeSync(logFd);
   }
-  return waitForDaemonReady(headless, proxy);
+  return waitForDaemonReady(headless, proxy, getPackageVersion());
 }
 
 /**
@@ -933,8 +969,15 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
   // first, the environment second. The fingerprint of it decides whether the
   // running daemon can serve the request.
   const proxy = fingerprintProxy(await resolveEffectiveProxy());
+  // The daemon runs the code of this package: a daemon of an older version
+  // must be replaced after an update.
+  const version = getPackageVersion();
   const existing = await readDaemonState();
-  if (existing && isDaemonCompatible(existing, headless, proxy) && (await pingDaemon(existing))) {
+  if (
+    existing &&
+    isDaemonCompatible(existing, headless, proxy, version) &&
+    (await pingDaemon(existing))
+  ) {
     return existing;
   }
 
@@ -944,20 +987,16 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
     if (current) {
       const health = await fetchDaemonHealth(current);
       const healthy = health !== undefined;
-      if (healthy && isDaemonCompatible(current, headless, proxy)) {
+      if (healthy && isDaemonCompatible(current, headless, proxy, version)) {
         return current;
       }
 
       if (healthy) {
         // The daemon does not fit the request: it runs in another headless
-        // mode or with another proxy. It may only be stopped when it has no
-        // session of another process any more — otherwise that session would
-        // lose its browser.
-        const reason =
-          current.headless !== headless
-            ? `a different headless mode (${current.headless ? 'headless' : 'headed'} → ` +
-              `${headless ? 'headless' : 'headed'})`
-            : 'a different proxy';
+        // mode, with another proxy or with the code of an older version. It
+        // may only be stopped when it has no session of another process any
+        // more — otherwise that session would lose its browser.
+        const reason = describeDaemonMismatch(current, headless, proxy, version);
 
         if (daemonIsBusy(health)) {
           throw daemonBusyError(reason, health);
@@ -970,7 +1009,11 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
         const decision = decideDaemonSwitch(await beginDaemonSwitch(current), reason);
 
         if (decision.action === 'restart') {
+          // The daemon does not answer: it is really gone. Its process may
+          // still be alive (a stale browser) — it is stopped, so it does not
+          // linger next to the new daemon.
           await clearDaemonState();
+          terminateDaemonProcess(current.pid);
           return startDaemon(headless, proxy);
         }
 
@@ -982,13 +1025,7 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
 
         await new BrowserDaemonHttpClient(current).stop();
 
-        if (isProcessAlive(current.pid)) {
-          try {
-            process.kill(current.pid, 'SIGTERM');
-          } catch {
-            // already gone
-          }
-        }
+        terminateDaemonProcess(current.pid);
       }
 
       await clearDaemonState();
@@ -1018,15 +1055,129 @@ export async function stopDaemon(): Promise<void> {
   const client = new BrowserDaemonHttpClient(state);
   await client.stop();
 
-  if (isProcessAlive(state.pid)) {
-    try {
-      process.kill(state.pid, 'SIGTERM');
-    } catch {
-      // already gone
-    }
-  }
+  terminateDaemonProcess(state.pid);
 
   await clearDaemonState();
+}
+
+/** Stop the daemon process, if it is still alive. */
+function terminateDaemonProcess(pid: number): void {
+  if (!isProcessAlive(pid)) return;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
+/** What the daemon is doing right now. */
+export interface DaemonStatus {
+  /** The daemon process is alive. */
+  running: boolean;
+  /** The daemon answers its health request. */
+  healthy: boolean;
+  pid?: number;
+  port?: number;
+  headless?: boolean;
+  /** The version of the package the daemon was started from. */
+  version?: string;
+  createdAt?: string;
+  /** The daemon has the session of another process. */
+  busy: boolean;
+  activeContexts: number;
+  activePages: number;
+  pendingCreations: number;
+  /** The version of the package of this client. */
+  clientVersion: string;
+  /** The running daemon runs the code of this package. */
+  upToDate: boolean;
+}
+
+/**
+ * The state of the shared browser daemon.
+ *
+ * The daemon is compared with the client: a daemon of an older version must
+ * be replaced, otherwise it serves the code of the package it was started
+ * from.
+ */
+export async function daemonStatus(): Promise<DaemonStatus> {
+  const clientVersion = getPackageVersion();
+  const state = await readDaemonState();
+  if (!state) {
+    return {
+      running: false,
+      healthy: false,
+      busy: false,
+      activeContexts: 0,
+      activePages: 0,
+      pendingCreations: 0,
+      clientVersion,
+      upToDate: false,
+    };
+  }
+
+  const health = await fetchDaemonHealth(state);
+  return {
+    running: true,
+    healthy: health !== undefined,
+    pid: state.pid,
+    port: state.port,
+    headless: state.headless,
+    version: state.version,
+    createdAt: state.createdAt,
+    busy: daemonIsBusy(health),
+    activeContexts: health?.activeContexts ?? 0,
+    activePages: health?.activePages ?? 0,
+    pendingCreations: health?.pendingCreations ?? 0,
+    clientVersion,
+    upToDate: state.version === clientVersion,
+  };
+}
+
+/** What a stop of the daemon did. */
+export type DaemonStopOutcome = 'stopped' | 'not-running' | 'busy';
+
+/**
+ * Stop the daemon, but not the session of another process.
+ *
+ * A daemon that still has the session of another process must not be stopped:
+ * that session would lose its browser. The caller decides what to do with a
+ * busy daemon.
+ */
+export async function requestDaemonStop(
+  options: { force?: boolean } = {},
+): Promise<DaemonStopOutcome> {
+  const state = await readDaemonState();
+  if (!state) return 'not-running';
+
+  const health = await fetchDaemonHealth(state);
+  if (!options.force && daemonIsBusy(health)) return 'busy';
+
+  await stopDaemon();
+  return 'stopped';
+}
+
+/**
+ * Replace the daemon with a new one.
+ *
+ * The new daemon runs the code of this package — that is the point of the
+ * restart after an update.
+ */
+export async function restartDaemon(
+  options: { force?: boolean; headless?: boolean } = {},
+): Promise<DaemonStatus> {
+  const outcome = await requestDaemonStop(options);
+  if (outcome === 'busy') {
+    throw new Error(
+      'The shared browser daemon has the session of another process and cannot be stopped: ' +
+        'stopping it would end that session. Wait for the other session to finish, ' +
+        'then run the command again (or pass --force).',
+    );
+  }
+
+  const headless = options.headless ?? (await loadConfig()).headless;
+  await ensureDaemonState(headless);
+  return daemonStatus();
 }
 
 export async function launchSharedBrowserSession(

@@ -419,6 +419,24 @@ separate profile per provider.
 10x-chat migrate --keep               # Keep the old isolated profiles after migrating
 ```
 
+### `daemon`
+
+Inspect and control the shared browser daemon — the Chromium process that
+serves every `chat` run.
+
+```bash
+10x-chat daemon status      # PID, port, mode, version, open sessions
+10x-chat daemon stop         # Stop it (refuses while another session runs)
+10x-chat daemon stop --force # Stop it even with a running session
+10x-chat daemon restart      # Replace it with a new one (new code after an update)
+```
+
+The daemon runs the code of the package it was started from. After an update
+the running daemon is too old, so it is replaced automatically on the next
+command — and the install script stops an idle daemon right away. A daemon
+that still has the session of another process is never killed: the command
+tells you to wait instead.
+
 ## File Bundling
 
 The `--file` flag accepts globs. Files are assembled into a markdown bundle sent as the prompt:

@@ -23,9 +23,22 @@ describe('cli flows', () => {
       'secrets',
       'skill',
       'migrate',
+      'daemon',
     ]) {
       expect(result.output).toContain(command);
     }
+  });
+
+  it('reports the state of the browser daemon', async () => {
+    await withTempHome(async (home) => {
+      const status = await runCli(['daemon', 'status'], { TEN_X_CHAT_HOME: home });
+      expect(status.code).toBe(0);
+      expect(status.output).toContain('not running');
+
+      const stop = await runCli(['daemon', 'stop'], { TEN_X_CHAT_HOME: home });
+      expect(stop.code).toBe(0);
+      expect(stop.output).toContain('not running');
+    });
   });
 
   it('bundles prompt and files with --dry-run', async () => {

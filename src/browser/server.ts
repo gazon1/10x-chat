@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { Browser } from 'playwright';
 import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
+import { getPackageVersion } from '../version.js';
 import { getChromium, getEngineName } from './engine.js';
 import { CHROMIUM_ARGS } from './process.js';
 import { fingerprintProxy } from './proxy.js';
@@ -21,6 +22,8 @@ interface DaemonStateFile {
   headless: boolean;
   /** Fingerprint of the proxy the browser was started with (no secrets). */
   proxy?: string;
+  /** The version of the package the daemon was started from. */
+  version?: string;
   createdAt: string;
 }
 
@@ -55,6 +58,7 @@ async function writeStateFile(port: number, proxy: string): Promise<void> {
     token: AUTH_TOKEN,
     headless: HEADLESS,
     proxy,
+    version: getPackageVersion(),
     createdAt: new Date().toISOString(),
   };
 
@@ -179,6 +183,7 @@ async function main(): Promise<void> {
           pendingCreations: health.pendingCreations,
           switching: health.switching,
           headless: HEADLESS,
+          version: getPackageVersion(),
           pid: process.pid,
         }),
       );

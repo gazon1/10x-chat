@@ -11,11 +11,13 @@ import {
   daemonSwitchFailedError,
   daemonSwitchTimeoutError,
   decideDaemonSwitch,
+  describeDaemonMismatch,
   fetchDaemonHealth,
   isDaemonCompatible,
 } from '../src/browser/daemon.js';
 
 const PROXY = 'proxy-fingerprint';
+const VERSION = '1.2.3';
 
 function state(headless: boolean): DaemonState {
   return {
@@ -24,6 +26,7 @@ function state(headless: boolean): DaemonState {
     token: 'token',
     headless,
     proxy: PROXY,
+    version: VERSION,
     createdAt: new Date().toISOString(),
   };
 }
@@ -41,20 +44,47 @@ async function closedPort(): Promise<number> {
 
 describe('isDaemonCompatible', () => {
   it('reuses a daemon with the same headless mode', () => {
-    expect(isDaemonCompatible(state(true), true, PROXY)).toBe(true);
-    expect(isDaemonCompatible(state(false), false, PROXY)).toBe(true);
+    expect(isDaemonCompatible(state(true), true, PROXY, VERSION)).toBe(true);
+    expect(isDaemonCompatible(state(false), false, PROXY, VERSION)).toBe(true);
   });
 
   it('restarts a headed daemon for a headless request', () => {
-    expect(isDaemonCompatible(state(false), true, PROXY)).toBe(false);
+    expect(isDaemonCompatible(state(false), true, PROXY, VERSION)).toBe(false);
   });
 
   it('restarts a headless daemon for a headed request', () => {
-    expect(isDaemonCompatible(state(true), false, PROXY)).toBe(false);
+    expect(isDaemonCompatible(state(true), false, PROXY, VERSION)).toBe(false);
   });
 
   it('restarts a daemon with another proxy', () => {
-    expect(isDaemonCompatible(state(true), true, 'another-proxy')).toBe(false);
+    expect(isDaemonCompatible(state(true), true, 'another-proxy', VERSION)).toBe(false);
+  });
+
+  it('restarts a daemon of an older version', () => {
+    expect(isDaemonCompatible(state(true), true, PROXY, '2.0.0')).toBe(false);
+  });
+
+  it('restarts a daemon without a version', () => {
+    const legacy = { ...state(true), version: undefined };
+    expect(isDaemonCompatible(legacy, true, PROXY, VERSION)).toBe(false);
+  });
+});
+
+describe('describeDaemonMismatch', () => {
+  it('names the headless mode', () => {
+    expect(describeDaemonMismatch(state(false), true, PROXY, VERSION)).toContain('headless mode');
+  });
+
+  it('names the proxy', () => {
+    expect(describeDaemonMismatch(state(true), true, 'another-proxy', VERSION)).toBe(
+      'a different proxy',
+    );
+  });
+
+  it('names the version', () => {
+    expect(describeDaemonMismatch(state(true), true, PROXY, '2.0.0')).toBe(
+      `an older version (${VERSION} → 2.0.0)`,
+    );
   });
 });
 

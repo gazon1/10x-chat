@@ -454,14 +454,25 @@ describe('fingerprintProxy', () => {
       token: 'token',
       headless: true,
       proxy: fingerprintProxy({ server: 'http://old.example.com:3128' }),
+      version: '1.0.0',
       createdAt: new Date().toISOString(),
     };
 
     expect(
-      isDaemonCompatible(state, true, fingerprintProxy({ server: 'http://new.example.com:3128' })),
+      isDaemonCompatible(
+        state,
+        true,
+        fingerprintProxy({ server: 'http://new.example.com:3128' }),
+        '1.0.0',
+      ),
     ).toBe(false);
     expect(
-      isDaemonCompatible(state, true, fingerprintProxy({ server: 'http://old.example.com:3128' })),
+      isDaemonCompatible(
+        state,
+        true,
+        fingerprintProxy({ server: 'http://old.example.com:3128' }),
+        '1.0.0',
+      ),
     ).toBe(true);
   });
 });
