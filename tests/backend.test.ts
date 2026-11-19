@@ -6,7 +6,9 @@ import {
   type AiBackend,
   BackendError,
   type BackendFailureKind,
+  type BackendOutcome,
   type BackendRequest,
+  type BackendResponse,
   backendFailureKind,
   createFakeBackend,
   getBackend,
@@ -383,6 +385,33 @@ describe('Chat through the backend contract', () => {
         if (!outcome.ok) return outcome;
         return { ok: true as const, value: { ...outcome.value, requestId: 'another-request' } };
       },
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('gives a backend the directory of the images it has to save', async () => {
+    const requests: BackendRequest[] = [];
+    const backend = recordingBackend(requests);
+    await runChat(
+      { prompt: 'hello', provider: 'chatgpt', saveImages: '/tmp/ten-x-chat-images' },
+      { backend },
+    );
+    expect(requests[0].saveDir).toBe('/tmp/ten-x-chat-images');
+  });
+
+  it('fails the run when the backend answers with a malformed response', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({
+          ok: true,
+          value: { requestId: 'req-1', text: undefined, truncated: false, submission: 'submitted' },
+        }) as unknown as BackendOutcome<BackendResponse>,
     };
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
       (thrown: unknown) => thrown,

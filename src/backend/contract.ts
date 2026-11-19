@@ -76,6 +76,14 @@ export interface BackendRequest {
   conversationId?: string;
   /** The files to attach. */
   attachments?: string[];
+  /**
+   * Where the backend saves the images of the answer.
+   *
+   * The application does not download them: it has no page with the cookies
+   * of a provider. A backend that produces images saves them itself and
+   * reports the local paths in the answer.
+   */
+  saveDir?: string;
   /** The deadline of the request in milliseconds. */
   timeoutMs?: number;
   /**

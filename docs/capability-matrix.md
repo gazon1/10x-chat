@@ -110,3 +110,8 @@ migrated to the contract.
 A backend that promises `streaming: true` writes every piece of the answer
 into the `onChunk` of the request — the same convention the browser providers
 use today. The final answer of the response stays the whole text.
+
+A backend that produces images saves them itself: the request carries the
+target directory in `saveDir`, and the answer reports the local paths. The
+application does not download them — it has no page with the cookies of a
+provider.

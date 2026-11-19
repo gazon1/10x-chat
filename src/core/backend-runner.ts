@@ -6,6 +6,7 @@ import {
   type BackendOutcome,
   type BackendRequest,
   type BackendResponse,
+  type BackendSubmission,
 } from '../backend/contract.js';
 import { loadConfig } from '../config.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
@@ -67,6 +68,9 @@ export async function runBackendChat(
     prompt: bundle,
     ...(model ? { model } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
+    // The images of the answer are saved by the backend itself: the
+    // downloader of the browser path needs a page with the cookies.
+    ...(options.saveImages ? { saveDir: options.saveImages } : {}),
     // The timeout of a chat: the flag of the command, then the config file.
     // The default of a provider does not apply — a backend has its own.
     ...(timeoutMs ? { timeoutMs } : {}),
@@ -127,22 +131,48 @@ export async function runBackendChat(
  *
  * An empty answer is an answer that did not arrive, and an answer of another
  * request belongs to another request — both are `invalid_output`.
+ *
+ * A backend is an implementation of another program: its answer is checked,
+ * not trusted. The check never throws — a malformed answer is a failure, not
+ * a crash of the run.
  */
 function invalidOutput(response: BackendResponse, requestId: string): BackendFailure | undefined {
+  if (!response || typeof response !== 'object') {
+    return {
+      kind: 'invalid_output',
+      message: 'The backend answered without a response.',
+      submission: 'unknown',
+    };
+  }
+  const submission = submissionOf(response.submission);
+  if (typeof response.text !== 'string') {
+    return {
+      kind: 'invalid_output',
+      message: 'The backend answered without text.',
+      submission,
+    };
+  }
   if (response.requestId !== requestId) {
     return {
       kind: 'invalid_output',
       message: `The backend answered the request '${response.requestId}' instead of '${requestId}'.`,
-      submission: response.submission,
+      submission,
     };
   }
-  const hasImages = (response.images?.length ?? 0) > 0;
+  const hasImages = Array.isArray(response.images) && response.images.length > 0;
   if (response.text.trim() === '' && !hasImages) {
     return {
       kind: 'invalid_output',
       message: 'The backend answered with an empty response.',
-      submission: response.submission,
+      submission,
     };
   }
   return undefined;
+}
+
+/** The submission state of a response — the state it claims, when it is one. */
+function submissionOf(submission: unknown): BackendSubmission {
+  return submission === 'not_submitted' || submission === 'submitted' || submission === 'unknown'
+    ? submission
+    : 'unknown';
 }
