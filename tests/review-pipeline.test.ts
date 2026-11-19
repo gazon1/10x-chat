@@ -371,6 +371,25 @@ describe('the review pipeline', () => {
     expect(risks).toContain(grave.title);
   });
 
+  it('escapes the pipe of a file name in the table of the report', async () => {
+    // A pipe in the name of a file would split the cell of the table.
+    const piped = { ...FINDING, file: 'src/a|b.ts', line: 2 };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([piped]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf({ trackedFiles: ['src/a|b.ts'] }),
+    });
+
+    const row = run.report.split('\n').find((line) => line.includes(piped.problem.slice(0, 20)));
+    expect(row).toContain('src/a\\|b.ts');
+  });
+
   it('does not read a file that is not part of the revision under review', async () => {
     // A local file that was never committed — a secret — must not reach the
     // backend, not even as the evidence of a finding.
@@ -437,7 +456,8 @@ describe('the review pipeline', () => {
 
     expect(run.findings[0].verification).toBe('unverified');
     expect(run.findings[0].verificationNote).toContain('contradictory');
-    expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('passed');
+    // A verification that contradicts itself did not finish its work.
+    expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('failed');
   });
 
   it('does not read the file a tracked symlink points at when it is not committed', async () => {

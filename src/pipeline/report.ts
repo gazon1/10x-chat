@@ -43,7 +43,12 @@ function cell(value: string): string {
 /** The location of a finding — the file and the line. */
 function locationOf(finding: Finding): string {
   if (!finding.file) return '—';
-  return `\`${finding.file}${finding.line ? `:${finding.line}` : ''}\``;
+  // The name of a file is a name: a pipe in it would split the cell of the
+  // table of the report, and a newline would end the row.
+  const location = `${finding.file}${finding.line ? `:${finding.line}` : ''}`
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
+  return `\`${location}\``;
 }
 
 /** The status of a finding in the wording of the report format. */

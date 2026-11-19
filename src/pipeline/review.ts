@@ -443,7 +443,10 @@ async function verifyCandidates(options: {
   const confirmed = findings.filter((finding) => finding.verification === 'confirmed').length;
   // A verification that answered for nobody is not a verification that passed.
   const answered = candidates.filter((finding) => verdicts.has(finding.id)).length;
-  const complete = parsed.invalid.length === 0 && answered === candidates.length;
+  // Two verdicts that contradict each other settle nothing: the verification
+  // did not finish its work, and the step says so.
+  const complete =
+    parsed.invalid.length === 0 && answered === candidates.length && contradictory.size === 0;
   return {
     findings,
     step: step(
@@ -451,6 +454,7 @@ async function verifyCandidates(options: {
       complete ? 'passed' : 'failed',
       `${candidates.length} candidates, ${confirmed} confirmed, ${answered} answered` +
         (parsed.invalid.length > 0 ? `, ${parsed.invalid.length} invalid verdicts` : '') +
+        (contradictory.size > 0 ? `, ${contradictory.size} contradictory verdicts` : '') +
         (complete ? '' : ' — the verification is incomplete'),
       startedAt,
     ),
