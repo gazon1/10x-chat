@@ -52,6 +52,9 @@ export interface ParsedVerdicts {
   invalid: string[];
 }
 
+/** How many opening delimiters of an answer are tried. */
+const MAX_JSON_CANDIDATES = 50;
+
 /**
  * The balanced slice that starts at an opening delimiter.
  *
@@ -90,38 +93,82 @@ function balancedSlice(text: string, start: number): string | undefined {
   return undefined;
 }
 
+/** A JSON payload of an answer, with the place it was found. */
+export interface JsonCandidate {
+  /** The value of the payload. */
+  value: unknown;
+  /** The payload sat in a fenced block — a model fences its payload. */
+  fenced: boolean;
+  /** Where the payload starts in the answer. */
+  at: number;
+}
+
 /**
- * The JSON of an answer.
+ * Every JSON payload of an answer, in the order they appear.
  *
  * A model wraps its JSON in a fence, in a sentence, or in both — and a
  * sentence may carry brackets of its own before the payload. Every balanced
- * object and array of the answer is therefore read, and the one that carries
- * the wanted key wins; the biggest array is the fallback for an answer that
- * is a bare list.
+ * object and array of the answer is therefore read. The same payload is
+ * seen twice when it sits in a fence, so the copies are told apart by their
+ * text.
  */
-export function extractJson(text: string, key?: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced?.[1] ? [fenced[1], text] : [text];
-  const parsed: unknown[] = [];
-  for (const candidate of candidates) {
-    for (let index = 0; index < candidate.length; index += 1) {
-      const character = candidate[index];
+export function jsonCandidates(text: string): JsonCandidate[] {
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  const sources: { text: string; fenced: boolean; at: number }[] = fences.map((match) => ({
+    text: match[1],
+    fenced: true,
+    at: match.index ?? 0,
+  }));
+  sources.push({ text, fenced: false, at: 0 });
+
+  const candidates: JsonCandidate[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    let tried = 0;
+    for (let index = 0; index < source.text.length && tried < MAX_JSON_CANDIDATES; index += 1) {
+      const character = source.text[index];
       if (character !== '{' && character !== '[') continue;
-      const slice = balancedSlice(candidate, index);
+      tried += 1;
+      const slice = balancedSlice(source.text, index);
       if (!slice) continue;
       try {
-        parsed.push(JSON.parse(slice));
+        const value: unknown = JSON.parse(slice);
+        const key = JSON.stringify(value);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push({ value, fenced: source.fenced, at: source.at + index });
       } catch {
         // Not the payload — the next opening delimiter may be.
       }
     }
   }
+  return candidates;
+}
+
+/**
+ * The JSON of an answer.
+ *
+ * The payload that carries the wanted key wins; the biggest array is the
+ * fallback for an answer that is a bare list.
+ *
+ * shortcut: an example of the schema in the prose can carry the key too, and
+ * this function cannot tell an example from the payload — the parsers of the
+ * findings and of the verdicts do tell them apart, by their schema.
+ */
+export function extractJson(text: string, key?: string): unknown {
+  const parsed = jsonCandidates(text).map((candidate) => candidate.value);
   if (key !== undefined) {
-    const withKey = parsed.find(
+    const withKey = parsed.filter(
       (value) =>
         value !== null && typeof value === 'object' && !Array.isArray(value) && key in value,
     );
-    if (withKey !== undefined) return withKey;
+    if (withKey.length > 0) {
+      return withKey.reduce((biggest, value) =>
+        (entriesOf(value, key)?.length ?? 0) > (entriesOf(biggest, key)?.length ?? 0)
+          ? value
+          : biggest,
+      );
+    }
   }
   const arrays = parsed.filter((value): value is unknown[] => Array.isArray(value));
   if (arrays.length > 0) {
@@ -133,6 +180,31 @@ export function extractJson(text: string, key?: string): unknown {
   return objects ?? parsed[0];
 }
 
+/**
+ * The better of two candidates.
+ *
+ * The payload that lost the least wins: the entries that pass the schema are
+ * the answer, the example of the schema is not. A fenced payload beats an
+ * unfenced one, a payload with more entries beats one with less, and a later
+ * payload beats an earlier one — a model that repeats the format of the
+ * answer puts the format first.
+ */
+function betterCandidate<T extends { invalid: string[] }>(
+  a: { candidate: JsonCandidate; parsed: T; count: number },
+  b: { candidate: JsonCandidate; parsed: T; count: number },
+): { candidate: JsonCandidate; parsed: T; count: number } {
+  if (a.parsed.invalid.length !== b.parsed.invalid.length) {
+    return a.parsed.invalid.length < b.parsed.invalid.length ? a : b;
+  }
+  if (a.candidate.fenced !== b.candidate.fenced) {
+    return a.candidate.fenced ? a : b;
+  }
+  if (a.count !== b.count) {
+    return a.count > b.count ? a : b;
+  }
+  return a.candidate.at >= b.candidate.at ? a : b;
+}
+
 /** The entries of a payload — an array of them, or the list under a key. */
 function entriesOf(payload: unknown, key: string): unknown[] | undefined {
   if (Array.isArray(payload)) return payload;
@@ -141,6 +213,18 @@ function entriesOf(payload: unknown, key: string): unknown[] | undefined {
     if (Array.isArray(entries)) return entries;
   }
   return undefined;
+}
+
+/**
+ * The entries under a key of a payload.
+ *
+ * A bare array is no payload of a key: an answer that carries a list of
+ * strings somewhere in it would otherwise be read as a list of findings.
+ */
+function keyedEntries(payload: unknown, key: string): unknown[] | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const entries = (payload as Record<string, unknown>)[key];
+  return Array.isArray(entries) ? entries : undefined;
 }
 
 /** A non-empty string, or undefined. */
@@ -262,14 +346,47 @@ export function normalizeTitle(title: string): string {
  * missing and the finding is empty. An entry that does not pass the schema
  * is reported as invalid — it is never silently dropped and never silently
  * promoted.
+ *
+ * An answer may carry more than one payload: an example of the schema in the
+ * prose of the answer is one of them. The payload whose entries pass the
+ * schema wins — an example of a finding does not.
  */
 export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFindings {
-  const payload = extractJson(text, 'findings');
-  const entries = entriesOf(payload, 'findings');
-  if (!entries) {
-    return { findings: [], invalid: ['the answer contains no JSON payload of findings'] };
+  const keyed = jsonCandidates(text)
+    .filter((candidate) => keyedEntries(candidate.value, 'findings') !== undefined)
+    .map((candidate) => {
+      const entries = keyedEntries(candidate.value, 'findings') ?? [];
+      return {
+        candidate,
+        parsed: parseFindingEntries(entries, role),
+        count: entries.length,
+      };
+    });
+  if (keyed.length > 0) {
+    const best = keyed.reduce(betterCandidate);
+    return { findings: best.parsed.findings, invalid: best.parsed.invalid };
   }
 
+  // An answer that is a bare list of findings.
+  const bare = jsonCandidates(text)
+    .filter((candidate) => Array.isArray(candidate.value))
+    .map((candidate) => {
+      const entries = candidate.value as unknown[];
+      return {
+        candidate,
+        parsed: parseFindingEntries(entries, role),
+        count: entries.length,
+      };
+    });
+  if (bare.length === 0) {
+    return { findings: [], invalid: ['the answer contains no JSON payload of findings'] };
+  }
+  const best = bare.reduce(betterCandidate);
+  return { findings: best.parsed.findings, invalid: best.parsed.invalid };
+}
+
+/** The findings of one payload of an answer. */
+function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindings {
   const findings: Finding[] = [];
   const invalid: string[] = [];
   entries.forEach((entry, index) => {
@@ -332,14 +449,38 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
  *
  * A verdict without an id belongs to no finding, and a verdict without a
  * state is no verdict: both are invalid.
+ *
+ * An answer may carry more than one payload: the payload whose entries pass
+ * the schema wins.
  */
 export function parseVerdicts(text: string): ParsedVerdicts {
-  const payload = extractJson(text, 'verdicts');
-  const entries = entriesOf(payload, 'verdicts');
-  if (!entries) {
-    return { verdicts: [], invalid: ['the answer contains no JSON payload of verdicts'] };
+  const keyed = jsonCandidates(text)
+    .filter((candidate) => keyedEntries(candidate.value, 'verdicts') !== undefined)
+    .map((candidate) => {
+      const entries = keyedEntries(candidate.value, 'verdicts') ?? [];
+      return { candidate, parsed: parseVerdictEntries(entries), count: entries.length };
+    });
+  if (keyed.length > 0) {
+    const best = keyed.reduce(betterCandidate);
+    return { verdicts: best.parsed.verdicts, invalid: best.parsed.invalid };
   }
 
+  // An answer that is a bare list of verdicts.
+  const bare = jsonCandidates(text)
+    .filter((candidate) => Array.isArray(candidate.value))
+    .map((candidate) => {
+      const entries = candidate.value as unknown[];
+      return { candidate, parsed: parseVerdictEntries(entries), count: entries.length };
+    });
+  if (bare.length === 0) {
+    return { verdicts: [], invalid: ['the answer contains no JSON payload of verdicts'] };
+  }
+  const best = bare.reduce(betterCandidate);
+  return { verdicts: best.parsed.verdicts, invalid: best.parsed.invalid };
+}
+
+/** The verdicts of one payload of an answer. */
+function parseVerdictEntries(entries: unknown[]): ParsedVerdicts {
   const verdicts: VerificationVerdict[] = [];
   const invalid: string[] = [];
   entries.forEach((entry, index) => {

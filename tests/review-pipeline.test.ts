@@ -3,8 +3,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
-import { collectReviewContext, resolveInRepo } from '../src/pipeline/context.js';
-import { dedupeFindings, findingId, parseReviewerFindings } from '../src/pipeline/findings.js';
+import {
+  bundlePatterns,
+  collectReviewContext,
+  conventionFiles,
+  parsePullRequestMetadata,
+  resolveInRepo,
+} from '../src/pipeline/context.js';
+import {
+  dedupeFindings,
+  findingId,
+  parseReviewerFindings,
+  parseVerdicts,
+} from '../src/pipeline/findings.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { ReviewContext } from '../src/pipeline/types.js';
 
@@ -324,6 +335,240 @@ describe('the review pipeline', () => {
     expect(step?.status).toBe('failed');
     expect(run.findings[0].verification).toBe('unverified');
   });
+
+  it('fails the step of a reviewer whose answer was cut off', async () => {
+    const backend = createFakeBackend([
+      {
+        prompt: '# Role: correctness',
+        answer: answerWith([FINDING]),
+        truncated: true,
+      },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-correctness');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('cut off');
+    // The findings of a cut off answer are not the findings of a review.
+    expect(run.findings).toHaveLength(0);
+  });
+
+  it('fails the step of a verification whose answer was cut off', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({ verdicts: [] }),
+        truncated: true,
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'verify-findings');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('cut off');
+  });
+
+  it('fails the step of a reviewer that lost one of its entries', async () => {
+    const backend = createFakeBackend([
+      {
+        prompt: '# Role: correctness',
+        answer: answerWith([FINDING, { title: 'A title', severity: 'BLOCKING' }]),
+      },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-correctness');
+    expect(step?.status).toBe('failed');
+    // The entry that passed the schema is still a finding.
+    expect(run.findings).toHaveLength(1);
+  });
+
+  it('does not confirm a finding that points at no file', async () => {
+    const homeless = { ...FINDING, file: undefined, line: undefined };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([homeless]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ title: homeless.title }),
+              verdict: 'confirmed',
+              evidence: 'the claim is true',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.findings[0].verificationNote).toContain('no file');
+  });
+
+  it('does not drop a finding that is rejected without evidence', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'rejected',
+              evidence: '',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings[0].verification).toBe('unverified');
+  });
+
+  it('does not approve a review with an unconfirmed grave finding', async () => {
+    const major = { ...FINDING, severity: 'MAJOR' };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([major]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: major.file, line: major.line, title: major.title }),
+              verdict: 'unverified',
+              evidence: 'the material does not settle it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).toContain('REQUEST CHANGES');
+    expect(run.report).toContain('not settled');
+  });
+
+  it('does not approve a review with an unconfirmed blocking finding', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'unverified',
+              evidence: 'the material does not settle it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).toContain('REQUEST CHANGES');
+  });
+
+  it('reports a backend that failed instead of an empty review', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', failure: 'unavailable' },
+      { prompt: '# Role: architecture', failure: 'timeout' },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-correctness');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('unavailable');
+    expect(run.report).toContain('REQUEST CHANGES');
+  });
+
+  it('rejects a finding whose line is outside the file', async () => {
+    const beyond = { ...FINDING, line: 999 };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([beyond]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: beyond.file, line: beyond.line, title: beyond.title }),
+              verdict: 'confirmed',
+              evidence: 'the line shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings[0].verification).toBe('rejected');
+    expect(run.findings[0].verificationNote).toContain('outside the file');
+  });
 });
 
 describe('the parsing of the answers', () => {
@@ -375,6 +620,64 @@ describe('the parsing of the answers', () => {
       })),
     );
     expect(merged).toHaveLength(2);
+  });
+
+  it('merges the same defect of two reviewers', () => {
+    const merged = dedupeFindings(
+      [
+        { ...FINDING, reportedBy: ['correctness' as const] },
+        { ...FINDING, title: 'unchecked input reaches the sink', reportedBy: ['tests' as const] },
+      ].map((finding) => ({
+        ...finding,
+        id: findingId(finding),
+        verification: 'unverified' as const,
+        evidence: [],
+      })),
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0].reportedBy).toEqual(['correctness', 'tests']);
+  });
+
+  it('does not take the example of the schema for the payload', () => {
+    // The reviewer repeats the format of the answer before the answer itself.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({
+        findings: [
+          {
+            title: 'a short title',
+            severity: 'BLOCKING|MAJOR|MINOR|INFO',
+            category: 'correctness',
+            file: 'path/of/the/file.ts',
+            line: 42,
+            problem: 'one or two sentences',
+            impact: 'the concrete failure scenario',
+            evidence: ['the code'],
+            fix: 'the minimal correction',
+          },
+        ],
+      }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('reads the verdicts of a verification', () => {
+    const parsed = parseVerdicts(
+      JSON.stringify({
+        verdicts: [
+          { id: 'f-00000001', verdict: 'confirmed', evidence: 'the line shows it' },
+          { id: 'f-00000002', verdict: 'unverified', evidence: '', note: 'not settled' },
+          { id: 'f-00000003', verdict: 'maybe', evidence: 'x' },
+        ],
+      }),
+    );
+    expect(parsed.verdicts).toHaveLength(2);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('verdict missing or unknown');
   });
 });
 
@@ -487,5 +790,41 @@ describe('the context of a review', () => {
     expect(await resolveInRepo(repo, 'src/link.ts')).toBeUndefined();
     expect(await resolveInRepo(repo, 'src/app.ts')).toBe(path.join(repo, 'src', 'app.ts'));
     expect(await resolveInRepo(repo, '../secret.txt')).toBeUndefined();
+  });
+
+  it('reads the metadata of a pull request', () => {
+    const metadata = parsePullRequestMetadata({
+      url: 'https://github.com/owner/name/pull/42',
+      title: 'Add the run function',
+      baseRefName: 'main',
+      baseRefOid: 'a'.repeat(40),
+      headRefName: 'feature',
+      headRefOid: 'b'.repeat(40),
+    });
+    expect(metadata.baseRef).toBe('main');
+    expect(metadata.headRef).toBe('feature');
+    expect(metadata.baseSha).toBe('a'.repeat(40));
+    expect(metadata.headSha).toBe('b'.repeat(40));
+    expect(metadata.title).toBe('Add the run function');
+  });
+
+  it('refuses the metadata of a pull request without commits', () => {
+    expect(() => parsePullRequestMetadata({ baseRefName: 'main', headRefName: 'feature' })).toThrow(
+      /no base or head commit/,
+    );
+  });
+
+  it('escapes the names of the files as literal patterns', () => {
+    // A name of a file is a name, not a pattern.
+    expect(bundlePatterns(['src/[id].ts'])).toEqual(['./src/\\[id\\].ts']);
+    // A name that starts with `!` must not become an exclusion.
+    expect(bundlePatterns(['!important.ts'])).toEqual(['./\\!important.ts']);
+  });
+
+  it('finds the convention files of the repository', async () => {
+    expect(await conventionFiles(repo)).toEqual([]);
+    await writeFile(path.join(repo, 'AGENTS.md'), '# The rules\n', 'utf-8');
+    await writeFile(path.join(repo, 'README.md'), '# The readme\n', 'utf-8');
+    expect(await conventionFiles(repo)).toEqual(['./AGENTS.md', './README.md']);
   });
 });

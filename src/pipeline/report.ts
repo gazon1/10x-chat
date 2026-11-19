@@ -58,30 +58,40 @@ function statusOf(finding: Finding): string {
   }
 }
 
-/** The findings a role reported — the roles are the ones of the steps. */
+/**
+ * The findings a role reported.
+ *
+ * The role is named even when its step failed: a reviewer that lost one entry
+ * still reported the others, and the report must not hide them.
+ */
 function findingsOfRole(run: ReviewRun, role: string): Finding[] {
-  const step = run.steps.find((candidate) => candidate.id === `review-${role}`);
-  if (!step || step.status !== 'passed') return [];
   return run.findings.filter((finding) => finding.reportedBy.includes(role as never));
 }
 
 /**
  * The verdict of the run.
  *
- * A confirmed grave finding asks for changes — and so does a review that did
- * not finish: a run whose reviewers all failed has found nothing, and nothing
- * is not an approval.
+ * A grave finding asks for changes — and so does a grave finding that nobody
+ * settled: an unverified `BLOCKING` or `MAJOR` is a hypothesis that may be the
+ * defect that matters, and a review does not approve on the strength of a
+ * guess. Only a rejected finding is settled and harmless. So does a review
+ * that did not finish: a run whose reviewers all failed has found nothing, and
+ * nothing is not an approval.
  */
 function verdictOf(run: ReviewRun): { verdict: string; reason: string } {
   const grave = run.findings.filter(
     (finding) =>
-      finding.verification === 'confirmed' &&
+      finding.verification !== 'rejected' &&
       (finding.severity === 'BLOCKING' || finding.severity === 'MAJOR'),
   );
   if (grave.length > 0) {
+    const unsettled = grave.filter((finding) => finding.verification !== 'confirmed').length;
     return {
       verdict: 'REQUEST CHANGES',
-      reason: `${grave.length} confirmed finding(s) of the severity BLOCKING or MAJOR.`,
+      reason:
+        `${grave.length} finding(s) of the severity BLOCKING or MAJOR` +
+        (unsettled > 0 ? `, ${unsettled} of them not settled` : '') +
+        '.',
     };
   }
   const incomplete = run.steps.filter(

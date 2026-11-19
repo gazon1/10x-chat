@@ -4,7 +4,13 @@ import path from 'node:path';
 import type { AiBackend, BackendOutcome, BackendResponse } from '../backend/contract.js';
 import { buildBundle } from '../core/bundle.js';
 import { getReviewDir } from '../paths.js';
-import { collectReviewContext, contextFiles, resolveInRepo } from './context.js';
+import {
+  bundlePatterns,
+  collectReviewContext,
+  contextFiles,
+  conventionFiles,
+  resolveInRepo,
+} from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
 import { renderReviewReport } from './report.js';
 import type {
@@ -276,6 +282,12 @@ async function verifyCandidates(options: {
       ),
     };
   }
+  if (outcome.value.truncated) {
+    return {
+      findings: candidates,
+      step: step('verify-findings', 'failed', 'the answer of the verifier was cut off', startedAt),
+    };
+  }
 
   const parsed = parseVerdicts(outcome.value.text);
   const verdicts = new Map(parsed.verdicts.map((verdict) => [verdict.id, verdict]));
@@ -295,6 +307,22 @@ async function verifyCandidates(options: {
     }
     if (!verdict) return { ...finding, verification: 'unverified' as const };
     if (verdict.verdict === 'confirmed' && verdict.evidence.trim() !== '') {
+      // A finding with no location is a hypothesis, not a defect: it cannot
+      // be confirmed, whatever the verifier says.
+      if (!finding.file) {
+        return {
+          ...finding,
+          verification: 'unverified' as const,
+          verificationNote: verdict.note ?? 'the finding points at no file',
+        };
+      }
+      if (finding.line === undefined) {
+        return {
+          ...finding,
+          verification: 'unverified' as const,
+          verificationNote: verdict.note ?? 'the finding points at no line',
+        };
+      }
       return {
         ...finding,
         verification: 'confirmed' as const,
@@ -302,7 +330,9 @@ async function verifyCandidates(options: {
         evidence: [...new Set([...finding.evidence, verdict.evidence])],
       };
     }
-    if (verdict.verdict === 'rejected') {
+    // A rejection without evidence is no rejection: a finding is not dropped
+    // because a model said so.
+    if (verdict.verdict === 'rejected' && verdict.evidence.trim() !== '') {
       return {
         ...finding,
         verification: 'rejected' as const,
@@ -375,19 +405,22 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   let bundle = '';
   if (context) {
     const bundleStart = Date.now();
-    const files = contextFiles(context);
+    const changed = bundlePatterns(contextFiles(context));
+    const conventions = await conventionFiles(context.repoRoot);
     try {
       bundle = await buildBundle({
         prompt: contextBlock(context),
-        files,
+        files: [...changed, ...conventions],
         cwd: context.repoRoot,
       });
-      const omitted = context.changedFiles.length - files.length;
+      const omitted = context.changedFiles.length - changed.length;
       steps.push(
         step(
           'build-bundle',
           'passed',
-          `${files.length} files in the bundle${omitted > 0 ? `, ${omitted} omitted — the bound of the bundle` : ''}`,
+          `${changed.length} changed files and ${conventions.length} convention file(s) in the bundle${
+            omitted > 0 ? `, ${omitted} omitted — the bound of the bundle` : ''
+          }`,
           bundleStart,
         ),
       );
@@ -450,13 +483,23 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       steps.push(step(`review-${role}`, 'failed', 'the reviewer answered with nothing', roleStart));
       continue;
     }
+    // A cut off answer is not an answer: the findings it carries may be half
+    // of the review.
+    if (outcome.value.truncated) {
+      steps.push(
+        step(`review-${role}`, 'failed', 'the answer of the reviewer was cut off', roleStart),
+      );
+      continue;
+    }
     const parsed = parseReviewerFindings(text, role);
     candidates.push(...parsed.findings);
     const invalid = parsed.invalid.length > 0 ? `, ${parsed.invalid.length} invalid` : '';
     steps.push(
       step(
         `review-${role}`,
-        parsed.findings.length === 0 && parsed.invalid.length > 0 ? 'failed' : 'passed',
+        // An entry that did not pass the schema may be the defect that
+        // matters: a reviewer that lost one is a reviewer that did not finish.
+        parsed.invalid.length > 0 ? 'failed' : 'passed',
         `${parsed.findings.length} findings${invalid}${parsed.invalid.length > 0 ? ` — ${parsed.invalid.join('; ')}` : ''}`,
         roleStart,
       ),

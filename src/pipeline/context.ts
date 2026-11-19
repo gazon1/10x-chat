@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import fg from 'fast-glob';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
 /** The bound of the diff of the bundle — a bigger change is cut, not hidden. */
@@ -80,18 +81,45 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   );
 }
 
-/** The metadata of a pull request — the `gh` CLI is the only way to it. */
-async function pullRequestMetadata(
-  pr: number,
-  cwd: string,
-): Promise<{
+/** The metadata of a pull request, as the pipeline reads it. */
+export interface PullRequestMetadata {
   url: string;
   title?: string;
   baseRef: string;
   baseSha: string;
   headRef: string;
   headSha: string;
-}> {
+}
+
+/**
+ * The metadata of a pull request out of the answer of `gh`.
+ *
+ * The commits are the point of the metadata: without them there is nothing to
+ * compare, and a comparison of nothing looks like a change with no files.
+ */
+export function parsePullRequestMetadata(payload: unknown): PullRequestMetadata {
+  const value = payload as Record<string, unknown>;
+  const baseRef = typeof value.baseRefName === 'string' ? value.baseRefName : '';
+  const headRef = typeof value.headRefName === 'string' ? value.headRefName : '';
+  const baseSha = typeof value.baseRefOid === 'string' ? value.baseRefOid : '';
+  const headSha = typeof value.headRefOid === 'string' ? value.headRefOid : '';
+  if (!baseSha || !headSha) {
+    throw new Error('it has no base or head commit');
+  }
+  const title = typeof value.title === 'string' ? value.title : undefined;
+  const url = typeof value.url === 'string' ? value.url : '';
+  return {
+    url,
+    ...(title ? { title } : {}),
+    baseRef,
+    baseSha,
+    headRef,
+    headSha,
+  };
+}
+
+/** The metadata of a pull request — the `gh` CLI is the only way to it. */
+async function pullRequestMetadata(pr: number, cwd: string): Promise<PullRequestMetadata> {
   const result = await run(
     'gh',
     [
@@ -113,24 +141,13 @@ async function pullRequestMetadata(
   } catch {
     throw new Error(`Cannot read the pull request #${pr}: gh answered with no JSON.`);
   }
-  const value = payload as Record<string, unknown>;
-  const baseRef = typeof value.baseRefName === 'string' ? value.baseRefName : '';
-  const headRef = typeof value.headRefName === 'string' ? value.headRefName : '';
-  const baseSha = typeof value.baseRefOid === 'string' ? value.baseRefOid : '';
-  const headSha = typeof value.headRefOid === 'string' ? value.headRefOid : '';
-  if (!baseSha || !headSha) {
-    throw new Error(`Cannot read the pull request #${pr}: it has no base or head commit.`);
+  try {
+    return parsePullRequestMetadata(payload);
+  } catch (error) {
+    throw new Error(
+      `Cannot read the pull request #${pr}: ${error instanceof Error ? error.message : String(error)}.`,
+    );
   }
-  const title = typeof value.title === 'string' ? value.title : undefined;
-  const url = typeof value.url === 'string' ? value.url : '';
-  return {
-    url,
-    ...(title ? { title } : {}),
-    baseRef,
-    baseSha,
-    headRef,
-    headSha,
-  };
 }
 
 /**
@@ -228,6 +245,36 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
  */
 export function contextFiles(context: ReviewContext): string[] {
   return context.changedFiles.slice(0, MAX_CONTEXT_FILES);
+}
+
+/**
+ * The patterns of the bundle.
+ *
+ * A name of a file is a name, not a pattern: `src/[id].ts` and a name that
+ * starts with `!` would be read by the glob as something else entirely.
+ */
+export function bundlePatterns(files: string[]): string[] {
+  return files.map((file) => `./${fg.escapePath(file)}`);
+}
+
+/**
+ * The convention files of the repository — the ones that are there.
+ *
+ * The reviewers are told to read them; a backend that cannot browse the
+ * repository must find them in the bundle.
+ */
+export async function conventionFiles(repoRoot: string): Promise<string[]> {
+  const names = ['AGENTS.md', 'CONTRIBUTING.md', 'README.md'];
+  const found: string[] = [];
+  for (const name of names) {
+    try {
+      await stat(path.join(repoRoot, name));
+      found.push(`./${name}`);
+    } catch {
+      // The repository does not have this one.
+    }
+  }
+  return found;
 }
 
 /**

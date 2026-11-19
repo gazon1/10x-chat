@@ -39,20 +39,35 @@ The reviewers answer with JSON; the answer is validated against that schema.
 An answer that is not JSON, or an entry that does not pass the schema, is
 **invalid** — it is reported in the step and never becomes a finding. The
 payload is read out of a fenced block, of a sentence, or of both: every
-balanced object and array of the answer is tried, and the one that carries the
-`findings` (or the `verdicts`) wins.
+balanced object and array of the answer is tried, and the one whose entries
+pass the schema wins — an example of the schema that a reviewer repeats in the
+prose of its answer is not the answer.
 
 **A finding is not confirmed because it parsed.** A finding is `confirmed`
-only when the verification pass confirms it *with evidence*. A verdict without
-evidence leaves the finding `unverified`, and a finding that points at a file
-or a line that is not in the checkout is `rejected` before the model is even
-asked. A verification that answered for nobody is not a verification that
-passed: the step is `failed` and the findings stay `unverified`.
+only when the verification pass confirms it *with evidence* and the finding
+points at a place: a finding without a file or without a line is a hypothesis,
+not a defect, and stays `unverified` whatever the verifier says. A verdict
+without evidence leaves the finding `unverified`, and a rejection without
+evidence is no rejection — a finding is not dropped because a model said so. A
+finding that points at a file or a line that is not in the checkout is
+`rejected` before the model is even asked. A verification that answered for
+nobody is not a verification that passed: the step is `failed` and the findings
+stay `unverified`.
+
+An answer that was cut off is not an answer: the findings it carries may be
+half of the review. The step of a reviewer or of a verifier whose answer came
+back truncated is `failed`, and the run is incomplete.
 
 Two findings of two reviewers are one finding when they are at the same file
 and the same line and their titles overlap. The coverage of the shorter title
 and of the longer one both count, so a title that is swallowed by a much
 longer one is a different defect, not the same one written twice.
+
+The bundle holds the changed files and the convention files of the repository
+(`AGENTS.md`, `CONTRIBUTING.md`, `README.md`) — the reviewers are told to read
+them, so a backend that cannot browse the repository must find them in the
+bundle. The names of the changed files are escaped before they become glob
+patterns: a name of a file is a name, not a pattern.
 
 ## The report
 
@@ -114,10 +129,12 @@ revision under review:
 
 ## The verdict of the report
 
-`APPROVE` needs two things: no confirmed finding of the severity `BLOCKING` or
-`MAJOR`, **and** every step of the pipeline passed. A run whose reviewer, whose
-collection or whose verification did not finish says `REQUEST CHANGES` — a
-review that found nothing because it could not run is not an approval.
+`APPROVE` needs two things: no finding of the severity `BLOCKING` or `MAJOR`
+that is still open — a grave finding that nobody settled is a hypothesis that
+may be the defect that matters, and a review does not approve on the strength
+of a guess — **and** every step of the pipeline passed. A run whose reviewer,
+whose collection or whose verification did not finish says `REQUEST CHANGES` —
+a review that found nothing because it could not run is not an approval.
 
 ## What the pipeline never does
 
