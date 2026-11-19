@@ -162,10 +162,12 @@ export async function runBackendChat(
       durationMs,
     });
     // The answer that arrived before the failure belongs to the session —
-    // otherwise the partial output of a timeout is lost.
-    if (failure.partialText) {
+    // otherwise the partial output of a timeout is lost. A backend that
+    // streams its answer reports it in the chunks it wrote.
+    const partial = failure.partialText ?? (streamed || undefined);
+    if (partial) {
       try {
-        await saveResponse(session.id, failure.partialText);
+        await saveResponse(session.id, partial);
       } catch {
         // The output cannot be stored — the failure of the run is reported
         // anyway.

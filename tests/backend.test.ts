@@ -428,6 +428,27 @@ describe('Chat through the backend contract', () => {
     expect(sessions[0].status).toBe('failed');
   });
 
+  it('saves the output a streaming backend produced before it failed', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        request.onChunk?.('half of it');
+        return {
+          ok: false,
+          failure: { kind: 'timeout', message: 'Timed out', submission: 'submitted' },
+        } as unknown as Awaited<ReturnType<AiBackend['ask']>>;
+      },
+    };
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend })).rejects.toThrow(
+      BackendError,
+    );
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('timeout');
+    const session = await getSession(sessions[0].id);
+    await expect(readFile(session.responsePath as string, 'utf8')).resolves.toBe('half of it');
+  });
+
   it('saves the output a streaming backend produced before it broke', async () => {
     const base = createFakeBackend();
     const backend: AiBackend = {
