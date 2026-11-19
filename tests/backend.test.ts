@@ -204,6 +204,17 @@ describe('Fake backend', () => {
     expect(resumed.failure.kind).toBe('cancelled');
   });
 
+  it('does not resume a request that is still running', async () => {
+    const backend = createFakeBackend([{ prompt: 'hello', answer: 'the answer' }]);
+    const running = backend.ask({ requestId: 'req-1', prompt: 'hello' });
+
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'hello' });
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.failure.kind).toBe('busy');
+    await running;
+  });
+
   it('recovers a failed request with a resume', async () => {
     const backend = createFakeBackend([
       { prompt: 'boom', failure: 'timeout', resume: { answer: 'the recovered answer' } },
@@ -333,6 +344,9 @@ describe('Chat through the backend contract', () => {
 
     await runChat({ prompt: 'hello', provider: 'chatgpt', timeoutMs: 5_000 }, { backend });
     expect(requests[1].timeoutMs).toBe(5_000);
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt', timeoutMs: 0 }, { backend });
+    expect(requests[2].timeoutMs).toBe(0);
   });
 
   it('records the model of the config file in the session', async () => {
@@ -369,6 +383,16 @@ describe('Chat through the backend contract', () => {
     await expect(
       runChat({ prompt: 'hello', provider: 'chatgpt', headed: true }, { backend }),
     ).rejects.toThrow('does not use a browser');
+  });
+
+  it('rejects the options a backend run cannot honour', async () => {
+    const backend = createFakeBackend();
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt', newChat: true }, { backend }),
+    ).rejects.toThrow('does not manage conversations');
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt', transport: 'api' }, { backend }),
+    ).rejects.toThrow('is not a transport');
   });
 
   it('rejects a capability the backend does not have', async () => {
@@ -442,6 +466,26 @@ describe('Chat through the backend contract', () => {
         return {
           ok: true as const,
           value: { ...outcome.value, truncated: 'false' as unknown as boolean },
+        };
+      },
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('fails the run when the backend answers with a submission state of its own', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return {
+          ok: true as const,
+          value: { ...outcome.value, submission: 'not_submitted' as const },
         };
       },
     };

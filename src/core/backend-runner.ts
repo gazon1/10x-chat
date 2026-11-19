@@ -49,6 +49,18 @@ export async function runBackendChat(
         'the browser flags (--headed, --headless, --profile, --isolated-profile) do not apply.',
     );
   }
+  // A backend manages no conversation and is no transport: the options that
+  // ask for one are refused, not ignored.
+  if (options.newChat) {
+    throw new Error(
+      `The backend '${backend.name}' does not manage conversations — the option 'newChat' does not apply.`,
+    );
+  }
+  if (options.transport) {
+    throw new Error(
+      `The backend '${backend.name}' is not a transport — the option 'transport' does not apply.`,
+    );
+  }
 
   const attachments =
     options.attach && options.attach.length > 0 ? await resolveAttachPaths(options.attach) : [];
@@ -73,7 +85,7 @@ export async function runBackendChat(
     ...(options.saveImages ? { saveDir: options.saveImages } : {}),
     // The timeout of a chat: the flag of the command, then the config file.
     // The default of a provider does not apply — a backend has its own.
-    ...(timeoutMs ? { timeoutMs } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     // A streaming backend writes its answer while it is generated — the
     // same convention the browser providers use.
     onChunk: (chunk: string) => {
@@ -156,6 +168,15 @@ function invalidOutput(response: BackendResponse, requestId: string): BackendFai
     return {
       kind: 'invalid_output',
       message: 'The backend answered without the state of the answer.',
+      submission,
+    };
+  }
+  // An answer means the request reached the model — a backend that claims
+  // otherwise contradicts itself.
+  if (submission !== 'submitted') {
+    return {
+      kind: 'invalid_output',
+      message: `The backend answered with the submission state '${submission}'.`,
       submission,
     };
   }

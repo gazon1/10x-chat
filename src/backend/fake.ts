@@ -221,6 +221,17 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       // A request that has already answered is not continued: the answer
       // that is recorded stays the answer of the request.
       if (entry.response) return { ok: true, value: entry.response };
+      // A running request is not continued: it is still running.
+      if (entry.running) {
+        return {
+          ok: false,
+          failure: {
+            kind: 'busy',
+            message: `The request '${request.requestId}' is still running.`,
+            submission: entry.submission,
+          },
+        };
+      }
       // A cancelled request stays cancelled: it is not continued.
       if (entry.cancelled) {
         return {
