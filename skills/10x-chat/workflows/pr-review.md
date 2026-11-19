@@ -121,11 +121,29 @@ If you find nothing blocking, say so explicitly. Do not invent problems to fill 
 # Role B — a separate command, its own conversation, no reference to A
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
   -p "You are an independent reviewer of a pull request. Your role: architecture, maintainability, compatibility and scope discipline.
-...same repository coordinates...
-Judge the change against the conventions of the repository (read AGENTS.md and CONTRIBUTING.md at the head SHA) and against the surrounding code: does it fit the codebase's shape, is it the smallest change that solves the task, does it break public APIs, formats or schemas, does it leave dead code or needless abstraction, are the tests meaningful?
-Report every findings in this exact format: ... (same block as Role A) ...
+
+Read the code yourself on GitHub — do not guess and do not ask for the files:
+  Repository:   https://github.com/<owner>/<name>
+  Pull request: #<n> — https://github.com/<owner>/<name>/pull/<n>
+  Base:         <base-sha>
+  Head:         <head-sha>
+  Changed files: path/a.ts, path/b.ts
+  Conventions:  read AGENTS.md and CONTRIBUTING.md at the head SHA
+
+Open every changed file at the head SHA and the code around it. Judge the change against the conventions of the repository (read AGENTS.md and CONTRIBUTING.md at the head SHA) and against the surrounding code: does it fit the codebase's shape, is it the smallest change that solves the task, does it break public APIs, formats or schemas, does it leave dead code or needless abstraction, are the tests meaningful?
+Report every finding in this exact format, one block per finding:
+
+SEVERITY: BLOCKING | MAJOR | MINOR | INFO
+LOCATION: <path>:<line or start-end>
+PROBLEM: <one or two sentences>
+IMPACT: <the concrete failure scenario — inputs/state -> wrong result>
+EVIDENCE: <the code, the trace, or the reproduction that shows it>
+FIX: <the minimal correction>
+
 If you find nothing blocking, say so explicitly. Do not invent problems, and do not rewrite the code."
 ```
+
+**Both commands carry the same coordinates.** A placeholder that points at the other role is not a command: copied literally it sends a reviewer into the chat without the pull request, and the second pass becomes a review of nothing. Fill every placeholder of both commands with the coordinates of step 1 — the two reviewers differ in their role and their instructions, not in what they read.
 
 Any provider that can reach the repository works — `chatgpt` first (it can browse GitHub), then `claude` or `gemini` if they can open the URLs as well. Check `10x-chat login --status` first: an unlogged-in provider wastes the whole run.
 

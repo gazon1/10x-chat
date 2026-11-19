@@ -202,6 +202,43 @@ describe('cli flows', () => {
       expect(links.length).toBeGreaterThan(0);
     });
   });
+
+  it('installs the review playbook with two complete reviewer commands', async () => {
+    await withTempHome(async (home) => {
+      const { readFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+
+      const result = await runCli(['skill', 'install'], { HOME: home });
+      expect(result.code).toBe(0);
+
+      const playbook = await readFile(
+        path.join(home, '.codex', 'skills', '10x-chat', 'workflows', 'pr-review.md'),
+        'utf-8',
+      );
+
+      const count = (needle: string): number => playbook.split(needle).length - 1;
+
+      // A placeholder that points at the other role is not a command: copied
+      // literally it sends a reviewer into the chat without the pull request.
+      expect(playbook).not.toMatch(/same repository coordinates|same block as Role A/i);
+      expect(count('10x-chat chat --provider')).toBe(2);
+
+      // Both roles get the coordinates and the finding schema of their own.
+      for (const command of playbook.split('10x-chat chat --provider').slice(1)) {
+        expect(command).toMatch(/Repository:\s+https:\/\/github\.com\/<owner>\/<name>/);
+        expect(command).toMatch(/Pull request: #<n> — https:\/\/github\.com\/<owner>/);
+        expect(command).toMatch(/Base:\s+<base-sha>/);
+        expect(command).toMatch(/Head:\s+<head-sha>/);
+        expect(command).toMatch(/Changed files:/);
+        expect(command).toMatch(/SEVERITY: BLOCKING \| MAJOR \| MINOR \| INFO/);
+        expect(command).toMatch(/LOCATION:/);
+        expect(command).toMatch(/PROBLEM:/);
+        expect(command).toMatch(/IMPACT:/);
+        expect(command).toMatch(/EVIDENCE:/);
+        expect(command).toMatch(/FIX:/);
+      }
+    });
+  });
 });
 
 it('rejects --all with the api transport', async () => {
