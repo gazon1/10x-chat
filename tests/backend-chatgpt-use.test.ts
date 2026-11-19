@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createChatgptUseBackend,
+  nodeProcessRunner,
   type ProcessResult,
   type ProcessRunner,
 } from '../src/backend/chatgpt-use.js';
@@ -8,14 +9,15 @@ import {
 interface Call {
   command: string;
   args: string[];
+  timeoutMs?: number;
 }
 
 /** A runner that answers with canned envelopes and records the calls. */
 function fakeRunner(answers: (ProcessResult | Error)[]): { runner: ProcessRunner; calls: Call[] } {
   const calls: Call[] = [];
   const runner: ProcessRunner = {
-    run: async (command, args) => {
-      calls.push({ command, args });
+    run: async (command, args, options) => {
+      calls.push({ command, args, timeoutMs: options?.timeoutMs });
       const answer = answers.shift();
       if (answer instanceof Error) throw answer;
       return answer ?? { code: 0, stdout: '', stderr: '', timedOut: false };
@@ -333,4 +335,152 @@ describe('the ChatGPT backend of chatgpt-use', () => {
 
     expect(peak).toBe(1);
   });
+
+  it('builds the whole command line of a request', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    await backend.ask({
+      requestId: 'req-1',
+      prompt: '-a prompt that starts with a dash',
+      model: 'Pro',
+      attachments: ['/tmp/notes.md', '/tmp/shot.png'],
+      timeoutMs: 90_000,
+    });
+
+    expect(calls[0]?.args).toEqual([
+      'ask',
+      '--json',
+      '--request-id',
+      'req-1',
+      '--busy',
+      'fail',
+      '--no-stdin',
+      '--model',
+      'pro',
+      '--timeout',
+      '90',
+      '--file',
+      '/tmp/notes.md',
+      '--image',
+      '/tmp/shot.png',
+      '--',
+      '-a prompt that starts with a dash',
+    ]);
+    // The deadline of the CLI is the deadline of the chat, plus the backstop
+    // for the parts around it.
+    expect(calls[0]?.timeoutMs).toBe(150_000);
+  });
+
+  it('gives two different requests two different receipts', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+      { code: 0, stdout: completed('ok', 'task_3Fa'), stderr: '', timedOut: false },
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    await backend.ask({ requestId: 'task/a', prompt: 'hello' });
+    await backend.ask({ requestId: 'task?a', prompt: 'hello' });
+    await backend.ask({ requestId: 'task_3Fa', prompt: 'hello' });
+
+    const ids = calls.map((call) => call.args[call.args.indexOf('--request-id') + 1]);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('rejects a completed answer without the id of the request', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({ status: 'completed', result: { text: 'the answer' } }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('rejects a completed answer whose id is not a string', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({ status: 'completed', request_id: 7, result: { text: 'ok' } }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('rejects the cancellation of another request', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({ status: 'cancelled', request_id: 'other-request' }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.cancel('req-1');
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('reports a CLI that does not finish in time as an unknown submission', async () => {
+    const { runner, calls } = fakeRunner([{ code: null, stdout: '', stderr: '', timedOut: true }]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('unknown_submission');
+    expect(outcome.failure.submission).toBe('unknown');
+    // The request may have reached ChatGPT: it is never sent again.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('maps an unknown kind of the CLI to an invalid output', async () => {
+    const { runner } = fakeRunner([
+      { code: 1, stdout: failed('something_new', 'yes'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('kills a process that ignores the termination', async () => {
+    const started = Date.now();
+    const result = await nodeProcessRunner.run(
+      process.execPath,
+      ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
+      { timeoutMs: 200 },
+    );
+
+    expect(result.timedOut).toBe(true);
+    // The grace period is short: the run must not stay pending.
+    expect(Date.now() - started).toBeLessThan(10_000);
+  }, 15_000);
 });

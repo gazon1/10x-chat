@@ -52,8 +52,8 @@ chatgpt-use ask --json --request-id <id> --busy fail [--model <level>] \
 ```
 
 The envelope is validated, not trusted: a JSON that is not an object, a
-completed answer without a text and the answer of another request are all
-`invalid_output`.
+completed answer without a text, a completed answer without the id of the
+request and the answer of another request are all `invalid_output`.
 
 | The kind of the CLI                        | The kind of the contract      | The state         |
 | ------------------------------------------ | ----------------------------- | ----------------- |
@@ -74,6 +74,10 @@ have reached ChatGPT, so it must be looked up (`status`) or resumed
 The id of the request is the receipt of the CLI:
 `~/.chatgpt-use/requests/<id>.json`. It is written from before the submission
 to the end of the turn, and it is what `status`, `resume` and `cancel` read.
+
+The CLI accepts letters, digits, `.` and `-` in an id. Every other byte of
+the id of the request is escaped (`_` and its hex code), so two requests never
+share a receipt; an id that is too long for the CLI becomes a hash of it.
 
 - `status` prints the receipt: the state of the request, whether it reached
   ChatGPT (`yes`, `no`, `unknown`) and the conversation it belongs to. A

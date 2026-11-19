@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import type {
   AiBackend,
   BackendCapabilities,
@@ -57,10 +58,14 @@ export const nodeProcessRunner: ProcessRunner = {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let killTimer: NodeJS.Timeout | undefined;
       const timer = options.timeoutMs
         ? setTimeout(() => {
             timedOut = true;
             child.kill('SIGTERM');
+            // A process that ignores SIGTERM must not keep the run pending
+            // forever: it is killed after the grace period.
+            killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
           }, options.timeoutMs)
         : undefined;
       child.stdout.on('data', (chunk) => {
@@ -71,15 +76,20 @@ export const nodeProcessRunner: ProcessRunner = {
       });
       child.on('error', (error) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         reject(error);
       });
       child.on('close', (code) => {
         if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
         resolve({ code, stdout, stderr, timedOut });
       });
     });
   },
 };
+
+/** The grace period between SIGTERM and SIGKILL. */
+const KILL_GRACE_MS = 2_000;
 
 /** What the ChatGPT backend of `chatgpt-use` supports. */
 export const CHATGPT_USE_CAPABILITIES: BackendCapabilities = Object.freeze({
@@ -311,14 +321,25 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       };
     }
     if (envelope.status === 'completed') {
+      // An answer without the id of the request is an answer whose origin is
+      // unknown: it is not the answer of this request.
+      if (envelope.request_id !== effectiveId) {
+        return {
+          ok: false,
+          failure: {
+            kind: 'invalid_output',
+            message: `chatgpt-use answered without the id of the request '${effectiveId}'.`,
+            submission: 'unknown',
+          },
+        };
+      }
       return responseOf(envelope, request);
     }
     return { ok: false, failure: failureOf(envelope, 'chatgpt-use did not answer.') };
   };
 
-  /** The id of the CLI accepts: letters, digits, `.`, `_` and `-`. */
-  const effectiveId = (requestId: string): string =>
-    requestId.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 128) || 'request';
+  /** The receipt id of the CLI for a request — the charset is checked below. */
+  const effectiveId = (requestId: string): string => encodeId(requestId);
 
   /** The model of the request as the level of the composer of ChatGPT. */
   const modelArg = (model: string): string => {
@@ -496,12 +517,47 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
           },
         };
       }
+      // The answer of another request is not the answer of this one.
+      if (typeof envelope.request_id === 'string' && envelope.request_id !== id) {
+        return {
+          ok: false,
+          failure: {
+            kind: 'invalid_output',
+            message: `chatgpt-use answered the request '${envelope.request_id}' instead of '${id}'.`,
+            submission: 'unknown',
+          },
+        };
+      }
       if (envelope.status === 'cancelled') return { ok: true, value: { cancelled: true } };
       if (envelope.status === 'already_finished') return { ok: true, value: { cancelled: false } };
       return { ok: false, failure: failureOf(envelope, 'chatgpt-use did not cancel the request.') };
     },
   };
 }
+
+/**
+ * The receipt id of a request for the CLI.
+ *
+ * The CLI accepts letters, digits, `.` and `-`. Every other byte is escaped
+ * as `_` and its hex code, so two different request ids never share a
+ * receipt: the escape is reversible, so `a/b` and `a_2Fb` stay apart.
+ *
+ * An id that is too long for the CLI becomes a hash of it — the receipt of a
+ * request is unique, not readable.
+ */
+function encodeId(requestId: string): string {
+  let encoded = '';
+  for (const byte of Buffer.from(requestId, 'utf8')) {
+    const char = String.fromCharCode(byte);
+    encoded += /[A-Za-z0-9.-]/.test(char) ? char : `_${byte.toString(16).padStart(2, '0')}`;
+  }
+  if (encoded === '') return 'request';
+  if (encoded.length <= MAX_ID_LENGTH) return encoded;
+  return createHash('sha256').update(requestId).digest('hex');
+}
+
+/** The longest id the CLI accepts. */
+const MAX_ID_LENGTH = 128;
 
 /** The JSON of the stdout of the CLI — undefined when it is not JSON. */
 function parseJson(stdout: string): Envelope | undefined {
