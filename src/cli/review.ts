@@ -3,6 +3,19 @@ import { Command } from 'commander';
 import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
 import { runReviewPipeline } from '../pipeline/review.js';
 
+/**
+ * A positive integer of the command line — the whole argument, or nothing.
+ *
+ * `parseInt('42garbage')` is 42: a mistake of the caller would then review
+ * another pull request than the one that was named.
+ */
+function positiveInteger(raw: string): number | undefined {
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return undefined;
+  const value = Number(text);
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 export function createReviewCommand(): Command {
   const cmd = new Command('review')
     .description(
@@ -29,8 +42,8 @@ export function createReviewCommand(): Command {
 
       const timeoutMs = (() => {
         if (options.timeout === undefined) return undefined;
-        const value = Number.parseInt(options.timeout as string, 10);
-        if (!Number.isFinite(value) || value <= 0) {
+        const value = positiveInteger(options.timeout as string);
+        if (value === undefined) {
           console.error(
             chalk.red(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`),
           );
@@ -41,8 +54,8 @@ export function createReviewCommand(): Command {
 
       const pr = (() => {
         if (options.pr === undefined) return undefined;
-        const value = Number.parseInt(options.pr as string, 10);
-        if (!Number.isFinite(value) || value <= 0) {
+        const value = positiveInteger(options.pr as string);
+        if (value === undefined) {
           console.error(chalk.red(`Invalid --pr value: ${options.pr} (expected a number)`));
           process.exit(1);
         }

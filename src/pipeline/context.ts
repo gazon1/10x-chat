@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import type { ReviewContext, ReviewTarget } from './types.js';
@@ -262,16 +262,26 @@ export function bundlePatterns(files: string[]): string[] {
  *
  * The reviewers are told to read them; a backend that cannot browse the
  * repository must find them in the bundle.
+ *
+ * A convention file is a file of the revision under review: it is taken from
+ * the commit, not from the disk. An untracked `AGENTS.md` of the checkout is
+ * no convention of the repository — it is a file that nobody committed, and it
+ * would steer the reviewers away from the change.
  */
-export async function conventionFiles(repoRoot: string): Promise<string[]> {
+export async function conventionFiles(repoRoot: string, headSha: string): Promise<string[]> {
   const names = ['AGENTS.md', 'CONTRIBUTING.md', 'README.md'];
   const found: string[] = [];
   for (const name of names) {
-    try {
-      await stat(path.join(repoRoot, name));
+    const listed = await git(['ls-tree', '--name-only', headSha, '--', name], repoRoot).catch(
+      () => '',
+    );
+    if (
+      listed
+        .split('\n')
+        .map((line) => line.trim())
+        .includes(name)
+    ) {
       found.push(`./${name}`);
-    } catch {
-      // The repository does not have this one.
     }
   }
   return found;

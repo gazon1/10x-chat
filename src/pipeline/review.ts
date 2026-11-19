@@ -406,7 +406,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   if (context) {
     const bundleStart = Date.now();
     const changed = bundlePatterns(contextFiles(context));
-    const conventions = await conventionFiles(context.repoRoot);
+    const conventions = await conventionFiles(context.repoRoot, context.headSha);
     try {
       bundle = await buildBundle({
         prompt: contextBlock(context),

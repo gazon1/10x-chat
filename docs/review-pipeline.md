@@ -58,6 +58,12 @@ An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came
 back truncated is `failed`, and the run is incomplete.
 
+The payload of an answer is looked for in the whole answer: a model fences it,
+wraps it in a sentence, or repeats the format of the answer before the answer
+itself. Fifty delimiters that carry no JSON at all are tolerated; when there
+are more, the payload of the answer may lie behind them, and the step of the
+reviewer or of the verifier is `failed` rather than "no findings".
+
 Two findings of two reviewers are one finding when they are at the same file
 and the same line and their titles overlap. The coverage of the shorter title
 and of the longer one both count, so a title that is swallowed by a much
@@ -66,8 +72,11 @@ longer one is a different defect, not the same one written twice.
 The bundle holds the changed files and the convention files of the repository
 (`AGENTS.md`, `CONTRIBUTING.md`, `README.md`) — the reviewers are told to read
 them, so a backend that cannot browse the repository must find them in the
-bundle. The names of the changed files are escaped before they become glob
-patterns: a name of a file is a name, not a pattern.
+bundle. A convention file is taken from the commit under review, not from the
+disk: an untracked `AGENTS.md` of the checkout is nobody's convention, and it
+would steer the reviewers away from the change. The names of the changed files
+are escaped before they become glob patterns: a name of a file is a name, not a
+pattern.
 
 ## The report
 

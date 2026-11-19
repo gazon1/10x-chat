@@ -326,3 +326,23 @@ it('rejects --transport api without --provider even when defaultProvider is conf
     expect(result.output).not.toContain('sk-test-key');
   });
 });
+
+it('refuses a pull request number that is not a number', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    // `42garbage` is not the pull request 42 — a mistake must not review
+    // another pull request than the one that was named.
+    const result = await runCli(['review', '--pr', '42garbage'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('Invalid --pr value');
+  });
+});
+
+it('refuses a timeout that is not a number', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const result = await runCli(['review', '--timeout', '100ms'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('Invalid --timeout value');
+  });
+});

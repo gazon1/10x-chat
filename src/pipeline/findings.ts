@@ -52,8 +52,27 @@ export interface ParsedVerdicts {
   invalid: string[];
 }
 
-/** How many opening delimiters of an answer are tried. */
+/**
+ * How many broken delimiters of an answer are tolerated.
+ *
+ * The delimiters of a payload that was read are its own — only the ones that
+ * carry no JSON at all are counted, and they are the ones of the prose.
+ */
 const MAX_JSON_CANDIDATES = 50;
+
+/**
+ * The JSON payloads of an answer.
+ *
+ * `exhausted` says that the bound of the candidates was reached: the payload
+ * of the answer may lie behind the delimiters that were not tried, and the
+ * answer is then not read as "no findings" but as a failure.
+ */
+export interface JsonCandidates {
+  /** The payloads that were found, in the order they appear. */
+  candidates: JsonCandidate[];
+  /** The bound of the candidates was reached. */
+  exhausted: boolean;
+}
 
 /**
  * The balanced slice that starts at an opening delimiter.
@@ -112,37 +131,64 @@ export interface JsonCandidate {
  * seen twice when it sits in a fence, so the copies are told apart by their
  * text.
  */
-export function jsonCandidates(text: string): JsonCandidate[] {
+export function jsonCandidates(text: string): JsonCandidates {
   const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
   const sources: { text: string; fenced: boolean; at: number }[] = fences.map((match) => ({
     text: match[1],
     fenced: true,
     at: match.index ?? 0,
   }));
-  sources.push({ text, fenced: false, at: 0 });
+  // The plain text of the answer carries the fences as well: they are blanked
+  // out, so that the delimiters of a fenced payload are not counted twice.
+  const plain = [...text];
+  for (const match of fences) {
+    const from = match.index ?? 0;
+    for (let index = from; index < from + match[0].length; index += 1) plain[index] = ' ';
+  }
+  sources.push({ text: plain.join(''), fenced: false, at: 0 });
 
   const candidates: JsonCandidate[] = [];
   const seen = new Set<string>();
+  let exhausted = false;
   for (const source of sources) {
-    let tried = 0;
-    for (let index = 0; index < source.text.length && tried < MAX_JSON_CANDIDATES; index += 1) {
+    // The end of the last payload that was read: the delimiters inside it are
+    // the ones of the payload, not the ones of the prose.
+    let covered = 0;
+    let broken = 0;
+    for (let index = 0; index < source.text.length; index += 1) {
       const character = source.text[index];
       if (character !== '{' && character !== '[') continue;
-      tried += 1;
+      const inside = index < covered;
       const slice = balancedSlice(source.text, index);
-      if (!slice) continue;
+      if (!slice) {
+        if (inside) continue;
+        broken += 1;
+        if (broken >= MAX_JSON_CANDIDATES) {
+          // The payload of the answer may lie behind this delimiter: the
+          // answer is not read as "no findings" but as a failure.
+          exhausted = true;
+          break;
+        }
+        continue;
+      }
       try {
         const value: unknown = JSON.parse(slice);
         const key = JSON.stringify(value);
+        covered = Math.max(covered, index + slice.length);
         if (seen.has(key)) continue;
         seen.add(key);
         candidates.push({ value, fenced: source.fenced, at: source.at + index });
       } catch {
-        // Not the payload — the next opening delimiter may be.
+        if (inside) continue;
+        broken += 1;
+        if (broken >= MAX_JSON_CANDIDATES) {
+          exhausted = true;
+          break;
+        }
       }
     }
   }
-  return candidates;
+  return { candidates, exhausted };
 }
 
 /**
@@ -156,7 +202,7 @@ export function jsonCandidates(text: string): JsonCandidate[] {
  * findings and of the verdicts do tell them apart, by their schema.
  */
 export function extractJson(text: string, key?: string): unknown {
-  const parsed = jsonCandidates(text).map((candidate) => candidate.value);
+  const parsed = jsonCandidates(text).candidates.map((candidate) => candidate.value);
   if (key !== undefined) {
     const withKey = parsed.filter(
       (value) =>
@@ -352,7 +398,16 @@ export function normalizeTitle(title: string): string {
  * schema wins — an example of a finding does not.
  */
 export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFindings {
-  const keyed = jsonCandidates(text)
+  const { candidates, exhausted } = jsonCandidates(text);
+  // The bound of the candidates was reached: the payload of the answer may be
+  // behind the delimiters that were not tried. The answer is then no answer,
+  // not an answer without findings.
+  const notes = exhausted
+    ? [
+        `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
+      ]
+    : [];
+  const keyed = candidates
     .filter((candidate) => keyedEntries(candidate.value, 'findings') !== undefined)
     .map((candidate) => {
       const entries = keyedEntries(candidate.value, 'findings') ?? [];
@@ -364,11 +419,11 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     });
   if (keyed.length > 0) {
     const best = keyed.reduce(betterCandidate);
-    return { findings: best.parsed.findings, invalid: best.parsed.invalid };
+    return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
   }
 
   // An answer that is a bare list of findings.
-  const bare = jsonCandidates(text)
+  const bare = candidates
     .filter((candidate) => Array.isArray(candidate.value))
     .map((candidate) => {
       const entries = candidate.value as unknown[];
@@ -379,10 +434,13 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
       };
     });
   if (bare.length === 0) {
-    return { findings: [], invalid: ['the answer contains no JSON payload of findings'] };
+    return {
+      findings: [],
+      invalid: ['the answer contains no JSON payload of findings', ...notes],
+    };
   }
   const best = bare.reduce(betterCandidate);
-  return { findings: best.parsed.findings, invalid: best.parsed.invalid };
+  return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
 }
 
 /** The findings of one payload of an answer. */
@@ -454,7 +512,13 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
  * the schema wins.
  */
 export function parseVerdicts(text: string): ParsedVerdicts {
-  const keyed = jsonCandidates(text)
+  const { candidates, exhausted } = jsonCandidates(text);
+  const notes = exhausted
+    ? [
+        `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
+      ]
+    : [];
+  const keyed = candidates
     .filter((candidate) => keyedEntries(candidate.value, 'verdicts') !== undefined)
     .map((candidate) => {
       const entries = keyedEntries(candidate.value, 'verdicts') ?? [];
@@ -462,21 +526,24 @@ export function parseVerdicts(text: string): ParsedVerdicts {
     });
   if (keyed.length > 0) {
     const best = keyed.reduce(betterCandidate);
-    return { verdicts: best.parsed.verdicts, invalid: best.parsed.invalid };
+    return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
   }
 
   // An answer that is a bare list of verdicts.
-  const bare = jsonCandidates(text)
+  const bare = candidates
     .filter((candidate) => Array.isArray(candidate.value))
     .map((candidate) => {
       const entries = candidate.value as unknown[];
       return { candidate, parsed: parseVerdictEntries(entries), count: entries.length };
     });
   if (bare.length === 0) {
-    return { verdicts: [], invalid: ['the answer contains no JSON payload of verdicts'] };
+    return {
+      verdicts: [],
+      invalid: ['the answer contains no JSON payload of verdicts', ...notes],
+    };
   }
   const best = bare.reduce(betterCandidate);
-  return { verdicts: best.parsed.verdicts, invalid: best.parsed.invalid };
+  return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
 }
 
 /** The verdicts of one payload of an answer. */
