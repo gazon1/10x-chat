@@ -1620,8 +1620,14 @@ export const chatgptActions: ProviderActions = {
       // new since the prompt belongs to this run.
       const generationError = generationErrorOf({ text, errorText: snapshot.errorText }, baseline);
       if (generationError) {
+        // An error banner interrupts the answer: the text of this turn may be
+        // a part of the answer, and the task of the prompt may have run
+        // already. The run must not send the prompt a second time then.
+        const banner =
+          snapshot.errorText.trim() !== '' && snapshot.errorText !== baseline.errorText;
         throw new ProviderGenerationError(
           `ChatGPT reported an error while generating the answer: ${generationError}`,
+          { partial: banner && text.length > 0 },
         );
       }
 

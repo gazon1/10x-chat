@@ -140,6 +140,19 @@ the Wayland session. A convenient alias:
 alias gpt='10x-chat chat --provider chatgpt --headless --timeout 180000'
 ```
 
+## Timeouts, retries and cut-off answers
+
+The prompt is sent **once**. What the run does afterwards depends on what the
+provider does — a prompt that may have run already is never sent a second
+time:
+
+| Situation | What the run does |
+|---|---|
+| The answer was cut off by the timeout | The same turn is captured again (a grace window of 5 minutes). The prompt is **not** sent again. If the answer is still incomplete, the cut-off answer is returned and marked as truncated. |
+| The provider reported an error and produced nothing | The question is asked once more — nothing was executed yet. |
+| The provider reported an error after a part of the answer | The run fails with the error of the provider. The task of the prompt may have run already, so the prompt is not sent again. |
+| The context window of the chat ran out | The conversation is continued in a new chat with a summary and the question is asked there. |
+
 ## Conversation reuse
 
 A browser chat stores the provider conversation of the current git repository

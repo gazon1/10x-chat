@@ -5,7 +5,7 @@ import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
-import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
+import type { CapturedResponse, ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
 import { buildBundle } from './bundle.js';
 import {
@@ -37,6 +37,23 @@ import { chatTimeoutMs, isResponseTimeout } from './timeout.js';
  * work does not fit into any context window.
  */
 const MAX_CONTINUATIONS = 3;
+
+/**
+ * The extra window for the recovery of a cut-off answer.
+ *
+ * The capture of the answer was cut off by its timeout. The same turn is
+ * captured again with this window: the prompt is not sent a second time,
+ * because it may have run already.
+ */
+const RECOVERY_GRACE_MS = 5 * 60_000;
+
+/** The length of the common prefix of two strings. */
+function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < max && left[index] === right[index]) index++;
+  return index;
+}
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
 const CHAT_PROVIDERS: ProviderName[] = [
@@ -366,6 +383,21 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       await ensureFreshConversation();
     }
 
+    // The answer is streamed to the terminal while it is generated. A
+    // recovered answer is streamed again from its beginning: only the new
+    // tail is printed, so the text does not appear twice.
+    let printedText = '';
+    const printChunk = (chunk: string) => {
+      printedText += chunk;
+      process.stdout.write(chalk.dim(chunk));
+    };
+    const printRecoveredChunk = (chunk: string) => {
+      const fresh = chunk.slice(commonPrefixLength(printedText, chunk));
+      if (!fresh) return;
+      printedText += fresh;
+      process.stdout.write(chalk.dim(fresh));
+    };
+
     const submitAndCapture = async () => {
       stage = 'submit-prompt';
       console.log(chalk.dim('Submitting prompt...'));
@@ -382,14 +414,29 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       console.log(chalk.dim('Waiting for response...'));
       return provider.actions.captureResponse(browser.page, {
         timeoutMs,
-        onChunk: (chunk) => process.stdout.write(chalk.dim(chunk)),
+        onChunk: printChunk,
       });
     };
 
-    // One retry: the answer was cut off by the timeout, or the provider showed
-    // a streaming/network error instead of the answer. Ask the same question
-    // again in the same conversation. With attachments there is nothing to
-    // attach the second time, so a partial answer is all the run can return.
+    /**
+     * The recovery of a cut-off answer.
+     *
+     * The same turn is captured again — the provider keeps the baseline of the
+     * turn, so the capture finds the answer that is still coming. The prompt is
+     * not sent again: it may have run already.
+     */
+    const recoverResponse = async () => {
+      stage = 'capture-response';
+      console.log(chalk.dim('The response was cut off — waiting for it to finish...'));
+      return provider.actions.captureResponse(browser.page, {
+        timeoutMs: Math.min(timeoutMs, RECOVERY_GRACE_MS),
+        onChunk: printRecoveredChunk,
+      });
+    };
+
+    // The prompt is sent once. A cut-off answer is recovered from the same
+    // turn, and an error of the provider is asked again only when nothing was
+    // produced: a prompt that may have run already is not sent twice.
     const hasAttachments = Boolean(options.attach && options.attach.length > 0);
     const askWithRetry = async () => {
       let retried = false;
@@ -414,10 +461,9 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
             await provider.actions.selectModel(browser.page, modelName);
           }
         }
+        let captured: CapturedResponse;
         try {
-          const captured = await submitAndCapture();
-          if (!captured.truncated || retried || hasAttachments) return captured;
-          console.log(chalk.dim('The response was cut off — asking again.'));
+          captured = await submitAndCapture();
         } catch (error) {
           // The context window ran out while the answer was generated: the
           // next iteration continues the conversation in a new chat and asks
@@ -428,10 +474,43 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
             pendingContinuation = true;
             continue;
           }
-          if (retried || hasAttachments || !(error instanceof ProviderGenerationError)) throw error;
-          console.log(chalk.dim('The provider reported an error while generating — asking again.'));
+          // A new attempt: the prompt is sent again. It is only safe when the
+          // provider produced nothing — a partial answer means that the task
+          // of the prompt may have run already.
+          if (
+            retried ||
+            hasAttachments ||
+            !(error instanceof ProviderGenerationError) ||
+            error.partial
+          ) {
+            throw error;
+          }
+          retried = true;
+          console.log(
+            chalk.dim(
+              'The provider reported an error while generating — asking again (the prompt is sent a second time).',
+            ),
+          );
+          continue;
         }
-        retried = true;
+        if (!captured.truncated) return captured;
+
+        // The answer was cut off: the same turn is captured again instead of
+        // a new prompt — the prompt must not be executed a second time.
+        try {
+          const recovered = await recoverResponse();
+          return recovered.truncated ? captured : recovered;
+        } catch (error) {
+          if (error instanceof ContextWindowFullError) {
+            if (continuations >= MAX_CONTINUATIONS) throw continuationLimitError();
+            console.log(chalk.dim('The context window ran out — continuing in a new chat.'));
+            pendingContinuation = true;
+            continue;
+          }
+          // The provider failed while the answer was recovered: the cut-off
+          // answer is returned, the prompt is not sent again.
+          return captured;
+        }
       }
     };
     const captured = await askWithRetry();
