@@ -1114,6 +1114,27 @@ describe('the context of a review', () => {
     }
   });
 
+  it('resolves the default branch of origin without a symbolic HEAD', async () => {
+    const origin = await createGitRepo();
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-clone-'));
+    try {
+      // The default branch of the origin is `main`, and the clone checks it out.
+      await gitIn(origin, 'checkout', 'main');
+      await gitIn(cwd, 'clone', origin, '.');
+      // No symbolic HEAD and one remote branch left: the name of the branch
+      // comes from the list of the remote, not from `origin/HEAD`.
+      await gitIn(cwd, 'remote', 'set-head', 'origin', '--delete');
+      await gitIn(cwd, 'branch', '-r', '-d', 'origin/feature');
+
+      const context = await collectReviewContext({ cwd });
+
+      expect(context.baseRef).toBe('main');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(origin, { recursive: true, force: true });
+    }
+  });
+
   it('cuts a diff that is too big', async () => {
     const cwd = await createGitRepo();
     try {

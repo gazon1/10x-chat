@@ -71,10 +71,13 @@ async function defaultBaseRef(cwd: string): Promise<string> {
     ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'],
     cwd,
   ).catch(() => '');
+  // The short name of a remote branch carries the prefix of the remote:
+  // `origin/main`, not `main`. The prefix is stripped before the names are
+  // counted, and `HEAD` is not a branch.
   const candidates = branches
     .split('\n')
-    .map((branch) => branch.trim())
-    .filter((branch) => branch !== '' && !branch.includes('/'));
+    .map((branch) => branch.trim().replace(/^origin\//, ''))
+    .filter((branch) => branch !== '' && branch !== 'HEAD' && !branch.includes('/'));
   if (candidates.length === 1) return candidates[0];
   throw new Error(
     'Cannot resolve the default branch of origin — name the base explicitly (--base <ref>).',

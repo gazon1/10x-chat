@@ -1,3 +1,6 @@
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli, withTempHome } from './helpers.ts';
 
@@ -344,5 +347,117 @@ it('refuses a timeout that is not a number', async () => {
     const result = await runCli(['review', '--timeout', '100ms'], env);
     expect(result.code).toBe(1);
     expect(result.output).toContain('Invalid --timeout value');
+  });
+});
+
+/**
+ * A `chatgpt-use` that answers with the envelope of the CLI: one finding for
+ * the reviewers, a verdict for every candidate of the verification.
+ */
+const FAKE_CHATGPT_USE = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const idAt = args.indexOf('--request-id');
+const requestId = idAt >= 0 ? args[idAt + 1] : '';
+const sepAt = args.indexOf('--');
+const prompt = sepAt >= 0 ? args.slice(sepAt + 1).join(' ') : '';
+let text;
+if (prompt.indexOf('# Verification') >= 0) {
+  const ids = Array.from(new Set(prompt.match(/f-[0-9a-f]{8}/g) || []));
+  text = JSON.stringify({
+    verdicts: ids.map((id) => ({
+      id: id,
+      verdict: 'confirmed',
+      evidence: 'the excerpt of the file shows the defect',
+      note: 'confirmed by the test double',
+    })),
+  });
+} else {
+  const findings =
+    process.env.FAKE_REVIEW_FINDINGS === 'none'
+      ? []
+      : [
+          {
+            title: 'The reviewer names a defect of the change',
+            severity: 'MAJOR',
+            category: 'correctness',
+            file: 'src/app.ts',
+            line: 1,
+            problem: 'The function of the file is wrong.',
+            impact: 'A caller gets a wrong result.',
+            evidence: ['the first line of the file'],
+            fix: 'Fix the function.',
+          },
+        ];
+  text = JSON.stringify({ findings: findings });
+}
+process.stdout.write(
+  JSON.stringify({ status: 'completed', request_id: requestId, result: { text: text } }),
+);
+`;
+
+/** Run a git command in a directory. */
+async function gitIn(cwd: string, ...args: string[]): Promise<void> {
+  const { execFile } = await import('node:child_process');
+  await new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['-c', 'user.email=t@example.com', '-c', 'user.name=Test', ...args],
+      { cwd },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
+
+/** A repository with a commit on `main` and a change on `feature`. */
+async function createReviewRepo(): Promise<string> {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-e2e-review-'));
+  await mkdir(path.join(cwd, 'src'), { recursive: true });
+  await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 1;\n', 'utf-8');
+  await gitIn(cwd, 'init', '--initial-branch=main');
+  await gitIn(cwd, 'add', '.');
+  await gitIn(cwd, 'commit', '-m', 'first');
+  await gitIn(cwd, 'checkout', '-b', 'feature');
+  await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 2;\n', 'utf-8');
+  await gitIn(cwd, 'add', '.');
+  await gitIn(cwd, 'commit', '-m', 'second');
+  return cwd;
+}
+
+it('tells the caller of a review what the verdict is', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // A confirmed MAJOR finding asks for changes: the exit code says so.
+      const changes = await runCli(
+        ['review', '--base', 'main', '--head', 'feature'],
+        env,
+        undefined,
+        { cwd: repo },
+      );
+      expect(changes.code).toBe(1);
+      expect(changes.output).toContain('REQUEST CHANGES');
+
+      // A review without a finding approves: the exit code says that too.
+      const approve = await runCli(
+        ['review', '--base', 'main', '--head', 'feature'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(approve.code).toBe(0);
+      expect(approve.output).toContain('APPROVE');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 });
