@@ -967,6 +967,18 @@ const CONTINUATION_MARKER_PATTERN =
   'continued from|previous conversation|earlier conversation|summary|контекст|продолж';
 
 /**
+ * The container of the conversation.
+ *
+ * The marker of the continuation is read from it: the navigation of the app
+ * holds the titles of the old conversations, and one of them can carry the
+ * word "summary" — a chat that was never continued would look like one.
+ */
+const CONTINUATION_SCOPE_SELECTOR = 'main, #thread, [role="main"]';
+
+/** The navigation of the app: the sidebar with the list of the conversations. */
+const NAVIGATION_SELECTOR = 'nav, aside, [role="navigation"], [data-testid*="sidebar" i]';
+
+/**
  * Does the text hold a sign that the native continuation has happened?
  */
 export function hasContinuationMarker(text: string): boolean {
@@ -1039,11 +1051,86 @@ export function continuationReady(signals: ContinuationSignals): boolean {
 }
 
 /** The state of the page that the continuation is judged by. */
-interface ContinuationDomState {
+export interface ContinuationDomState {
   bannerGone: boolean;
   composerUsable: boolean;
   summaryMarker: boolean;
   oldConversationGone: boolean;
+}
+
+/**
+ * The selectors of the continuation check.
+ *
+ * The scope is the conversation itself, the navigation is the sidebar with the
+ * list of the conversations: a title there can carry the word "summary" and
+ * make the marker look present in a chat that was never continued.
+ */
+export interface ContinuationDomOptions {
+  /** The pattern of the marker of the continuation. */
+  markerPattern: string;
+  /** The selector of the container of the conversation. */
+  scopeSelector: string;
+  /** The selector of the navigation of the app. */
+  navigationSelector: string;
+}
+
+/**
+ * Read the state of the page for the continuation.
+ *
+ * The marker of the continuation is searched in the conversation and nowhere
+ * else: the navigation holds the titles of the old conversations, and one of
+ * them can carry the word "summary".
+ *
+ * The document is an argument so that the check can be run against a fake one
+ * in the test; in the browser it is the document of the page.
+ */
+export function readContinuationDomState(
+  options: ContinuationDomOptions,
+  doc: Document = document,
+): ContinuationDomState {
+  const bodyText = doc.body?.innerText || '';
+  const banner = /context window full/i.test(bodyText);
+
+  const composerUsable = Array.from(
+    doc.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
+  ).some((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (element.closest('[aria-disabled="true"], [disabled]')) return false;
+    const editable =
+      element.tagName === 'TEXTAREA' || element.getAttribute('contenteditable') === 'true';
+    if (!editable) return false;
+    // The composer must not be covered: the overlay of the banner of the
+    // exhausted window stays in the DOM for a while.
+    const center = doc.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return center === element || element.contains(center);
+  });
+
+  const stale = Array.from(doc.querySelectorAll('[data-10x-exhausted="1"]')).some((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+
+  // The text of the conversation: the container of the chat when the app has
+  // one, the rest of the page without the navigation otherwise.
+  const scope = doc.querySelector(options.scopeSelector) ?? doc.body;
+  const parts: string[] = [];
+  const walk = (node: Node): void => {
+    if (node.nodeType === 3) {
+      parts.push(node.textContent || '');
+      return;
+    }
+    if (node.nodeType === 1 && (node as Element).closest(options.navigationSelector)) return;
+    for (const child of Array.from(node.childNodes)) walk(child);
+  };
+  if (scope) walk(scope);
+
+  return {
+    bannerGone: !banner,
+    composerUsable,
+    summaryMarker: new RegExp(options.markerPattern, 'i').test(parts.join(' ')),
+    oldConversationGone: !stale,
+  };
 }
 
 /**
@@ -1090,43 +1177,11 @@ async function startSummaryChat(page: Page): Promise<boolean> {
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await page.waitForTimeout(500);
-    const dom: ContinuationDomState = await page.evaluate((markerPattern: string) => {
-      const bodyText = document.body?.innerText || '';
-      const banner = /context window full/i.test(bodyText);
-
-      const composerUsable = Array.from(
-        document.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
-      ).some((element) => {
-        const rect = element.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return false;
-        if (element.closest('[aria-disabled="true"], [disabled]')) return false;
-        const editable =
-          element instanceof HTMLTextAreaElement ||
-          (element instanceof HTMLElement && element.isContentEditable);
-        if (!editable) return false;
-        // The composer must not be covered: the overlay of the banner of the
-        // exhausted window stays in the DOM for a while.
-        const center = document.elementFromPoint(
-          rect.left + rect.width / 2,
-          rect.top + rect.height / 2,
-        );
-        return center === element || element.contains(center);
-      });
-
-      const stale = Array.from(document.querySelectorAll('[data-10x-exhausted="1"]')).some(
-        (element) => {
-          const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        },
-      );
-
-      return {
-        bannerGone: !banner,
-        composerUsable,
-        summaryMarker: new RegExp(markerPattern, 'i').test(bodyText),
-        oldConversationGone: !stale,
-      };
-    }, CONTINUATION_MARKER_PATTERN);
+    const dom: ContinuationDomState = await page.evaluate(readContinuationDomState, {
+      markerPattern: CONTINUATION_MARKER_PATTERN,
+      scopeSelector: CONTINUATION_SCOPE_SELECTOR,
+      navigationSelector: NAVIGATION_SELECTOR,
+    });
 
     const afterId = conversationIdFromUrl('chatgpt', page.url());
     const afterTurns = await getAssistantTurnCount(page);

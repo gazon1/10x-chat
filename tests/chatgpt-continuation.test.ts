@@ -16,6 +16,7 @@ import {
   conversationIdChanged,
   conversationReplaced,
   hasContinuationMarker,
+  readContinuationDomState,
 } from '../src/providers/chatgpt.js';
 
 const OLD_URL = 'https://chatgpt.com/c/old-chat';
@@ -225,5 +226,85 @@ describe('the continuation of an exhausted ChatGPT chat', () => {
 
     const { chatgptActions } = await import('../src/providers/chatgpt.js');
     await expect(chatgptActions.continueInNewChat?.(page as never)).resolves.toBe(false);
+  });
+});
+
+/** A node of the fake page: only the parts the check reads. */
+interface FakeNode {
+  nodeType: number;
+  textContent: string;
+  childNodes: FakeNode[];
+  closest?: (selector: string) => unknown;
+}
+
+function textNode(value: string): FakeNode {
+  return { nodeType: 3, textContent: value, childNodes: [] };
+}
+
+function element(children: FakeNode[], options: { navigation?: boolean } = {}): FakeNode {
+  return {
+    nodeType: 1,
+    textContent: '',
+    childNodes: children,
+    closest: () => (options.navigation ? {} : null),
+  };
+}
+
+/** The page of the app: a sidebar with the conversations and the chat. */
+function fakePage(options: { sidebar: string; chat: string; withScope: boolean }): Document {
+  const sidebar = element([textNode(options.sidebar)], { navigation: true });
+  const chat = element([textNode(options.chat)]);
+  const scope = element([textNode(options.chat)]);
+
+  return {
+    body: { ...element([sidebar, chat]), innerText: `${options.sidebar} ${options.chat}` },
+    querySelector: (selector: string) =>
+      options.withScope && selector.includes('main') ? scope : null,
+    querySelectorAll: () => [],
+    elementFromPoint: () => null,
+  } as unknown as Document;
+}
+
+const DOM_OPTIONS = {
+  markerPattern:
+    'continued from|previous conversation|earlier conversation|summary|контекст|продолж',
+  scopeSelector: 'main, #thread, [role="main"]',
+  navigationSelector: 'nav, aside, [role="navigation"], [data-testid*="sidebar" i]',
+};
+
+describe('the marker in the page of the continuation', () => {
+  it('is not read from the sidebar of the old conversations', () => {
+    // The sidebar holds the title of an old conversation: it carries the word
+    // "summary", but the new chat was never continued.
+    const page = fakePage({
+      sidebar: 'Summary of the architecture',
+      chat: 'A new chat',
+      withScope: true,
+    });
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.summaryMarker).toBe(false);
+  });
+
+  it('is not read from the navigation when the app has no container of the chat', () => {
+    const page = fakePage({
+      sidebar: 'Summary of the architecture',
+      chat: 'A new chat',
+      withScope: false,
+    });
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.summaryMarker).toBe(false);
+  });
+
+  it('is read from the conversation itself', () => {
+    const page = fakePage({
+      sidebar: 'Today',
+      chat: 'Continued from Chat about the parser',
+      withScope: true,
+    });
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.summaryMarker).toBe(true);
   });
 });
