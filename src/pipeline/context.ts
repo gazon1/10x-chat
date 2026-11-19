@@ -339,6 +339,27 @@ export async function resolveInRepo(repoRoot: string, file: string): Promise<str
 }
 
 /**
+ * The path of a file of the revision under review — `undefined` when the file
+ * is not part of it.
+ *
+ * Both names must be files of the revision: the name a finding names, and the
+ * file behind it. A tracked symlink may point at a local file that was never
+ * committed — that file is not read either.
+ */
+export async function resolveTrackedFile(
+  repoRoot: string,
+  file: string,
+  tracked: Set<string>,
+): Promise<string | undefined> {
+  if (!tracked.has(normalizeRepoPath(file))) return undefined;
+  const resolved = await resolveInRepo(repoRoot, file);
+  if (!resolved) return undefined;
+  const realRoot = await realpath(repoRoot).catch(() => repoRoot);
+  if (!tracked.has(normalizeRepoPath(path.relative(realRoot, resolved)))) return undefined;
+  return resolved;
+}
+
+/**
  * Whether a relative path leaves the root of the repository.
  *
  * A name that starts with two dots is not a way out: `..config.ts` is a file of

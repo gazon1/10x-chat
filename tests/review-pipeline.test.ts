@@ -318,6 +318,74 @@ describe('the review pipeline', () => {
     expect(run.findings[0].verification).toBe('rejected');
   });
 
+  it('leaves a finding unverified when the verifier contradicts itself', async () => {
+    const id = findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title });
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            { id, verdict: 'confirmed', evidence: 'the code shows it' },
+            { id, verdict: 'rejected', evidence: 'the code does not show it' },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.findings[0].verificationNote).toContain('contradictory');
+    expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('passed');
+  });
+
+  it('does not read the file a tracked symlink points at when it is not committed', async () => {
+    await writeFile(path.join(repo, '.env'), 'SECRET_TOKEN=abc123\n', 'utf-8');
+    await symlink('../.env', path.join(repo, 'src', 'link.ts'));
+    const link = { ...FINDING, file: 'src/link.ts', line: 1 };
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([link]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: link.file, line: link.line, title: link.title }),
+              verdict: 'confirmed',
+              evidence: 'the file shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf({ trackedFiles: ['src/link.ts'] }),
+    });
+
+    const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+    expect(verification).not.toContain('SECRET_TOKEN');
+    expect(run.findings[0].verification).toBe('rejected');
+  });
+
   it('keeps the evidence of a finding that the verification rejects', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
@@ -768,6 +836,27 @@ describe('the parsing of the answers', () => {
     );
     expect(merged).toHaveLength(1);
     expect(merged[0].reportedBy).toEqual(['correctness', 'tests']);
+  });
+
+  it('merges a finding that overlaps a merged title', () => {
+    // The overlap of the titles is not transitive: the third title overlaps
+    // the second one, and the second one was merged into the first.
+    const titles = [
+      'alpha beta gamma',
+      'alpha beta gamma delta epsilon',
+      'gamma delta epsilon zeta eta',
+    ];
+    const merged = dedupeFindings(
+      titles.map((title) => ({
+        ...FINDING,
+        title,
+        id: findingId({ ...FINDING, title }),
+        verification: 'unverified' as const,
+        reportedBy: ['correctness' as const],
+        evidence: [],
+      })),
+    );
+    expect(merged).toHaveLength(1);
   });
 
   it('does not take the example of the schema for the payload', () => {

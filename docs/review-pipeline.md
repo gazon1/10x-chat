@@ -57,7 +57,12 @@ stay `unverified`.
 Only the files of the revision under review are read for the evidence of a
 finding: they come from the commit, not from the disk of the checkout. A local
 file that was never committed — a secret, a key — never reaches the backend,
-and a finding that names it is `rejected`.
+and a finding that names it is `rejected`. A tracked symlink does not open the
+way out: the file behind it must be a file of the revision too.
+
+Two verdicts for one finding that contradict each other settle nothing: the
+order of the answer must not decide the state of a finding. The finding stays
+`unverified` with the note that says why.
 
 An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came
@@ -72,7 +77,10 @@ reviewer or of the verifier is `failed` rather than "no findings".
 Two findings of two reviewers are one finding when they are at the same file
 and the same line and their titles overlap. The coverage of the shorter title
 and of the longer one both count, so a title that is swallowed by a much
-longer one is a different defect, not the same one written twice.
+longer one is a different defect, not the same one written twice. Every title
+that was merged into a finding counts: the overlap of the titles is not
+transitive, so a finding that overlaps a merged title is the same defect even
+when it does not overlap the title that was kept.
 
 The bundle holds the changed files and the convention files of the repository
 (`AGENTS.md`, `CONTRIBUTING.md`, `README.md`) — the reviewers are told to read

@@ -629,26 +629,31 @@ function strongestState(a: FindingVerification, b: FindingVerification): Finding
  * roles that reported it are named.
  */
 export function dedupeFindings(findings: Finding[]): Finding[] {
-  const merged: Finding[] = [];
+  // Every title that was merged into a finding is kept: the overlap of the
+  // titles is not transitive, so a finding that overlaps a merged title is the
+  // same defect even when it does not overlap the title that was kept.
+  const merged: { finding: Finding; titles: string[] }[] = [];
   for (const finding of findings) {
     const twin = merged.find(
-      (other) =>
-        other.file === finding.file &&
-        other.line === finding.line &&
-        overlap(other.title, finding.title) >= 0.6,
+      (entry) =>
+        entry.finding.file === finding.file &&
+        entry.finding.line === finding.line &&
+        entry.titles.some((title) => overlap(title, finding.title) >= 0.6),
     );
     if (!twin) {
-      merged.push({ ...finding });
+      merged.push({ finding: { ...finding }, titles: [finding.title] });
       continue;
     }
-    twin.severity = worstSeverity(twin.severity, finding.severity);
-    twin.evidence = [...new Set([...twin.evidence, ...finding.evidence])];
-    twin.reportedBy = [...new Set([...twin.reportedBy, ...finding.reportedBy])];
-    twin.verification = strongestState(twin.verification, finding.verification);
-    if (!twin.verificationNote && finding.verificationNote) {
-      twin.verificationNote = finding.verificationNote;
+    const other = twin.finding;
+    other.severity = worstSeverity(other.severity, finding.severity);
+    other.evidence = [...new Set([...other.evidence, ...finding.evidence])];
+    other.reportedBy = [...new Set([...other.reportedBy, ...finding.reportedBy])];
+    other.verification = strongestState(other.verification, finding.verification);
+    if (!other.verificationNote && finding.verificationNote) {
+      other.verificationNote = finding.verificationNote;
     }
-    if (!twin.fix && finding.fix) twin.fix = finding.fix;
+    if (!other.fix && finding.fix) other.fix = finding.fix;
+    twin.titles.push(finding.title);
   }
-  return merged;
+  return merged.map((entry) => entry.finding);
 }

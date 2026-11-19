@@ -9,8 +9,7 @@ import {
   collectReviewContext,
   contextFiles,
   conventionFiles,
-  normalizeRepoPath,
-  resolveInRepo,
+  resolveTrackedFile,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
@@ -153,10 +152,7 @@ async function excerptOf(
   if (!finding.file) return { text: '', exists: false, lineInRange: false };
   // Only a file of the revision under review is read: a local file that was
   // never committed (a secret, a key) must not reach the backend.
-  if (!tracked.has(normalizeRepoPath(finding.file))) {
-    return { text: '', exists: false, lineInRange: false };
-  }
-  const resolved = await resolveInRepo(repoRoot, finding.file);
+  const resolved = await resolveTrackedFile(repoRoot, finding.file, tracked);
   if (!resolved) return { text: '', exists: false, lineInRange: false };
   let content: string;
   try {
@@ -300,7 +296,18 @@ async function verifyCandidates(options: {
   }
 
   const parsed = parseVerdicts(outcome.value.text);
-  const verdicts = new Map(parsed.verdicts.map((verdict) => [verdict.id, verdict]));
+  // Two verdicts for one finding that contradict each other settle nothing:
+  // the order of the answer must not decide the state of a finding.
+  const verdicts = new Map<string, (typeof parsed.verdicts)[number]>();
+  const contradictory = new Set<string>();
+  for (const verdict of parsed.verdicts) {
+    const known = verdicts.get(verdict.id);
+    if (!known) {
+      verdicts.set(verdict.id, verdict);
+      continue;
+    }
+    if (known.verdict !== verdict.verdict) contradictory.add(verdict.id);
+  }
   const findings = candidates.map((finding) => {
     const state = mechanical.get(finding.id);
     const verdict = verdicts.get(finding.id);
@@ -313,6 +320,13 @@ async function verifyCandidates(options: {
         verificationNote: state.exists
           ? 'the line is outside the file'
           : 'the file is not in the revision under review',
+      };
+    }
+    if (contradictory.has(finding.id)) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: 'the verifier answered with contradictory verdicts',
       };
     }
     if (!verdict) return { ...finding, verification: 'unverified' as const };
