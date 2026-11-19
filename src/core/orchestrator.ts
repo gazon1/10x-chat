@@ -70,6 +70,8 @@ const CHAT_PROVIDERS: ProviderName[] = [
 export interface ChatResult {
   sessionId: string;
   provider: ProviderName;
+  /** The backend that answered the run — set when the run went through a backend. */
+  backend?: string;
   response: string;
   truncated: boolean;
   durationMs: number;

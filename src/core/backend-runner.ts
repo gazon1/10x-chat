@@ -71,7 +71,9 @@ export async function runBackendChat(
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
-  const session = await createSession(provider, options.prompt, model);
+  // The backend answers the run — the session records it, so the history
+  // does not claim that a provider answered.
+  const session = await createSession(provider, options.prompt, model, backend.name);
   await saveBundle(session.id, bundle);
 
   // The images of the answer are saved by the backend itself: the downloader
@@ -148,6 +150,7 @@ export async function runBackendChat(
   return {
     sessionId: session.id,
     provider,
+    backend: backend.name,
     response: response.text,
     truncated: response.truncated,
     durationMs,

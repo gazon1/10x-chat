@@ -186,6 +186,8 @@ export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'ti
 export interface SessionMeta {
   id: string;
   provider: ProviderName;
+  /** The backend that answered the run — a backend run is not a provider run. */
+  backend?: string;
   model?: string;
   promptPreview: string;
   createdAt: string;

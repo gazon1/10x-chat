@@ -334,6 +334,15 @@ describe('Chat through the backend contract', () => {
     expect(session.meta.status).toBe('completed');
   });
 
+  it('records the backend of the run in the session', async () => {
+    const backend = createFakeBackend();
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+
+    expect(result.backend).toBe('fake');
+    const session = await getSession(result.sessionId);
+    expect(session.meta.backend).toBe('fake');
+  });
+
   it('fails the run when the backend fails', async () => {
     const backend = createFakeBackend([{ prompt: 'boom', failure: 'timeout' }]);
     await expect(runChat({ prompt: 'boom', provider: 'chatgpt' }, { backend })).rejects.toThrow(
