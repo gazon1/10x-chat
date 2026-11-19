@@ -633,6 +633,16 @@ describe('Chat through the backend contract', () => {
     expect(backendFailureKind(error)).toBe('invalid_output');
   });
 
+  it('refuses a provider the backend does not drive', async () => {
+    // The backend drives ChatGPT: the session of the run must not claim
+    // another provider.
+    const backend = registerBackend({ ...recordingBackend([]), name: 'driven-backend' }, 'chatgpt');
+
+    await expect(runChat({ prompt: 'hello', provider: 'gemini' }, { backend })).rejects.toThrow(
+      /drives chatgpt/,
+    );
+  });
+
   it('gives a backend the directory of the images it has to save', async () => {
     const requests: BackendRequest[] = [];
     const backend = recordingBackend(requests);
