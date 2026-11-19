@@ -1004,6 +1004,20 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
+  it('does not let an empty example hide the malformed findings of the answer', () => {
+    // An empty example must not turn a malformed answer into an empty review:
+    // a malformed answer is a failed step, not a review without findings.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [{ title: 'Unchecked input reaches exec' }] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(0);
+    expect(parsed.invalid.join(' ')).toContain('problem');
+  });
+
   it('reads the verdicts of a verification', () => {
     const parsed = parseVerdicts(
       JSON.stringify({

@@ -226,25 +226,37 @@ export function extractJson(text: string, key?: string): unknown {
   return objects ?? parsed[0];
 }
 
+/** One payload of an answer, with what was read out of it. */
+interface CandidateChoice<T extends { invalid: string[] }> {
+  candidate: JsonCandidate;
+  parsed: T;
+  /** The entries of the payload. */
+  count: number;
+  /** The entries of the payload that pass the schema. */
+  valid: number;
+}
+
 /**
  * The better of two candidates.
  *
- * The payload that lost the least wins: the entries that pass the schema are
- * the answer, the example of the schema is not. A payload with more entries
- * beats one with less — a fenced example of an empty answer must not hide the
- * findings that follow it. A fenced payload beats an unfenced one, and a later
- * payload beats an earlier one — a model that repeats the format of the
- * answer puts the format first.
+ * The payload that carries more of the answer wins: the entries that pass the
+ * schema are the answer, the example of the schema is not. An empty payload is
+ * an example of the format and must not hide a payload that carries something
+ * — not even a payload whose entries are malformed, because a malformed answer
+ * is a failed step, not an empty review. A fenced payload beats an unfenced
+ * one, and a later payload beats an earlier one — a model that repeats the
+ * format of the answer puts the format first.
  */
 function betterCandidate<T extends { invalid: string[] }>(
-  a: { candidate: JsonCandidate; parsed: T; count: number },
-  b: { candidate: JsonCandidate; parsed: T; count: number },
-): { candidate: JsonCandidate; parsed: T; count: number } {
+  a: CandidateChoice<T>,
+  b: CandidateChoice<T>,
+): CandidateChoice<T> {
+  if (a.valid !== b.valid) return a.valid > b.valid ? a : b;
+  const aEmpty = a.count === 0;
+  const bEmpty = b.count === 0;
+  if (aEmpty !== bEmpty) return aEmpty ? b : a;
   if (a.parsed.invalid.length !== b.parsed.invalid.length) {
     return a.parsed.invalid.length < b.parsed.invalid.length ? a : b;
-  }
-  if (a.count !== b.count) {
-    return a.count > b.count ? a : b;
   }
   if (a.candidate.fenced !== b.candidate.fenced) {
     return a.candidate.fenced ? a : b;
@@ -415,10 +427,12 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     .filter((candidate) => keyedEntries(candidate.value, 'findings') !== undefined)
     .map((candidate) => {
       const entries = keyedEntries(candidate.value, 'findings') ?? [];
+      const parsed = parseFindingEntries(entries, role);
       return {
         candidate,
-        parsed: parseFindingEntries(entries, role),
+        parsed,
         count: entries.length,
+        valid: parsed.findings.length,
       };
     });
   if (keyed.length > 0) {
@@ -431,10 +445,12 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     .filter((candidate) => Array.isArray(candidate.value))
     .map((candidate) => {
       const entries = candidate.value as unknown[];
+      const parsed = parseFindingEntries(entries, role);
       return {
         candidate,
-        parsed: parseFindingEntries(entries, role),
+        parsed,
         count: entries.length,
+        valid: parsed.findings.length,
       };
     });
   if (bare.length === 0) {
@@ -526,7 +542,8 @@ export function parseVerdicts(text: string): ParsedVerdicts {
     .filter((candidate) => keyedEntries(candidate.value, 'verdicts') !== undefined)
     .map((candidate) => {
       const entries = keyedEntries(candidate.value, 'verdicts') ?? [];
-      return { candidate, parsed: parseVerdictEntries(entries), count: entries.length };
+      const parsed = parseVerdictEntries(entries);
+      return { candidate, parsed, count: entries.length, valid: parsed.verdicts.length };
     });
   if (keyed.length > 0) {
     const best = keyed.reduce(betterCandidate);
@@ -538,7 +555,8 @@ export function parseVerdicts(text: string): ParsedVerdicts {
     .filter((candidate) => Array.isArray(candidate.value))
     .map((candidate) => {
       const entries = candidate.value as unknown[];
-      return { candidate, parsed: parseVerdictEntries(entries), count: entries.length };
+      const parsed = parseVerdictEntries(entries);
+      return { candidate, parsed, count: entries.length, valid: parsed.verdicts.length };
     });
   if (bare.length === 0) {
     return {

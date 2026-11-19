@@ -74,11 +74,13 @@ back truncated is `failed`, and the run is incomplete.
 
 The payload of an answer is looked for in the whole answer: a model fences it,
 wraps it in a sentence, or repeats the format of the answer before the answer
-itself. The payload that carries more of the answer wins: a fenced example of
-an empty answer must not hide the findings that follow it. Fifty delimiters
-that carry no JSON at all are tolerated; when there are more, the payload of
-the answer may lie behind them, and the step of the reviewer or of the
-verifier is `failed` rather than "no findings".
+itself. The payload that carries more valid findings is the answer, and an
+empty payload is an example of the format: it must not hide a payload that
+carries something — not even a payload whose entries are malformed, because a
+malformed answer is a failed step, not a review without findings. Fifty
+delimiters that carry no JSON at all are tolerated; when there are more, the
+payload of the answer may lie behind them, and the step of the reviewer or of
+the verifier is `failed` rather than "no findings".
 
 Two findings of two reviewers are one finding when they are at the same file
 and the same line and their titles overlap. The words of a title are the words
