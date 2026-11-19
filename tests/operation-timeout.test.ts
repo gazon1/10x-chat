@@ -3,6 +3,7 @@ import {
   InvalidatedHandles,
   invalidatedHandle,
   invalidateOnTimeout,
+  OPERATION_MARGIN_MS,
   OPERATION_TIMEOUT_MS,
   OperationTimeoutError,
   RPC_TIMEOUT_MS,
@@ -45,7 +46,6 @@ describe('requestedTimeoutMs', () => {
       30_000,
     );
     expect(requestedTimeoutMs('locator', 'waitFor', [{ timeout: 90_000 }])).toBe(90_000);
-    expect(requestedTimeoutMs('keyboard', 'press', ['Enter', { timeout: 5_000 }])).toBe(5_000);
   });
 
   it('reads the bound of a sleep from the sleep itself', () => {
@@ -57,6 +57,88 @@ describe('requestedTimeoutMs', () => {
     expect(requestedTimeoutMs('page', 'goto', ['https://example.test'])).toBeUndefined();
     expect(requestedTimeoutMs('locator', 'count', [])).toBeUndefined();
     expect(requestedTimeoutMs('page', 'goto', undefined)).toBeUndefined();
+  });
+});
+
+/**
+ * Every method that the RPC service dispatches.
+ *
+ * `index` is the position of the argument that carries the bound of the
+ * caller in Playwright, or `null` when the method takes no bound. The table
+ * is the audit of the timeout contract: a dispatched method that is missing
+ * here is a hole in it.
+ */
+const DISPATCHED: { kind: string; method: string; index: number | null }[] = [
+  { kind: 'browser', method: 'newContext', index: null },
+  { kind: 'context', method: 'newPage', index: null },
+  { kind: 'context', method: 'close', index: null },
+  { kind: 'context', method: 'storageState', index: null },
+  { kind: 'context', method: 'cookies', index: null },
+  { kind: 'page', method: 'goto', index: 1 },
+  { kind: 'page', method: 'waitForTimeout', index: null },
+  { kind: 'page', method: 'waitForLoadState', index: 1 },
+  { kind: 'page', method: 'waitForURL', index: 1 },
+  { kind: 'page', method: 'waitForEvent', index: 1 },
+  { kind: 'page', method: 'waitForFunction', index: 2 },
+  { kind: 'page', method: 'evaluate', index: null },
+  { kind: 'page', method: 'close', index: null },
+  { kind: 'page', method: 'title', index: null },
+  { kind: 'keyboard', method: 'press', index: null },
+  { kind: 'keyboard', method: 'type', index: null },
+  { kind: 'keyboard', method: 'insertText', index: null },
+  { kind: 'locator', method: 'waitFor', index: 0 },
+  { kind: 'locator', method: 'isVisible', index: 0 },
+  { kind: 'locator', method: 'click', index: 0 },
+  { kind: 'locator', method: 'fill', index: 1 },
+  { kind: 'locator', method: 'count', index: null },
+  { kind: 'locator', method: 'textContent', index: 0 },
+  { kind: 'locator', method: 'innerHTML', index: 0 },
+  { kind: 'locator', method: 'setInputFiles', index: 1 },
+  { kind: 'locator', method: 'evaluate', index: null },
+  { kind: 'event', method: 'setFiles', index: null },
+  { kind: 'event', method: 'saveAs', index: null },
+];
+
+describe('the bound of the caller of every dispatched method', () => {
+  const withBound = DISPATCHED.filter((entry) => entry.index !== null);
+
+  it.each(withBound)('keeps the bound of $kind.$method', ({ kind, method, index }) => {
+    const args = Array.from({ length: (index ?? 0) + 1 }, () => ({}));
+    args[index ?? 0] = { timeout: 30_000 };
+    expect(requestedTimeoutMs(kind, method, args)).toBe(30_000);
+  });
+
+  it.each(withBound)('reads the bound of $kind.$method from that argument only', ({
+    kind,
+    method,
+    index,
+  }) => {
+    // Every argument but the options one carries a bound: the bound of the
+    // caller is not read from another argument.
+    const args = Array.from({ length: (index ?? 0) + 2 }, (_, i) =>
+      i === index ? {} : { timeout: 30_000 },
+    );
+    expect(requestedTimeoutMs(kind, method, args)).toBeUndefined();
+  });
+
+  it.each(withBound)('gives $kind.$method more time than the caller asked for', ({
+    kind,
+    method,
+    index,
+  }) => {
+    const args = Array.from({ length: (index ?? 0) + 1 }, () => ({}));
+    args[index ?? 0] = { timeout: 30_000 };
+
+    const plan = timeoutPlan(requestedTimeoutMs(kind, method, args));
+    expect(plan.operationMs).toBe(30_000 + OPERATION_MARGIN_MS);
+    expect(plan.rpcMs).toBeGreaterThan(plan.operationMs);
+    expect(plan.clientMs).toBeGreaterThan(plan.rpcMs);
+  });
+
+  it.each(
+    DISPATCHED.filter((entry) => entry.index === null),
+  )('gives $kind.$method the default bound', ({ kind, method }) => {
+    expect(requestedTimeoutMs(kind, method, [{ timeout: 30_000 }])).toBeUndefined();
   });
 });
 

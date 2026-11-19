@@ -55,12 +55,19 @@ export const CLOSE_TIMEOUT_MS = 5_000;
  * bound is read from there and from nowhere else, so an argument that
  * happens to have a `timeout` field (the data of an `evaluate`) is not
  * mistaken for a bound.
+ *
+ * Only the methods of Playwright that take a `timeout` in their options are
+ * listed. A method that takes no bound (`keyboard.press`, `locator.count`,
+ * `page.evaluate`) is not in this table: it has no bound to preserve.
  */
 const OPTIONS_ARG_INDEX: Record<string, number> = {
   'page.goto': 1,
   'page.waitForLoadState': 1,
   'page.waitForURL': 1,
   'page.waitForEvent': 1,
+  // `waitForFunction(pageFunction, arg, options)`: the bound lives in the
+  // third argument — the second one is the argument of the function.
+  'page.waitForFunction': 2,
   'locator.waitFor': 0,
   'locator.isVisible': 0,
   'locator.click': 0,
@@ -68,8 +75,6 @@ const OPTIONS_ARG_INDEX: Record<string, number> = {
   'locator.innerHTML': 0,
   'locator.fill': 1,
   'locator.setInputFiles': 1,
-  'keyboard.press': 1,
-  'keyboard.type': 1,
 };
 
 /**

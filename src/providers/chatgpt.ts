@@ -1396,6 +1396,7 @@ export const chatgptActions: ProviderActions = {
       await page
         .waitForFunction(
           () => !/uploading|processing file|preparing file/i.test(document.body?.innerText || ''),
+          undefined,
           { timeout: 120_000 },
         )
         .catch(() => {});

@@ -353,6 +353,11 @@ function createRemotePageProxy(
     ) => invoke('waitForURL', [url, options ?? {}]),
     waitForEvent: async (event: string, options?: Record<string, unknown>) =>
       invoke('waitForEvent', [event, options ?? {}]),
+    waitForFunction: async (
+      pageFunction: unknown,
+      arg?: unknown,
+      options?: Record<string, unknown>,
+    ) => invoke('waitForFunction', [pageFunction, arg ?? null, options ?? {}]),
     evaluate: async (pageFunction: unknown, arg?: unknown) =>
       invoke('evaluate', [pageFunction, arg]),
     close: async () => invoke('close'),

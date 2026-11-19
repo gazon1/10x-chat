@@ -34,6 +34,8 @@ Every dispatched browser operation follows one contract (`src/browser/operation-
 
 An operation that does not answer in time may still run inside the browser: the session of the operation (the page, or the context without a page) is invalidated — the handle is refused from now on, so a later operation cannot work on a half-changed page. A context or a page that arrives after its bound is closed instead of being registered: nobody learns its id.
 
+The bound of the caller is read from the options argument of the call and from nowhere else — the table in `tests/operation-timeout.test.ts` audits every dispatched method against that rule. `waitForFunction` is the one that is easy to get wrong: its options are the third argument, the second one being the argument of the function.
+
 ## Ownership and cleanup
 
 - Each caller owns the returned `BrowserSession` and must `await close()` (orchestrators/CLI do this in `finally`).

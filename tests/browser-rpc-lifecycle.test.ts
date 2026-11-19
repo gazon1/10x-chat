@@ -125,6 +125,7 @@ function createFakeWorld(options: { latePage?: boolean } = {}): FakeWorld {
     waitForEvent: hangable(state, 'page.waitForEvent', (event: string) =>
       event === 'download' ? download : fileChooser,
     ),
+    waitForFunction: hangable(state, 'page.waitForFunction', () => null),
     evaluate: hangable(state, 'page.evaluate', () => 1),
     keyboard: {
       press: hangable(state, 'keyboard.press'),
@@ -246,6 +247,13 @@ const CASES: RpcCase[] = [
     label: 'page.evaluate',
     session: 'page',
     args: [{ __type: 'function', source: '() => 1' }],
+  },
+  {
+    kind: 'page',
+    method: 'waitForFunction',
+    label: 'page.waitForFunction',
+    session: 'page',
+    args: [{ __type: 'function', source: '() => true' }, null, {}],
   },
   { kind: 'page', method: 'title', label: 'page.title', session: 'page' },
   { kind: 'page', method: 'close', label: 'page.close', session: 'page' },

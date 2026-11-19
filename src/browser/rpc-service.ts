@@ -664,6 +664,20 @@ export class RpcService {
             }
             throw new Error(`Unsupported page event: ${eventName}`);
           }
+          case 'waitForFunction': {
+            const pageFunction = args[0];
+            const arg = args[1];
+            const options = (args[2] as Record<string, unknown>) ?? {};
+            if (typeof pageFunction !== 'function') {
+              throw new Error('Unsupported waitForFunction payload');
+            }
+            // `waitForFunction(pageFunction, arg, options)`: the bound of the
+            // caller lives in the third argument.
+            await this.run('page', 'waitForFunction', args, 'page.waitForFunction', () =>
+              page.waitForFunction(pageFunction as never, arg as never, options as never),
+            );
+            return { ok: true, result: null, pageState: this.buildPageState(pageId) };
+          }
           case 'evaluate': {
             const pageFunction = args[0];
             const arg = args[1];
