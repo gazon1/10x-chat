@@ -93,6 +93,12 @@ names cannot collide.
 - `cancel` stops the generation behind a request. A request that is already
   finished cannot be cancelled (`cancelled: false`).
 
+`status`, `resume` and `cancel` are the primitives of the backend contract:
+the adapter implements them and the tests cover them, but the command of
+10x-chat runs `ask` only today. The recovery workflow of the application — a
+run that was interrupted and a session that can be picked up again — comes
+with the migration of the providers.
+
 ## The busy policy
 
 One ChatGPT window serves one request.

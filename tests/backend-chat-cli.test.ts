@@ -88,6 +88,8 @@ describe('the --backend option of chat (CLI)', () => {
       [['--new-chat'], /--backend and --new-chat/i],
       [['--all'], /--all and --backend/i],
       [['--provider', 'gemini'], /drives chatgpt/i],
+      [['--dry-run'], /--dry-run or --copy/i],
+      [['--copy'], /--dry-run or --copy/i],
     ];
     for (const [args, pattern] of cases) {
       const res = await runCli(['chat', '-p', 'hi', '--backend', 'chatgpt-use', ...args], {

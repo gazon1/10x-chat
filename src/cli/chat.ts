@@ -114,6 +114,16 @@ export function createChatCommand(): Command {
           );
           process.exit(1);
         }
+        // The bundle is the same for every backend: a backend that the run
+        // never asks is a lie about what the run does.
+        if (options.dryRun || options.copy) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend with --dry-run or --copy: the backend does not change the bundle.',
+            ),
+          );
+          process.exit(1);
+        }
       }
       if (options.all && transport === 'api') {
         console.error(
