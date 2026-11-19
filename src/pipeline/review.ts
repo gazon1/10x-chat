@@ -9,6 +9,7 @@ import {
   collectReviewContext,
   contextFiles,
   conventionFiles,
+  MAX_DIFF_CHARS,
   resolveTrackedFile,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
@@ -121,7 +122,11 @@ Changed files:
 ${files}
 
 Conventions: read AGENTS.md, CONTRIBUTING.md and the README of the repository before you judge the change.
-
+${
+  context.diffTruncated
+    ? '\nThe diff is cut: only the beginning of the change is shown, and a defect may hide behind the cut.\n'
+    : ''
+}
 # Diff
 \`\`\`diff
 ${context.diff}
@@ -427,8 +432,12 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     steps.push(
       step(
         'collect-context',
-        'passed',
-        `${context.changedFiles.length} changed files, ${context.diff.length} characters of diff`,
+        // A cut diff is a partial change: the reviewers cannot approve what
+        // they did not see, so the review is not complete.
+        context.diffTruncated ? 'failed' : 'passed',
+        context.diffTruncated
+          ? `the diff was cut at ${MAX_DIFF_CHARS} characters — the review covers only the beginning of the change`
+          : `${context.changedFiles.length} changed files, ${context.diff.length} characters of diff`,
         collectStart,
       ),
     );

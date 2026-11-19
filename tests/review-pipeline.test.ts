@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
+import { buildBundle } from '../src/core/bundle.js';
 import {
   bundlePatterns,
   collectReviewContext,
@@ -554,6 +555,28 @@ describe('the review pipeline', () => {
     expect(step?.status).toBe('failed');
     // The entry that passed the schema is still a finding.
     expect(run.findings).toHaveLength(1);
+  });
+
+  it('does not approve a review whose diff was cut', async () => {
+    // A cut diff is a partial change: the reviewers cannot approve what they
+    // did not see.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf({ diffTruncated: true }),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'collect-context');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('cut');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.report).toContain('collect-context');
   });
 
   it('does not confirm a finding that points at no file', async () => {
@@ -1282,6 +1305,21 @@ describe('the context of a review', () => {
     expect(() => parsePullRequestMetadata({ baseRefName: 'main', headRefName: 'feature' })).toThrow(
       /no base or head commit/,
     );
+  });
+
+  it('reads a changed file of a hidden directory into the bundle', async () => {
+    // The bundle is built from the explicit path of every changed file: a file
+    // in a hidden directory is read, whatever the glob thinks of the dot.
+    await mkdir(path.join(repo, '.github', 'workflows'), { recursive: true });
+    await writeFile(path.join(repo, '.github', 'workflows', 'ci.yml'), 'name: ci\n', 'utf-8');
+
+    const bundle = await buildBundle({
+      prompt: 'the brief',
+      files: bundlePatterns(['.github/workflows/ci.yml']),
+      cwd: repo,
+    });
+
+    expect(bundle).toContain('name: ci');
   });
 
   it('escapes the names of the files as literal patterns', () => {

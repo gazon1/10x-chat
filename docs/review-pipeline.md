@@ -142,7 +142,9 @@ A caller must not read a clean exit of an incomplete review as an approval.
 ## The bounds
 
 - The diff of the bundle is cut at 120 000 characters; the cut is written into
-  the bundle and the step says so.
+  the bundle and the step says so. A cut diff is a partial change: the step
+  `collect-context` does not pass, the review is incomplete, and the verdict is
+  `REQUEST CHANGES` — the reviewers cannot approve what they did not see.
 - The bundle holds at most 25 changed files; the omitted ones are named in the
   step.
 - The verification pass gets the excerpt around the line of a finding (32
