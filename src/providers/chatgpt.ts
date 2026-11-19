@@ -902,62 +902,47 @@ async function dismissOverlays(page: Page): Promise<void> {
  * that continues the conversation in a new chat with an automatic summary.
  */
 async function detectContextFull(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    for (const button of Array.from(document.querySelectorAll('button'))) {
-      const label = (button.innerText || button.getAttribute('aria-label') || '').trim();
-      if (!/^new chat$/i.test(label)) continue;
-      const rect = button.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-
-      let node: HTMLElement | null = button.parentElement;
-      while (node) {
-        if (/context window full/i.test(node.innerText || '')) return true;
-        node = node.parentElement;
-      }
-    }
-    return false;
-  });
+  const state = await page.evaluate(readContinuationDomState, continuationDomOptions());
+  return state.bannerPresent;
 }
 
 /**
  * Click the "New chat" button of the "Context window full" banner.
  *
- * The app has several "New chat" buttons: the one of the sidebar, a hidden
- * variant of it, and the one of the banner. The button of the banner is the
- * one whose nearest ancestor with the text "Context window full" is the
- * closest one — the sidebar button finds that text only in the body, many
- * levels up.
+ * The button is the one the banner check has found — its index among the
+ * buttons of the page. The button of the sidebar is not a candidate: the
+ * banner box holds the words of the banner and does not hold the
+ * conversation, the sidebar button finds those words only in the body of the
+ * app, many levels up.
  */
-async function clickContextFullNewChat(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    let best: { button: HTMLElement; depth: number } | null = null;
-
-    for (const button of Array.from(document.querySelectorAll('button'))) {
-      const label = (button.innerText || button.getAttribute('aria-label') || '').trim();
-      if (!/^new chat$/i.test(label)) continue;
-      const rect = button.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-
-      let depth = 0;
-      let found = -1;
-      let node: HTMLElement | null = button.parentElement;
-      while (node) {
-        depth++;
-        if (/context window full/i.test(node.innerText || '')) {
-          found = depth;
-          break;
-        }
-        node = node.parentElement;
-      }
-      if (found < 0) continue;
-      if (!best || found < best.depth) best = { button, depth: found };
-    }
-
-    if (!best) return false;
-    best.button.click();
+async function clickContextFullNewChat(page: Page, index: number): Promise<boolean> {
+  return page.evaluate((position: number) => {
+    const button = document.querySelectorAll('button')[position] as HTMLElement | undefined;
+    if (!button) return false;
+    button.click();
     return true;
-  });
+  }, index);
 }
+
+/**
+ * The words of the banner of the exhausted context window.
+ */
+const CONTEXT_FULL_PATTERN = 'context window full';
+
+/**
+ * The label of the button that continues the chat in a new one.
+ */
+const NEW_CHAT_LABEL_PATTERN = '^new chat$';
+
+/**
+ * The longest text a box without a conversation may have to be the banner.
+ *
+ * The words of the banner are in the body of the app as well — the summary of
+ * a continuation can mention the exhausted window itself. When the app has
+ * no container of the conversation, only a short box can be the banner: the
+ * text around it is the whole app.
+ */
+const BANNER_MAX_TEXT = 400;
 
 /**
  * The words the app uses when it continues an exhausted conversation in a new
@@ -1052,9 +1037,18 @@ export function continuationReady(signals: ContinuationSignals): boolean {
 
 /** The state of the page that the continuation is judged by. */
 export interface ContinuationDomState {
-  bannerGone: boolean;
+  /** The banner of the exhausted context window is on the screen. */
+  bannerPresent: boolean;
+  /**
+   * The index of the "New chat" button of the banner among the buttons of the
+   * page, or -1 when there is no banner.
+   */
+  newChatButtonIndex: number;
+  /** The composer of the new chat is visible and can be typed into. */
   composerUsable: boolean;
+  /** The conversation shows the continuation of the exhausted one. */
   summaryMarker: boolean;
+  /** The exhausted conversation is no longer on the screen. */
   oldConversationGone: boolean;
 }
 
@@ -1072,6 +1066,24 @@ export interface ContinuationDomOptions {
   scopeSelector: string;
   /** The selector of the navigation of the app. */
   navigationSelector: string;
+  /** The pattern of the words of the banner of the exhausted window. */
+  bannerPattern: string;
+  /** The pattern of the label of the button of the banner. */
+  newChatLabel: string;
+  /** The longest text a box without a conversation may have to be the banner. */
+  bannerMaxText: number;
+}
+
+/** The options of the check of the continuation. */
+function continuationDomOptions(): ContinuationDomOptions {
+  return {
+    markerPattern: CONTINUATION_MARKER_PATTERN,
+    scopeSelector: CONTINUATION_SCOPE_SELECTOR,
+    navigationSelector: NAVIGATION_SELECTOR,
+    bannerPattern: CONTEXT_FULL_PATTERN,
+    newChatLabel: NEW_CHAT_LABEL_PATTERN,
+    bannerMaxText: BANNER_MAX_TEXT,
+  };
 }
 
 /**
@@ -1081,6 +1093,12 @@ export interface ContinuationDomOptions {
  * else: the navigation holds the titles of the old conversations, and one of
  * them can carry the word "summary".
  *
+ * The banner of the exhausted window is found by its own structure and not by
+ * the words of the page: the summary of a continuation can mention the
+ * exhausted window, and the body of the app then carries the words of the
+ * banner while the banner is long gone. The banner is the box that holds the
+ * words and the "New chat" button and does not hold the conversation.
+ *
  * The document is an argument so that the check can be run against a fake one
  * in the test; in the browser it is the document of the page.
  */
@@ -1088,8 +1106,7 @@ export function readContinuationDomState(
   options: ContinuationDomOptions,
   doc: Document = document,
 ): ContinuationDomState {
-  const bodyText = doc.body?.innerText || '';
-  const banner = /context window full/i.test(bodyText);
+  const banner = findContextFullBanner(options, doc);
 
   const composerUsable = Array.from(
     doc.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
@@ -1126,11 +1143,60 @@ export function readContinuationDomState(
   if (scope) walk(scope);
 
   return {
-    bannerGone: !banner,
+    bannerPresent: banner.present,
+    newChatButtonIndex: banner.buttonIndex,
     composerUsable,
     summaryMarker: new RegExp(options.markerPattern, 'i').test(parts.join(' ')),
     oldConversationGone: !stale,
   };
+}
+
+/**
+ * Find the banner of the exhausted context window.
+ *
+ * The banner is the box that holds the words of the banner and the visible
+ * "New chat" button and does not hold the conversation. The button of the
+ * sidebar is not the banner: it finds the words of the banner only in the
+ * body of the app, and the body holds the conversation.
+ */
+function findContextFullBanner(
+  options: ContinuationDomOptions,
+  doc: Document,
+): { present: boolean; buttonIndex: number } {
+  const conversation = doc.querySelector(options.scopeSelector);
+  const buttons = Array.from(doc.querySelectorAll('button'));
+  const words = new RegExp(options.bannerPattern, 'i');
+  const label = new RegExp(options.newChatLabel, 'i');
+
+  let best: { index: number; depth: number } | null = null;
+  for (let index = 0; index < buttons.length; index++) {
+    const button = buttons[index];
+    const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
+    if (!label.test(text)) continue;
+    const rect = button.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+
+    let depth = 0;
+    let node: HTMLElement | null = button.parentElement;
+    while (node && node !== doc.body && node !== doc.documentElement) {
+      depth++;
+      const box = node.innerText || node.textContent || '';
+      if (words.test(box)) {
+        const holdsConversation = conversation ? node.contains(conversation) : false;
+        const short = box.length <= options.bannerMaxText;
+        // The box of the banner does not hold the conversation, and it is
+        // short: the text around the banner is the whole app, and the words of
+        // the banner are in it as well.
+        if (!holdsConversation && short) {
+          if (!best || depth < best.depth) best = { index, depth };
+          break;
+        }
+      }
+      node = node.parentElement;
+    }
+  }
+
+  return best ? { present: true, buttonIndex: best.index } : { present: false, buttonIndex: -1 };
 }
 
 /**
@@ -1167,7 +1233,13 @@ async function startSummaryChat(page: Page): Promise<boolean> {
   const beforeTurns = await getAssistantTurnCount(page);
   await markExhaustedConversation(page);
 
-  const clicked = await clickContextFullNewChat(page);
+  // The button of the banner is found by the same check that judges the state
+  // of the page: the banner is a box with the words of the banner and the
+  // "New chat" button, and it does not hold the conversation.
+  const before = await page.evaluate(readContinuationDomState, continuationDomOptions());
+  if (before.newChatButtonIndex < 0) return false;
+
+  const clicked = await clickContextFullNewChat(page, before.newChatButtonIndex);
   if (!clicked) return false;
 
   // Wait until the transition has really happened: the banner is gone, the
@@ -1177,17 +1249,16 @@ async function startSummaryChat(page: Page): Promise<boolean> {
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await page.waitForTimeout(500);
-    const dom: ContinuationDomState = await page.evaluate(readContinuationDomState, {
-      markerPattern: CONTINUATION_MARKER_PATTERN,
-      scopeSelector: CONTINUATION_SCOPE_SELECTOR,
-      navigationSelector: NAVIGATION_SELECTOR,
-    });
+    const dom: ContinuationDomState = await page.evaluate(
+      readContinuationDomState,
+      continuationDomOptions(),
+    );
 
     const afterId = conversationIdFromUrl('chatgpt', page.url());
     const afterTurns = await getAssistantTurnCount(page);
 
     const signals: ContinuationSignals = {
-      bannerGone: dom.bannerGone,
+      bannerGone: !dom.bannerPresent,
       composerUsable: dom.composerUsable,
       conversationChanged: conversationIdChanged(beforeId, afterId),
       continuationSignal: conversationReplaced(beforeTurns, afterTurns, dom.summaryMarker),

@@ -50,11 +50,18 @@ function createCapturePage(opts: {
       }
       return defaultLocator;
     }),
-    evaluate: vi.fn(async (fn: unknown, arg?: unknown) => {
-      // The banner of the exhausted context window is read by its own
-      // evaluation.
-      if (typeof fn === 'function' && fn.toString().includes('context window full')) {
-        return opts.contextFull === true;
+    evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+      // The banner of the exhausted context window is read together with the
+      // rest of the state of the page: the options of the check carry the
+      // words of the banner.
+      if (arg && typeof arg === 'object' && 'bannerPattern' in arg) {
+        return {
+          bannerPresent: opts.contextFull === true,
+          newChatButtonIndex: -1,
+          composerUsable: false,
+          summaryMarker: false,
+          oldConversationGone: true,
+        };
       }
       if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
         const snapshot = snapshots[Math.min(snapshotIndex++, snapshots.length - 1)];

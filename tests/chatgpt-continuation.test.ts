@@ -60,23 +60,36 @@ function createSummaryChatPage(options: {
   const state = {
     url: OLD_URL,
     turns: turnsBefore,
-    checks: 0,
     polls: 0,
     switched: false,
+    clicked: false,
     /** The URL of the app at every check of the composer. */
     observedUrls: [] as string[],
   };
 
+  const domState = () => ({
+    // The banner is on the screen until the button of the banner is clicked.
+    bannerPresent: !state.clicked,
+    newChatButtonIndex: 0,
+    composerUsable,
+    summaryMarker,
+    oldConversationGone: !staleConversation,
+  });
+
   const page = {
     url: () => state.url,
     waitForTimeout: vi.fn(async () => {}),
-    evaluate: vi.fn(async () => {
-      state.checks++;
-      // The first call marks the turns of the exhausted conversation, the
-      // second one clicks the "New chat" button of the banner, every other
-      // call reads the state of the page.
-      if (state.checks === 1) return undefined;
-      if (state.checks === 2) return true;
+    // The app is asked for the state of the page with an object of options,
+    // the exhausted conversation is marked with an array of selectors and the
+    // button of the banner is clicked with its index.
+    evaluate: vi.fn(async (_fn: unknown, arg: unknown) => {
+      if (Array.isArray(arg)) return undefined;
+      if (typeof arg === 'number') {
+        state.clicked = true;
+        return true;
+      }
+
+      if (!state.clicked) return domState();
 
       state.polls++;
       if (!state.switched && state.polls > switchAfter) {
@@ -86,12 +99,7 @@ function createSummaryChatPage(options: {
       }
       state.observedUrls.push(state.url);
       // The banner is gone and the composer is back.
-      return {
-        bannerGone: true,
-        composerUsable,
-        summaryMarker,
-        oldConversationGone: !staleConversation,
-      };
+      return domState();
     }),
     locator: () => ({ count: async () => state.turns }),
   };
@@ -270,6 +278,9 @@ const DOM_OPTIONS = {
     'continued from|previous conversation|earlier conversation|summary|контекст|продолж',
   scopeSelector: 'main, #thread, [role="main"]',
   navigationSelector: 'nav, aside, [role="navigation"], [data-testid*="sidebar" i]',
+  bannerPattern: 'context window full',
+  newChatLabel: '^new chat$',
+  bannerMaxText: 400,
 };
 
 describe('the marker in the page of the continuation', () => {
@@ -306,5 +317,172 @@ describe('the marker in the page of the continuation', () => {
 
     const state = readContinuationDomState(DOM_OPTIONS, page);
     expect(state.summaryMarker).toBe(true);
+  });
+});
+
+/** An element of the fake page of the app. */
+interface FakeElement extends FakeNode {
+  nodeType: 1;
+  tag: string;
+  attrs: Record<string, string>;
+  innerText: string;
+  parentElement: FakeElement | null;
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { width: number; height: number };
+  contains(node: unknown): boolean;
+}
+
+/**
+ * Does the element match the selector?
+ *
+ * The selectors of the app are simple: a tag, an id, an attribute with a
+ * value or a part of a value.
+ */
+function matchesSelector(element: FakeElement, selector: string): boolean {
+  return selector.split(',').some((part) => {
+    const rule = part.trim();
+    const tag = /^([a-zA-Z][\w-]*)/.exec(rule)?.[1];
+    if (tag && element.tag !== tag) return false;
+    const id = /#([\w-]+)/.exec(rule);
+    if (id && element.attrs.id !== id[1]) return false;
+    const exact = /\[([\w-]+)="([^"]*)"[^\]]*\]/.exec(rule);
+    if (exact && element.attrs[exact[1]] !== exact[2]) return false;
+    const containsAttr = /\[([\w-]+)\*="([^"]*)"[^\]]*\]/.exec(rule);
+    if (containsAttr) {
+      const value = element.attrs[containsAttr[1]];
+      if (value === undefined || !value.toLowerCase().includes(containsAttr[2].toLowerCase())) {
+        return false;
+      }
+    }
+    if (!tag && !id && !exact && !containsAttr) return false;
+    return true;
+  });
+}
+
+/** An element of the fake page: the parts the check reads. */
+function fakeElement(options: {
+  tag: string;
+  text?: string;
+  attrs?: Record<string, string>;
+  visible?: boolean;
+  children?: FakeElement[];
+}): FakeElement {
+  const children = options.children ?? [];
+  const text = options.text ?? children.map((child) => child.innerText).join(' ');
+  const element: FakeElement = {
+    nodeType: 1,
+    tag: options.tag,
+    attrs: options.attrs ?? {},
+    innerText: text,
+    textContent: text,
+    childNodes: children,
+    parentElement: null,
+    getAttribute: (name: string) => element.attrs[name] ?? null,
+    getBoundingClientRect: () =>
+      options.visible === false ? { width: 0, height: 0 } : { width: 10, height: 10 },
+    contains: (node: unknown) => {
+      if (node === element) return true;
+      return children.some((child) => child.contains(node));
+    },
+    closest: (selector: string) => {
+      let node: FakeElement | null = element;
+      while (node) {
+        if (matchesSelector(node, selector)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    },
+  };
+  for (const child of children) child.parentElement = element;
+  return element;
+}
+
+/** The page of the app around the elements given. */
+function fakeDocument(root: FakeElement): Document {
+  const found = (selector: string): FakeElement[] => {
+    const hits: FakeElement[] = [];
+    const walk = (element: FakeElement): void => {
+      for (const child of element.childNodes) {
+        if ((child as FakeElement).nodeType !== 1) continue;
+        const childElement = child as FakeElement;
+        if (matchesSelector(childElement, selector)) hits.push(childElement);
+        walk(childElement);
+      }
+    };
+    walk(root);
+    return hits;
+  };
+  return {
+    body: root,
+    documentElement: root,
+    querySelector: (selector: string) => found(selector)[0] ?? null,
+    querySelectorAll: (selector: string) => found(selector),
+    elementFromPoint: () => null,
+  } as unknown as Document;
+}
+
+/**
+ * The summary of a continuation: it can quote the words of the banner of the
+ * exhausted context window.
+ */
+const SUMMARY_WITH_BANNER_WORDS =
+  'Summary of the previous conversation — the banner "Context window full" has been answered.';
+
+describe('the banner of the exhausted context window', () => {
+  it('is not seen when only the summary of the continuation carries its words', () => {
+    // The banner is gone, but the summary of the new chat holds the words of
+    // the banner: the continuation must not wait for a banner that is not
+    // there.
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: SUMMARY_WITH_BANNER_WORDS })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, chat] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(false);
+    expect(state.newChatButtonIndex).toBe(-1);
+  });
+
+  it('is seen in the box with its words and the button of the new chat', () => {
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const banner = fakeElement({
+      tag: 'div',
+      text: 'Context window full',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: SUMMARY_WITH_BANNER_WORDS })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, banner, chat] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(true);
+    // The button of the banner, not the one of the sidebar.
+    expect(state.newChatButtonIndex).toBe(1);
+  });
+
+  it('is not seen in a hidden button of the sidebar', () => {
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat', visible: false })],
+    });
+    const banner = fakeElement({
+      tag: 'div',
+      text: 'Context window full',
+      children: [fakeElement({ tag: 'button', text: 'New chat', visible: false })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, banner] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(false);
   });
 });
