@@ -22,6 +22,16 @@ A failed switch is never read as "the daemon is dead": a second daemon would tak
 
 The answer of the barrier is only used when it is complete: `ok: true`, all three counters are finite non-negative numbers, and `drained` is a boolean. A missing counter would look like "no session" and a missing `drained` would look like "idle" — both would allow a daemon with a foreign session to be stopped.
 
+## The bounds of an RPC
+
+Every dispatched browser operation follows one contract (`src/browser/operation-timeout.ts`):
+
+- **The bound of the operation** — the bound the caller asked for (the `timeout` option of Playwright) plus a margin, or the default bound of the service (60 s) when the call names no bound. Every blocking operation is wrapped with it, whatever the method is: a `locator.click` waits no longer than a `page.goto`.
+- **The bound of the RPC** (180 s, or the bound of the operation plus a margin) — the final boundary of the call. It is above the bound of the operation, so the operation reports its own timeout first.
+- **The bound of the client** — the bound of the RPC plus a margin. The client waits longer than the server: the server answers a hung call with an error, and the client has to be able to read that answer. Both sides derive the bounds from the same request, so the client never cuts a long wait of the caller short.
+
+An operation that does not answer in time may still run inside the browser: the session of the operation (the page, or the context without a page) is invalidated — the handle is refused from now on, so a later operation cannot work on a half-changed page. A context or a page that arrives after its bound is closed instead of being registered: nobody learns its id.
+
 ## Ownership and cleanup
 
 - Each caller owns the returned `BrowserSession` and must `await close()` (orchestrators/CLI do this in `finally`).

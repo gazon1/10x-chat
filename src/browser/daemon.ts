@@ -8,7 +8,7 @@ import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } fro
 import { resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
 import { acquireProfileLock } from './lock.js';
-import { CLIENT_TIMEOUT_MS } from './operation-timeout.js';
+import { requestedTimeoutMs, timeoutPlan } from './operation-timeout.js';
 import { isProcessAlive } from './process.js';
 import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
@@ -103,10 +103,14 @@ class BrowserDaemonHttpClient {
   async request(request: RpcRequest): Promise<RpcSuccess> {
     let response: Response;
     try {
-      // The bound of the client is longer than the bound of the server: the
-      // server answers a hung call with an error and invalidates the session,
-      // and the client has to be able to read that answer. The bound is still
-      // there — a daemon that never answers must not hang the run forever.
+      // The bound of the client is derived from the bound of the call: it is
+      // above the bound of the server, so a hung call is answered by the
+      // server with an error and the invalidation of its session — the client
+      // has to be able to read that answer. The bound is still there: a daemon
+      // that never answers must not hang the run forever.
+      const plan = timeoutPlan(
+        requestedTimeoutMs(request.kind, request.method, request.args as unknown[] | undefined),
+      );
       response = await fetch(`http://127.0.0.1:${this.state.port}/rpc`, {
         method: 'POST',
         headers: {
@@ -114,7 +118,7 @@ class BrowserDaemonHttpClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(plan.clientMs),
       });
     } catch (error) {
       throw new Error(`Browser daemon request failed: ${getErrorMessage(error)}`);
@@ -222,9 +226,14 @@ function deserializeHandle(
         handle.url ?? 'about:blank',
       );
     case 'filechooser':
-      return createRemoteFileChooserProxy(client, handle.id);
+      return createRemoteFileChooserProxy(client, handle.id, handle.pageId ?? '');
     case 'download':
-      return createRemoteDownloadProxy(client, handle.id, handle.suggestedFilename ?? '');
+      return createRemoteDownloadProxy(
+        client,
+        handle.id,
+        handle.pageId ?? '',
+        handle.suggestedFilename ?? '',
+      );
   }
 }
 
@@ -423,25 +432,34 @@ function createRemoteLocatorProxy(
   } as unknown as ReturnType<Page['locator']>;
 }
 
+/**
+ * The proxy of a file chooser.
+ *
+ * The page of the event is sent with the call: a timed-out event operation
+ * invalidates the page of the event instead of nothing.
+ */
 function createRemoteFileChooserProxy(
   client: BrowserDaemonHttpClient,
   eventId: string,
+  pageId: string,
 ): FileChooser {
   return {
     setFiles: async (files: string | string[]) => {
       await client.request({
         kind: 'event',
         method: 'setFiles',
-        target: { eventId },
+        target: { eventId, pageId },
         args: [serializeValue(files)],
       });
     },
   } as unknown as FileChooser;
 }
 
+/** The proxy of a download. The page of the event is sent with the call. */
 function createRemoteDownloadProxy(
   client: BrowserDaemonHttpClient,
   eventId: string,
+  pageId: string,
   suggestedFilename: string,
 ): Download {
   return {
@@ -450,7 +468,7 @@ function createRemoteDownloadProxy(
       await client.request({
         kind: 'event',
         method: 'saveAs',
-        target: { eventId },
+        target: { eventId, pageId },
         args: [serializeValue(filePath)],
       });
     },

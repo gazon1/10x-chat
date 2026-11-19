@@ -20,7 +20,10 @@ import {
   InvalidatedHandles,
   invalidateOnTimeout,
   OPERATION_TIMEOUT_MS,
+  operationBoundMs,
   RPC_TIMEOUT_MS,
+  requestedTimeoutMs,
+  timeoutPlan,
   withLateResultCleanup,
   withOperationTimeout,
 } from './operation-timeout.js';
@@ -145,19 +148,29 @@ function toPageHandle(pageId: string, contextId: string, page: Page): RemoteHand
   };
 }
 
-function toFileChooserHandle(eventId: string): RemoteHandle {
+/**
+ * The handle of a file chooser.
+ *
+ * The page is part of the handle: the client sends it back with the event, so
+ * a timed-out event operation invalidates the page of the event and not
+ * nothing.
+ */
+function toFileChooserHandle(eventId: string, pageId: string): RemoteHandle {
   return {
     __handle: true,
     handleType: 'filechooser',
     id: eventId,
+    pageId,
   };
 }
 
-function toDownloadHandle(eventId: string, download: Download): RemoteHandle {
+/** The handle of a download. The page is part of it, like the file chooser. */
+function toDownloadHandle(eventId: string, pageId: string, download: Download): RemoteHandle {
   return {
     __handle: true,
     handleType: 'download',
     id: eventId,
+    pageId,
     suggestedFilename: download.suggestedFilename(),
   };
 }
@@ -262,12 +275,19 @@ export class RpcService {
     try {
       body = (await readJsonBody(req)) as RpcRequest;
       rpcLabel = `${body.kind}.${body.method}`;
-      // The bound is below the deadline of the client's HTTP request: a call
-      // that never answers must fail here, not kill the whole run.
+      // The bound is derived from the bound the caller asked for: a call that
+      // waits for a long answer gets a long wait, and the final boundary of
+      // the RPC stays above the bound of the operation — the operation reports
+      // its own timeout first.
+      const plan = timeoutPlan(
+        requestedTimeoutMs(body.kind, body.method, body.args as unknown[] | undefined),
+        this.operationTimeoutMs,
+        this.rpcTimeoutMs,
+      );
       const response = await withOperationTimeout(
         this.handleRpc(body),
         `rpc ${rpcLabel}`,
-        this.rpcTimeoutMs,
+        plan.rpcMs,
       );
       // One line per call: a hung page operation is only visible in the
       // timings, not in the error of the client that waited for it.
@@ -379,6 +399,35 @@ export class RpcService {
     };
   }
 
+  /**
+   * The bound of one operation.
+   *
+   * The bound the caller asked for wins: a call that waits for a long answer
+   * gets a long wait. The default bound of the service is the bound of an
+   * operation that names no bound of its own.
+   */
+  private operationBound(kind: string, method: string, args: unknown[] | undefined): number {
+    return operationBoundMs(requestedTimeoutMs(kind, method, args), this.operationTimeoutMs);
+  }
+
+  /**
+   * Run a blocking Playwright operation with the bound of the operation.
+   *
+   * Every dispatched operation goes through here: no operation waits longer
+   * than the bound of the operation, whatever the method is. The bound of the
+   * RPC stays above it — it is the final boundary of the call, not the bound
+   * of the operation.
+   */
+  private async run<T>(
+    kind: string,
+    method: string,
+    args: unknown[] | undefined,
+    label: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return withOperationTimeout(operation(), label, this.operationBound(kind, method, args));
+  }
+
   private attachPage(page: Page, contextId: string): string {
     const pageId = randomUUID();
     this.pages.set(pageId, { page, contextId });
@@ -419,7 +468,7 @@ export class RpcService {
           const context = await withLateResultCleanup(
             this.browser.newContext((args[0] as Record<string, unknown>) ?? {}),
             'browser.newContext',
-            this.operationTimeoutMs,
+            this.operationBound('browser', 'newContext', args),
             (late) => withOperationTimeout(late.close(), 'context.close', this.closeTimeoutMs),
           );
           // The context exists now: the initialization must not leave it
@@ -427,10 +476,8 @@ export class RpcService {
           try {
             // CloakBrowser is patched at the binary level; extra JS stealth makes it noisier.
             if (getEngineName() !== 'cloakbrowser') {
-              await withOperationTimeout(
+              await this.run('context', 'addInitScript', args, 'context.addInitScript', () =>
                 context.addInitScript(STEALTH_INIT_SCRIPT),
-                'context.addInitScript',
-                this.operationTimeoutMs,
               );
             }
           } catch (error) {
@@ -456,7 +503,7 @@ export class RpcService {
           const page = await withLateResultCleanup(
             context.newPage(),
             'context.newPage',
-            this.operationTimeoutMs,
+            this.operationBound('context', 'newPage', args),
             (late) => withOperationTimeout(late.close(), 'page.close', this.closeTimeoutMs),
           );
           const pageId = this.attachPage(page, body.target?.contextId ?? '');
@@ -469,7 +516,7 @@ export class RpcService {
 
         if (body.method === 'close') {
           const contextId = body.target?.contextId ?? '';
-          await context.close();
+          await this.run('context', 'close', args, 'context.close', () => context.close());
           this.contexts.delete(contextId);
           for (const [pageId, entry] of this.pages.entries()) {
             if (entry.contextId === contextId) {
@@ -482,12 +529,20 @@ export class RpcService {
 
         if (body.method === 'storageState') {
           const options = (args[0] as Record<string, unknown>) ?? {};
-          const result = await context.storageState(options as never);
+          const result = await this.run(
+            'context',
+            'storageState',
+            args,
+            'context.storageState',
+            () => context.storageState(options as never),
+          );
           return { ok: true, result: serializeValue(result) };
         }
 
         if (body.method === 'cookies') {
-          const result = await context.cookies((args[0] as string[]) ?? []);
+          const result = await this.run('context', 'cookies', args, 'context.cookies', () =>
+            context.cookies((args[0] as string[]) ?? []),
+          );
           return { ok: true, result: serializeValue(result) };
         }
 
@@ -500,30 +555,39 @@ export class RpcService {
 
         switch (body.method) {
           case 'goto':
-            await page.goto(args[0] as string, (args[1] as Record<string, unknown>) ?? {});
+            await this.run('page', 'goto', args, 'page.goto', () =>
+              page.goto(args[0] as string, (args[1] as Record<string, unknown>) ?? {}),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'waitForTimeout':
-            await page.waitForTimeout(Number(args[0] ?? 0));
+            await this.run('page', 'waitForTimeout', args, 'page.waitForTimeout', () =>
+              page.waitForTimeout(Number(args[0] ?? 0)),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'waitForLoadState':
-            await page.waitForLoadState((args[0] as never) ?? 'load');
+            await this.run('page', 'waitForLoadState', args, 'page.waitForLoadState', () =>
+              page.waitForLoadState((args[0] as never) ?? 'load'),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'waitForURL': {
             const matcher = args[0];
             const options = (args[1] as Record<string, unknown>) ?? {};
             if (typeof matcher === 'string' || matcher instanceof RegExp) {
-              await page.waitForURL(matcher, options as never);
+              await this.run('page', 'waitForURL', args, 'page.waitForURL', () =>
+                page.waitForURL(matcher, options as never),
+              );
             } else if (matcher && typeof matcher === 'object') {
               const predicate = matcher as { mode?: string; value?: string };
               if (predicate.mode === 'changes') {
-                await page.waitForURL(
-                  (url) => url.toString() !== predicate.value,
-                  options as never,
+                await this.run('page', 'waitForURL', args, 'page.waitForURL', () =>
+                  page.waitForURL((url) => url.toString() !== predicate.value, options as never),
                 );
               } else if (predicate.mode === 'startsWith') {
-                await page.waitForURL(
-                  (url) => url.pathname.startsWith(predicate.value ?? ''),
-                  options as never,
+                await this.run('page', 'waitForURL', args, 'page.waitForURL', () =>
+                  page.waitForURL(
+                    (url) => url.pathname.startsWith(predicate.value ?? ''),
+                    options as never,
+                  ),
                 );
               } else {
                 throw new Error('Unsupported waitForURL predicate');
@@ -537,22 +601,34 @@ export class RpcService {
             const eventName = String(args[0] ?? '');
             const options = (args[1] as Record<string, unknown>) ?? {};
             if (eventName === 'filechooser') {
-              const fileChooser = await page.waitForEvent('filechooser', options as never);
+              const fileChooser = await this.run(
+                'page',
+                'waitForEvent',
+                args,
+                'page.waitForEvent',
+                () => page.waitForEvent('filechooser', options as never),
+              );
               const eventId = randomUUID();
               this.fileChoosers.set(eventId, fileChooser);
               return {
                 ok: true,
-                result: toFileChooserHandle(eventId),
+                result: toFileChooserHandle(eventId, pageId),
                 pageState: this.buildPageState(pageId),
               };
             }
             if (eventName === 'download') {
-              const download = await page.waitForEvent('download', options as never);
+              const download = await this.run(
+                'page',
+                'waitForEvent',
+                args,
+                'page.waitForEvent',
+                () => page.waitForEvent('download', options as never),
+              );
               const eventId = randomUUID();
               this.downloads.set(eventId, download);
               return {
                 ok: true,
-                result: toDownloadHandle(eventId, download),
+                result: toDownloadHandle(eventId, pageId, download),
                 pageState: this.buildPageState(pageId),
               };
             }
@@ -563,16 +639,12 @@ export class RpcService {
             const arg = args[1];
             let result: unknown;
             if (typeof pageFunction === 'string') {
-              result = await withOperationTimeout(
+              result = await this.run('page', 'evaluate', args, 'page.evaluate', () =>
                 page.evaluate(pageFunction),
-                'page.evaluate',
-                this.operationTimeoutMs,
               );
             } else if (typeof pageFunction === 'function') {
-              result = await withOperationTimeout(
+              result = await this.run('page', 'evaluate', args, 'page.evaluate', () =>
                 page.evaluate(pageFunction as never, arg as never),
-                'page.evaluate',
-                this.operationTimeoutMs,
               );
             } else {
               throw new Error('Unsupported evaluate payload');
@@ -584,10 +656,10 @@ export class RpcService {
             };
           }
           case 'close':
-            await page.close();
+            await this.run('page', 'close', args, 'page.close', () => page.close());
             return { ok: true, result: null, pageState: { pageId, url: 'about:blank' } };
           case 'title': {
-            const result = await page.title();
+            const result = await this.run('page', 'title', args, 'page.title', () => page.title());
             return { ok: true, result, pageState: this.buildPageState(pageId) };
           }
           default:
@@ -600,19 +672,25 @@ export class RpcService {
         const pageId = body.target?.pageId ?? '';
 
         if (body.method === 'press') {
-          await page.keyboard.press(args[0] as string, (args[1] as Record<string, unknown>) ?? {});
+          await this.run('keyboard', 'press', args, 'keyboard.press', () =>
+            page.keyboard.press(args[0] as string, (args[1] as Record<string, unknown>) ?? {}),
+          );
           return { ok: true, result: null, pageState: this.buildPageState(pageId) };
         }
 
         if (body.method === 'type') {
-          await page.keyboard.type(args[0] as string, (args[1] as Record<string, unknown>) ?? {});
+          await this.run('keyboard', 'type', args, 'keyboard.type', () =>
+            page.keyboard.type(args[0] as string, (args[1] as Record<string, unknown>) ?? {}),
+          );
           return { ok: true, result: null, pageState: this.buildPageState(pageId) };
         }
 
         if (body.method === 'insertText') {
           // One input event instead of one keystroke per character: a long
           // prompt took minutes to type.
-          await page.keyboard.insertText(args[0] as string);
+          await this.run('keyboard', 'insertText', args, 'keyboard.insertText', () =>
+            page.keyboard.insertText(args[0] as string),
+          );
           return { ok: true, result: null, pageState: this.buildPageState(pageId) };
         }
 
@@ -626,27 +704,39 @@ export class RpcService {
 
         switch (body.method) {
           case 'waitFor':
-            await locator.waitFor(((args[0] as Record<string, unknown>) ?? {}) as never);
+            await this.run('locator', 'waitFor', args, 'locator.waitFor', () =>
+              locator.waitFor(((args[0] as Record<string, unknown>) ?? {}) as never),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'isVisible': {
-            const result = await locator.isVisible(
-              ((args[0] as Record<string, unknown>) ?? {}) as never,
+            const result = await this.run('locator', 'isVisible', args, 'locator.isVisible', () =>
+              locator.isVisible(((args[0] as Record<string, unknown>) ?? {}) as never),
             );
             return { ok: true, result, pageState: this.buildPageState(pageId) };
           }
           case 'click':
-            await locator.click(((args[0] as Record<string, unknown>) ?? {}) as never);
+            await this.run('locator', 'click', args, 'locator.click', () =>
+              locator.click(((args[0] as Record<string, unknown>) ?? {}) as never),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'fill':
-            await locator.fill(String(args[0] ?? ''));
+            await this.run('locator', 'fill', args, 'locator.fill', () =>
+              locator.fill(String(args[0] ?? '')),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'count': {
-            const result = await locator.count();
+            const result = await this.run('locator', 'count', args, 'locator.count', () =>
+              locator.count(),
+            );
             return { ok: true, result, pageState: this.buildPageState(pageId) };
           }
           case 'textContent': {
-            const result = await locator.textContent(
-              ((args[0] as Record<string, unknown>) ?? {}) as never,
+            const result = await this.run(
+              'locator',
+              'textContent',
+              args,
+              'locator.textContent',
+              () => locator.textContent(((args[0] as Record<string, unknown>) ?? {}) as never),
             );
             return {
               ok: true,
@@ -655,8 +745,8 @@ export class RpcService {
             };
           }
           case 'innerHTML': {
-            const result = await locator.innerHTML(
-              ((args[0] as Record<string, unknown>) ?? {}) as never,
+            const result = await this.run('locator', 'innerHTML', args, 'locator.innerHTML', () =>
+              locator.innerHTML(((args[0] as Record<string, unknown>) ?? {}) as never),
             );
             return {
               ok: true,
@@ -665,7 +755,9 @@ export class RpcService {
             };
           }
           case 'setInputFiles':
-            await locator.setInputFiles((args[0] as string | string[]) ?? []);
+            await this.run('locator', 'setInputFiles', args, 'locator.setInputFiles', () =>
+              locator.setInputFiles((args[0] as string | string[]) ?? []),
+            );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'evaluate': {
             const pageFunction = args[0];
@@ -674,15 +766,11 @@ export class RpcService {
             if (typeof pageFunction === 'function' || typeof pageFunction === 'string') {
               result =
                 arg !== undefined
-                  ? await withOperationTimeout(
+                  ? await this.run('locator', 'evaluate', args, 'locator.evaluate', () =>
                       locator.evaluate(pageFunction as never, arg as never),
-                      'locator.evaluate',
-                      this.operationTimeoutMs,
                     )
-                  : await withOperationTimeout(
+                  : await this.run('locator', 'evaluate', args, 'locator.evaluate', () =>
                       locator.evaluate(pageFunction as never),
-                      'locator.evaluate',
-                      this.operationTimeoutMs,
                     );
             } else {
               throw new Error('Unsupported evaluate payload');
@@ -702,7 +790,9 @@ export class RpcService {
         if (body.method === 'setFiles') {
           const chooser = this.fileChoosers.get(body.target?.eventId ?? '');
           if (!chooser) throw new Error('File chooser not found');
-          await chooser.setFiles((args[0] as string | string[]) ?? []);
+          await this.run('event', 'setFiles', args, 'event.setFiles', () =>
+            chooser.setFiles((args[0] as string | string[]) ?? []),
+          );
           this.fileChoosers.delete(body.target?.eventId ?? '');
           return { ok: true, result: null };
         }
@@ -710,7 +800,9 @@ export class RpcService {
         if (body.method === 'saveAs') {
           const download = this.downloads.get(body.target?.eventId ?? '');
           if (!download) throw new Error('Download not found');
-          await download.saveAs(String(args[0] ?? ''));
+          await this.run('event', 'saveAs', args, 'event.saveAs', () =>
+            download.saveAs(String(args[0] ?? '')),
+          );
           this.downloads.delete(body.target?.eventId ?? '');
           return { ok: true, result: null };
         }

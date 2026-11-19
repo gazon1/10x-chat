@@ -12,20 +12,153 @@ export const OPERATION_TIMEOUT_MS = 60_000;
 export const RPC_TIMEOUT_MS = 180_000;
 
 /**
- * The margin between the bound of the server and the bound of the client.
+ * The margin between the bound of Playwright and the bound of the operation.
+ *
+ * The bound of the caller (the timeout option of Playwright) is the bound of
+ * the operation itself. The margin gives the operation the time to report
+ * its own timeout — a Playwright timeout is a normal answer, the bound of
+ * the operation is the safety net for an operation that does not answer at
+ * all.
+ */
+export const OPERATION_MARGIN_MS = 5_000;
+
+/**
+ * The margin between the bound of the operation and the bound of the RPC.
+ *
+ * The RPC bound is the final boundary of the call: it is above the bound of
+ * the operation, so the operation can report its own timeout first.
+ */
+export const RPC_MARGIN_MS = 15_000;
+
+/**
+ * The margin between the bound of the RPC and the bound of the client.
  *
  * The client must wait longer than the server: the server answers the
  * timeout with an error and invalidates the session — the client has to be
  * able to read that answer. The margin covers the time the server needs for
  * the answer.
  */
-export const CLIENT_TIMEOUT_MARGIN_MS = 60_000;
-
-/** The bound of the client request of an RPC. */
-export const CLIENT_TIMEOUT_MS = RPC_TIMEOUT_MS + CLIENT_TIMEOUT_MARGIN_MS;
+export const CLIENT_BOUND_MARGIN_MS = 60_000;
 
 /** The bound of a close that must not outlive the invalidation. */
 export const CLOSE_TIMEOUT_MS = 5_000;
+
+/**
+ * The bound that the caller asked for, if the call names one.
+ *
+ * Playwright carries the bound of an operation in its options (`timeout`).
+ * The caller knows how long it is willing to wait — a chat that waits for a
+ * long answer asks for a long wait, and the bound of the service must not
+ * be shorter than the wait of the caller.
+ *
+ * The index of the option argument of every method that carries one: the
+ * bound is read from there and from nowhere else, so an argument that
+ * happens to have a `timeout` field (the data of an `evaluate`) is not
+ * mistaken for a bound.
+ */
+const OPTIONS_ARG_INDEX: Record<string, number> = {
+  'page.goto': 1,
+  'page.waitForLoadState': 1,
+  'page.waitForURL': 1,
+  'page.waitForEvent': 1,
+  'locator.waitFor': 0,
+  'locator.isVisible': 0,
+  'locator.click': 0,
+  'locator.textContent': 0,
+  'locator.innerHTML': 0,
+  'keyboard.press': 1,
+  'keyboard.type': 1,
+};
+
+/**
+ * The bound that the caller asked for, if the call names one.
+ *
+ * `waitForTimeout` carries its bound in the sleep itself: the sleep is the
+ * wait the caller ordered.
+ */
+export function requestedTimeoutMs(
+  kind: string,
+  method: string,
+  args: unknown[] | undefined,
+): number | undefined {
+  if (kind === 'page' && method === 'waitForTimeout') {
+    const sleep = args?.[0];
+    return typeof sleep === 'number' && sleep > 0 ? sleep : undefined;
+  }
+
+  const index = OPTIONS_ARG_INDEX[`${kind}.${method}`];
+  if (index === undefined) return undefined;
+
+  const options = args?.[index];
+  if (!options || typeof options !== 'object') return undefined;
+
+  const timeout = (options as { timeout?: unknown }).timeout;
+  return typeof timeout === 'number' && timeout > 0 ? timeout : undefined;
+}
+
+/**
+ * The bound of one operation.
+ *
+ * The bound of the caller wins: an operation that waits longer than the
+ * default bound of the service gets that time. The margin gives the
+ * operation the time to report its own timeout — a Playwright timeout is a
+ * normal answer, the bound of the operation is the safety net for an
+ * operation that does not answer at all.
+ */
+export function operationBoundMs(requestedMs: number | undefined, defaultMs: number): number {
+  return requestedMs === undefined ? defaultMs : requestedMs + OPERATION_MARGIN_MS;
+}
+
+/**
+ * The final boundary of a whole call.
+ *
+ * It is above the bound of the operation — the operation reports its own
+ * timeout first — and never below the default bound of the RPC.
+ */
+export function rpcBoundMs(operationMs: number, floorMs: number = RPC_TIMEOUT_MS): number {
+  return Math.max(floorMs, operationMs + RPC_MARGIN_MS);
+}
+
+/**
+ * The bound of the client request of an RPC.
+ *
+ * The client waits for the answer of the server: the boundary of the client
+ * is above the boundary of the server.
+ */
+export function clientBoundMs(operationMs: number, floorMs: number = RPC_TIMEOUT_MS): number {
+  return rpcBoundMs(operationMs, floorMs) + CLIENT_BOUND_MARGIN_MS;
+}
+
+/** The bounds of one call: the operation, the RPC and the client. */
+export interface TimeoutPlan {
+  /** The bound of the operation itself. */
+  operationMs: number;
+  /** The final boundary of the RPC. */
+  rpcMs: number;
+  /** The bound of the client that waits for the answer. */
+  clientMs: number;
+}
+
+/**
+ * The bounds of one call, derived from the bound the caller asked for.
+ *
+ * The three bounds are one hierarchy: the operation reports its own timeout
+ * first, the RPC is the final boundary of the call, and the client waits
+ * longer than the server — the server answers a hung call with an error, and
+ * the client has to be able to read that answer.
+ *
+ * The client and the server derive the plan from the same request, so the
+ * bound of the client is always above the bound of the server.
+ */
+export function timeoutPlan(
+  requestedMs: number | undefined,
+  operationDefaultMs: number = OPERATION_TIMEOUT_MS,
+  rpcFloorMs: number = RPC_TIMEOUT_MS,
+): TimeoutPlan {
+  const operationMs = operationBoundMs(requestedMs, operationDefaultMs);
+  const rpcMs = rpcBoundMs(operationMs, rpcFloorMs);
+  return { operationMs, rpcMs, clientMs: rpcMs + CLIENT_BOUND_MARGIN_MS };
+}
 
 /** An operation that did not answer within its bound. */
 export class OperationTimeoutError extends Error {

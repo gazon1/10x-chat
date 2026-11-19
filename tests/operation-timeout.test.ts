@@ -1,20 +1,62 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  CLIENT_TIMEOUT_MS,
   InvalidatedHandles,
   invalidatedHandle,
   invalidateOnTimeout,
+  OPERATION_TIMEOUT_MS,
   OperationTimeoutError,
   RPC_TIMEOUT_MS,
+  requestedTimeoutMs,
+  timeoutPlan,
   withLateResultCleanup,
   withOperationTimeout,
 } from '../src/browser/operation-timeout.js';
 
-describe('the bound of the client', () => {
-  it('is longer than the bound of the server', () => {
+describe('the bounds of a call', () => {
+  it('are one hierarchy: the operation, the RPC, the client', () => {
+    const plan = timeoutPlan(undefined);
+    expect(plan.operationMs).toBe(OPERATION_TIMEOUT_MS);
+    expect(plan.rpcMs).toBeGreaterThan(plan.operationMs);
+    expect(plan.clientMs).toBeGreaterThan(plan.rpcMs);
+  });
+
+  it('give the client the time to read the answer of the server', () => {
     // The server answers a hung call with an error and invalidates the
     // session: the client has to wait long enough to read that answer.
-    expect(CLIENT_TIMEOUT_MS).toBeGreaterThan(RPC_TIMEOUT_MS);
+    expect(timeoutPlan(undefined).clientMs).toBeGreaterThan(RPC_TIMEOUT_MS);
+  });
+
+  it('give a long wait of the caller to the operation', () => {
+    // A call that asks for two minutes must not be cut by the default bound.
+    const plan = timeoutPlan(120_000);
+    expect(plan.operationMs).toBeGreaterThan(120_000);
+    expect(plan.rpcMs).toBeGreaterThan(plan.operationMs);
+    expect(plan.clientMs).toBeGreaterThan(plan.rpcMs);
+  });
+
+  it('keep the RPC bound above the default bound of the RPC', () => {
+    expect(timeoutPlan(undefined).rpcMs).toBe(RPC_TIMEOUT_MS);
+  });
+});
+
+describe('requestedTimeoutMs', () => {
+  it('reads the bound of the caller from the options of the call', () => {
+    expect(requestedTimeoutMs('page', 'goto', ['https://example.test', { timeout: 30_000 }])).toBe(
+      30_000,
+    );
+    expect(requestedTimeoutMs('locator', 'waitFor', [{ timeout: 90_000 }])).toBe(90_000);
+    expect(requestedTimeoutMs('keyboard', 'press', ['Enter', { timeout: 5_000 }])).toBe(5_000);
+  });
+
+  it('reads the bound of a sleep from the sleep itself', () => {
+    expect(requestedTimeoutMs('page', 'waitForTimeout', [1_500])).toBe(1_500);
+  });
+
+  it('ignores an argument that has no bound', () => {
+    expect(requestedTimeoutMs('page', 'evaluate', [{ timeout: 30_000 }])).toBeUndefined();
+    expect(requestedTimeoutMs('page', 'goto', ['https://example.test'])).toBeUndefined();
+    expect(requestedTimeoutMs('locator', 'count', [])).toBeUndefined();
+    expect(requestedTimeoutMs('page', 'goto', undefined)).toBeUndefined();
   });
 });
 
