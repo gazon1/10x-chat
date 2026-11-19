@@ -984,6 +984,15 @@ describe('the parsing of the answers', () => {
     expect(findingId(first)).toBe(findingId({ ...first }));
   });
 
+  it('gives a different id to two findings whose title carries no word', () => {
+    // A title of stopwords alone normalizes to nothing: two such findings of
+    // one place must not share one id, or one verdict settles both of them.
+    const first = { ...FINDING, title: 'the' };
+    const second = { ...FINDING, title: 'is not' };
+
+    expect(findingId(first)).not.toBe(findingId(second));
+  });
+
   it('does not take the example of the schema for the payload', () => {
     // The reviewer repeats the format of the answer before the answer itself.
     const answer = [

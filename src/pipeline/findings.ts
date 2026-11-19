@@ -338,9 +338,14 @@ function evidenceOf(value: unknown): string[] {
  *
  * The id is a hash of the location and of the normalized title: the same
  * defect keeps it between the runs and between the reviewers.
+ *
+ * A title of stopwords alone carries no word: it normalizes to nothing, and
+ * two such findings of one place would share one id. The raw title keeps them
+ * apart.
  */
 export function findingId(finding: { file?: string; line?: number; title: string }): string {
-  const key = `${finding.file ?? ''}:${finding.line ?? ''}:${normalizeTitle(finding.title)}`;
+  const title = normalizeTitle(finding.title) || finding.title.trim().toLowerCase();
+  const key = `${finding.file ?? ''}:${finding.line ?? ''}:${title}`;
   return `f-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
 }
 
