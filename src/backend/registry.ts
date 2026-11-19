@@ -1,3 +1,4 @@
+import { createChatgptUseBackend } from './chatgpt-use.js';
 import type { AiBackend } from './contract.js';
 import { createFakeBackend } from './fake.js';
 
@@ -39,6 +40,7 @@ export function listBackends(): string[] {
 export function resetBackends(): void {
   backends.clear();
   registerBackend(createFakeBackend());
+  registerBackend(createChatgptUseBackend());
 }
 
 /**
@@ -46,3 +48,4 @@ export function resetBackends(): void {
  * tests and the proof that the contract works without a browser.
  */
 registerBackend(createFakeBackend());
+registerBackend(createChatgptUseBackend());

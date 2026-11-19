@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { getBackend, listBackends } from '../backend/index.js';
 import { buildBundle } from '../core/bundle.js';
 import {
   type ChatAllResult,
@@ -13,6 +14,16 @@ import { isValidProvider } from '../providers/index.js';
 import type { ProviderName, TransportName } from '../types.js';
 
 const DIVIDER = chalk.dim('─'.repeat(60));
+
+/**
+ * The provider a backend belongs to.
+ *
+ * The session of a run is labeled with it: the backend `chatgpt-use` drives
+ * ChatGPT, so the session must not claim another provider.
+ */
+const BACKEND_PROVIDER: Record<string, ProviderName> = {
+  'chatgpt-use': 'chatgpt',
+};
 
 export function createChatCommand(): Command {
   const cmd = new Command('chat')
@@ -37,6 +48,10 @@ export function createChatCommand(): Command {
     .option(
       '--transport <name>',
       'Transport to use: browser (default) or api (requires --provider)',
+    )
+    .option(
+      '--backend <name>',
+      'Backend to use instead of the browser: chatgpt-use (the chatgpt-use CLI)',
     )
     .option(
       '--new-chat',
@@ -67,6 +82,47 @@ export function createChatCommand(): Command {
         );
         process.exit(1);
       }
+      // ── The backend ─────────────────────────────────────────────
+      // A backend is not a provider and not a transport: the options that
+      // ask for one of them are refused, not ignored.
+      const backendName = options.backend as string | undefined;
+      if (backendName) {
+        const available = listBackends();
+        if (!available.includes(backendName)) {
+          console.error(
+            chalk.red(`Unknown backend: ${backendName}. Available: ${available.join(', ')}`),
+          );
+          process.exit(1);
+        }
+        if (options.all) {
+          console.error(chalk.red('Cannot use --all and --backend together. Pick one.'));
+          process.exit(1);
+        }
+        if (transport) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend and --transport together: a backend is not a transport.',
+            ),
+          );
+          process.exit(1);
+        }
+        if (options.newChat === true) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend and --new-chat together: a backend does not manage conversations.',
+            ),
+          );
+          process.exit(1);
+        }
+        if (options.headed || options.headless || options.profile || options.isolatedProfile) {
+          console.error(
+            chalk.red(
+              'The browser flags (--headed, --headless, --profile, --isolated-profile) do not apply to a backend.',
+            ),
+          );
+          process.exit(1);
+        }
+      }
       if (options.all && transport === 'api') {
         console.error(
           chalk.red(
@@ -79,6 +135,19 @@ export function createChatCommand(): Command {
         console.error(chalk.red('The --transport api option requires --provider <name>.'));
         process.exit(1);
       }
+
+      // The backend drives a provider of its own: the session of the run is
+      // labeled with it.
+      const backendProvider = backendName ? BACKEND_PROVIDER[backendName] : undefined;
+      if (backendProvider && provider && provider !== backendProvider) {
+        console.error(
+          chalk.red(
+            `The backend '${backendName}' drives ${backendProvider} — it cannot use the provider '${provider}'.`,
+          ),
+        );
+        process.exit(1);
+      }
+      const chatProvider = (provider ?? backendProvider) as ProviderName | undefined;
 
       const timeoutMs = (() => {
         if (options.timeout === undefined) return undefined;
@@ -141,10 +210,14 @@ export function createChatCommand(): Command {
 
       // ── Single provider ────────────────────────────────────────
       try {
-        const result = await runChat({
-          ...commonOpts,
-          provider: provider as ProviderName | undefined,
-        });
+        const result = await runChat(
+          {
+            ...commonOpts,
+            provider: chatProvider,
+          },
+          // A backend run never touches a browser.
+          backendName ? { backend: getBackend(backendName) } : {},
+        );
 
         renderChatResult(result);
       } catch (error) {

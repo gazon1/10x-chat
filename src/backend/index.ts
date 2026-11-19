@@ -1,4 +1,13 @@
 export {
+  CHATGPT_USE_BACKEND_NAME,
+  CHATGPT_USE_CAPABILITIES,
+  type ChatgptUseBackendOptions,
+  createChatgptUseBackend,
+  nodeProcessRunner,
+  type ProcessResult,
+  type ProcessRunner,
+} from './chatgpt-use.js';
+export {
   type AiBackend,
   type BackendCapabilities,
   BackendError,

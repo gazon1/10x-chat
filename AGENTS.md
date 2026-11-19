@@ -13,6 +13,7 @@
 | `src/core/api-orchestrator.ts` | The same chat through the HTTP API of a provider (`runApiChat`) |
 | `src/backend/contract.ts` | The provider-independent backend contract (`AiBackend`: `ask`/`status`/`resume`/`cancel`) |
 | `src/backend/fake.ts` | The deterministic backend of the tests (`createFakeBackend`) |
+| `src/backend/chatgpt-use.ts` | The ChatGPT backend, driven by the `chatgpt-use` CLI (see [docs/chatgpt-use-backend.md](docs/chatgpt-use-backend.md)) |
 | `src/backend/registry.ts` | Backend name → backend mapping, the injection point of the contract |
 | `src/transport/http.ts` | The shared HTTP client of the API transports (honors the effective proxy) |
 | `src/providers/api/` | The API transports of the providers (`registry.ts` maps a provider to its transport) |
@@ -114,6 +115,8 @@ Provider actions implement:
 - **Conversation reuse**: `runChat` opens the conversation stored for the current git repo + branch + provider (`~/.10x-chat/conversations.json`), or a new chat when the provider no longer serves it. The repository is identified by its origin URL, so worktrees and clones of one repo share the chat; without a remote the git common dir is used. `--new-chat` forces a new conversation. Every provider baselines its existing turns in `submitPrompt` so the capture does not return the previous answer
 - **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro. ChatGPT's current UI has no picker; `selectModel` probes briefly and keeps the current model
 - **The transport**: `--transport browser|api` (the browser is the default). The API transport (`src/core/api-orchestrator.ts`) sends the prompt to the HTTP API of the provider with the key of `providerKeys.<provider>` — no browser, no login check, no profile. A capability the transport does not have (attachments, streaming, cancellation) is **rejected**, never ignored. The key never reaches an error message (`redactSecretValues`) — see `docs/transports.md`
+- **The `--backend` option**: `chat --backend <name>` runs a chat through a backend of the registry (`src/backend/registry.ts`) instead of a browser — `chatgpt-use` is the one of today. A backend is not a provider and not a transport: `--all`, `--transport`, `--new-chat` and the browser flags are refused with it
+- **The ChatGPT backend**: `src/backend/chatgpt-use.ts` drives the `chatgpt-use` CLI instead of a browser: the CLI owns the window of ChatGPT, its JSON envelope is validated, and the receipt of the CLI (`--request-id`) is the record of a request — an unknown submission state is never a retry. The busy policy: the asks of one process run one after the other, another process is refused by the CLI (`--busy fail`) and becomes a `busy` failure. See [docs/chatgpt-use-backend.md](docs/chatgpt-use-backend.md)
 - **The backend contract**: `src/backend/contract.ts` is the provider-independent seam — `ask`, `status`, `resume`, `cancel` over typed requests, responses and failures, without a page, a selector or a session. A failure is never an empty answer: the submission state (`not_submitted`/`submitted`/`unknown`) and the failure kind (`busy`/`unavailable`/`timeout`/`invalid_output`/`cancelled`/`unknown_submission`) say what happened. An empty answer is not a success either — it is `invalid_output`. `runChat(options, { backend })` runs a chat through it instead of a browser; the providers are **not** migrated yet — the capabilities of every provider are in `docs/capability-matrix.md`
 
 ## Pre-Commit Checklist
@@ -133,6 +136,7 @@ The end-to-end scenarios of the CLI flows run in CI as well:
 ```bash
 bun run test:e2e                           # CLI flows; the live provider scenarios are opt-in
 TEN_X_CHAT_E2E_PROVIDERS=1 bun run test:e2e   # live provider scenarios (needs a logged-in profile)
+TEN_X_CHAT_E2E_CHATGPT_USE=1 bun run test:e2e   # live scenario of the ChatGPT backend of chatgpt-use
 ```
 
 If biome reports fixable issues:

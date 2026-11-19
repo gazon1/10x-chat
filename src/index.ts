@@ -10,10 +10,13 @@ export {
   type BackendStatus,
   type BackendSubmission,
   backendFailureKind,
+  type ChatgptUseBackendOptions,
+  createChatgptUseBackend,
   createFakeBackend,
   type FakeBackendRule,
   getBackend,
   listBackends,
+  type ProcessRunner,
   registerBackend,
   resetBackends,
 } from './backend/index.js';
