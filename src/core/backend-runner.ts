@@ -10,6 +10,7 @@ import {
   type BackendRequest,
   type BackendResponse,
   type BackendSubmission,
+  SUBMISSIONS_OF_FAILURE,
 } from '../backend/contract.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
@@ -280,17 +281,26 @@ function validFailure(failure: unknown): BackendFailure {
   const kind = FAILURE_KINDS.includes(value.kind as BackendFailureKind)
     ? (value.kind as BackendFailureKind)
     : 'invalid_output';
-  return {
-    kind,
-    message:
-      typeof value.message === 'string' && value.message !== ''
-        ? value.message
-        : 'The backend failed without a message.',
-    submission: submissionOf(value.submission),
-    ...(typeof value.partialText === 'string' && value.partialText !== ''
+  const message =
+    typeof value.message === 'string' && value.message !== ''
+      ? value.message
+      : 'The backend failed without a message.';
+  const partialText =
+    typeof value.partialText === 'string' && value.partialText !== ''
       ? { partialText: value.partialText }
-      : {}),
-  };
+      : {};
+  const submission = submissionOf(value.submission);
+  if (!SUBMISSIONS_OF_FAILURE[kind].includes(submission)) {
+    // The failure contradicts itself: neither the kind nor the state can be
+    // trusted, so the request is treated like one that may have run.
+    return {
+      kind: 'invalid_output',
+      message: `The backend failed with the kind '${kind}' and the state '${submission}', which contradict each other. ${message}`,
+      submission: 'unknown',
+      ...partialText,
+    };
+  }
+  return { kind, message, submission, ...partialText };
 }
 
 /** The kinds of a failure the contract defines. */

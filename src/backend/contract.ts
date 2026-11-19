@@ -53,12 +53,37 @@ export type BackendFailureKind =
   | 'cancelled'
   | 'unknown_submission';
 
+/**
+ * The submission states each failure kind allows.
+ *
+ * A failure that claims another state contradicts itself — the application
+ * cannot use it. The first state of a kind is the one a backend reports.
+ */
+export const SUBMISSIONS_OF_FAILURE: Record<BackendFailureKind, readonly BackendSubmission[]> = {
+  busy: ['not_submitted'],
+  unavailable: ['not_submitted'],
+  timeout: ['submitted'],
+  cancelled: ['submitted'],
+  // An unusable answer may have reached the model or not — it reports the
+  // state the backend claimed.
+  invalid_output: ['submitted', 'not_submitted', 'unknown'],
+  unknown_submission: ['unknown'],
+};
+
 /** A failed request — never an empty successful answer. */
 export interface BackendFailure {
   kind: BackendFailureKind;
   /** The message for the user. */
   message: string;
-  /** Whether the request reached the model. */
+  /**
+   * Whether the request reached the model.
+   *
+   * The state follows the kind: `busy` and `unavailable` never sent the
+   * request (`not_submitted`), `timeout` and `cancelled` did (`submitted`),
+   * and `unknown_submission` does not know (`unknown`). An `invalid_output`
+   * reports what the backend claimed. A failure that contradicts itself
+   * cannot be used.
+   */
   submission: BackendSubmission;
   /** The output the backend produced before it failed. */
   partialText?: string;

@@ -9,6 +9,7 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
+import { SUBMISSIONS_OF_FAILURE } from './contract.js';
 
 /**
  * The outcome of a rule: what it answers with, or how it fails.
@@ -48,22 +49,6 @@ export interface FakeBackendRule {
    */
   resume?: FakeBackendOutcome;
 }
-
-/**
- * The submission state of a failure.
- *
- * A backend that is busy or not there never sent the request; a backend that
- * failed while generating did send it; a backend that does not know must not
- * claim that the work did not run.
- */
-const SUBMISSION_OF_FAILURE: Record<BackendFailureKind, BackendSubmission> = {
-  busy: 'not_submitted',
-  unavailable: 'not_submitted',
-  timeout: 'submitted',
-  invalid_output: 'submitted',
-  cancelled: 'submitted',
-  unknown_submission: 'unknown',
-};
 
 /** What the fake backend supports. */
 export const FAKE_BACKEND_CAPABILITIES: BackendCapabilities = Object.freeze({
@@ -122,7 +107,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     return {
       kind,
       message: `The fake backend failed with '${kind}'.`,
-      submission: SUBMISSION_OF_FAILURE[kind],
+      submission: SUBMISSIONS_OF_FAILURE[kind][0],
       ...(rule?.partial ? { partialText: rule.partial } : {}),
     };
   };
@@ -136,7 +121,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     // A backend that is busy or not there never sent the request: the state of
     // the request says so from the start, not only after the failure.
     const submission: BackendSubmission =
-      rule?.failure && SUBMISSION_OF_FAILURE[rule.failure] === 'not_submitted'
+      rule?.failure && SUBMISSIONS_OF_FAILURE[rule.failure][0] === 'not_submitted'
         ? 'not_submitted'
         : 'submitted';
     // The request runs now: a cancel that arrives before the answer ends it.

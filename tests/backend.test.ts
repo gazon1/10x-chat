@@ -366,6 +366,26 @@ describe('Chat through the backend contract', () => {
     expect(sessions[0].status).toBe('failed');
   });
 
+  it('fails the run when the failure contradicts itself', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({
+          ok: false,
+          failure: { kind: 'busy', message: 'Busy', submission: 'submitted' },
+        }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+    if (error instanceof BackendError) {
+      expect(error.failure.submission).toBe('unknown');
+    }
+  });
+
   it('fails the run when the backend answers without an outcome', async () => {
     const base = createFakeBackend();
     const backend: AiBackend = {
