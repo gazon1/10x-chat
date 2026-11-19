@@ -100,6 +100,9 @@ export async function runBackendChat(
   console.log(chalk.dim(`Session: ${session.id}`));
   console.log(chalk.blue(`Backend: ${backend.name}`));
 
+  // The output a streaming backend produces is kept: an answer that arrives
+  // before the backend breaks belongs to the session.
+  let streamed = '';
   const request: BackendRequest = {
     requestId: session.id,
     prompt: bundle,
@@ -112,6 +115,7 @@ export async function runBackendChat(
     // A streaming backend writes its answer while it is generated — the
     // same convention the browser providers use.
     onChunk: (chunk: string) => {
+      streamed += chunk;
       process.stdout.write(chalk.dim(chunk));
     },
   };
@@ -121,6 +125,16 @@ export async function runBackendChat(
   try {
     outcome = await backend.ask(request);
   } catch (error) {
+    // The output that arrived before the crash is saved — the same handling
+    // as the partial output of a failure.
+    if (streamed) {
+      try {
+        await saveResponse(session.id, streamed);
+      } catch {
+        // The output cannot be stored — the failure of the run is reported
+        // anyway.
+      }
+    }
     // A backend that throws is a backend that failed: the session must not
     // stay 'running' forever.
     await updateSession(session.id, { status: 'failed', durationMs: Date.now() - startTime });

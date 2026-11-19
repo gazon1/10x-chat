@@ -428,6 +428,24 @@ describe('Chat through the backend contract', () => {
     expect(sessions[0].status).toBe('failed');
   });
 
+  it('saves the output a streaming backend produced before it broke', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        request.onChunk?.('half of it');
+        throw new Error('the connection is gone');
+      },
+    };
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend })).rejects.toThrow(
+      'the connection is gone',
+    );
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
+    const session = await getSession(sessions[0].id);
+    await expect(readFile(session.responsePath as string, 'utf8')).resolves.toBe('half of it');
+  });
+
   it('fails the session when the bundle cannot be stored', async () => {
     vi.mocked(saveBundle).mockImplementationOnce(async () => {
       throw new Error('the disk is full');
