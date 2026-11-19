@@ -104,6 +104,14 @@ export interface ReviewContext {
   headSha: string;
   /** The files the change touches. */
   changedFiles: string[];
+  /**
+   * The files of the revision under review — the paths, relative to the root.
+   *
+   * A file that is not in this list is not a file of the change: the
+   * verification must not read it, so that a local file that is not committed
+   * (a secret, a key) never leaves the machine.
+   */
+  trackedFiles: string[];
   /** The diff of the change, bounded. */
   diff: string;
   /** Whether the diff was cut — the bound of the bundle. */

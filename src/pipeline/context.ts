@@ -73,11 +73,11 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   ).catch(() => '');
   // The short name of a remote branch carries the prefix of the remote:
   // `origin/main`, not `main`. The prefix is stripped before the names are
-  // counted, and `HEAD` is not a branch.
+  // counted, and `HEAD` is not a branch. A branch name may contain a slash.
   const candidates = branches
     .split('\n')
     .map((branch) => branch.trim().replace(/^origin\//, ''))
-    .filter((branch) => branch !== '' && branch !== 'HEAD' && !branch.includes('/'));
+    .filter((branch) => branch !== '' && branch !== 'HEAD');
   if (candidates.length === 1) return candidates[0];
   throw new Error(
     'Cannot resolve the default branch of origin — name the base explicitly (--base <ref>).',
@@ -219,6 +219,10 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     .map((file) => file.trim())
     .filter((file) => file !== '');
 
+  // The files of the revision: the verification reads them, and a file that is
+  // not committed must not be read at all.
+  const tracked = await trackedFiles(repoRoot, headSha);
+
   const diffOutput = await git(['diff', range], cwd);
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
@@ -236,6 +240,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     headRef,
     headSha,
     changedFiles,
+    trackedFiles: tracked,
     diff,
     diffTruncated,
   };
@@ -291,6 +296,30 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
 }
 
 /**
+ * The files of a revision — the paths, relative to the root of the repository.
+ *
+ * The list comes from the commit, not from the disk: a file that is not
+ * committed (a secret, a key, a local scratch file) is not a file of the
+ * revision and must not be read for a review.
+ */
+export async function trackedFiles(repoRoot: string, headSha: string): Promise<string[]> {
+  const listed = await git(['ls-tree', '-r', '--name-only', headSha], repoRoot);
+  return listed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+/**
+ * The path of a file as the repository names it — relative to the root, with
+ * the `/` of the tree of Git.
+ */
+export function normalizeRepoPath(file: string): string {
+  const normalized = path.posix.normalize(file.replace(/\\/g, '/'));
+  return normalized.startsWith('./') ? normalized.slice(2) : normalized;
+}
+
+/**
  * The path of a file of the repository — outside the root is refused.
  *
  * The real path decides, not the lexical one: a symlink inside the checkout
@@ -300,11 +329,21 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
 export async function resolveInRepo(repoRoot: string, file: string): Promise<string | undefined> {
   const resolved = path.resolve(repoRoot, file);
   const relative = path.relative(repoRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  if (escapesRoot(relative)) return undefined;
   const realRoot = await realpath(repoRoot).catch(() => repoRoot);
   const realFile = await realpath(resolved).catch(() => undefined);
   if (!realFile) return undefined;
   const realRelative = path.relative(realRoot, realFile);
-  if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) return undefined;
+  if (escapesRoot(realRelative)) return undefined;
   return realFile;
+}
+
+/**
+ * Whether a relative path leaves the root of the repository.
+ *
+ * A name that starts with two dots is not a way out: `..config.ts` is a file of
+ * the repository. Only a real step to the parent leaves it.
+ */
+function escapesRoot(relative: string): boolean {
+  return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }

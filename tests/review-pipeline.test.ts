@@ -55,6 +55,7 @@ function contextOf(overrides: Partial<ReviewContext> = {}): ReviewContext {
     headRef: 'feature',
     headSha: 'b'.repeat(40),
     changedFiles: ['src/app.ts'],
+    trackedFiles: ['src/app.ts'],
     diff: '--- a/src/app.ts\n+++ b/src/app.ts\n+export function run() {}',
     diffTruncated: false,
     ...overrides,
@@ -273,7 +274,48 @@ describe('the review pipeline', () => {
     });
 
     expect(run.findings[0].verification).toBe('rejected');
-    expect(run.findings[0].verificationNote).toContain('not in the checkout');
+    expect(run.findings[0].verificationNote).toContain('not in the revision under review');
+  });
+
+  it('does not read a file that is not part of the revision under review', async () => {
+    // A local file that was never committed — a secret — must not reach the
+    // backend, not even as the evidence of a finding.
+    await writeFile(path.join(repo, '.env'), 'SECRET_TOKEN=abc123\n', 'utf-8');
+    const ghost = { ...FINDING, file: '.env', line: 1 };
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([ghost]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: ghost.file, line: ghost.line, title: ghost.title }),
+              verdict: 'confirmed',
+              evidence: 'the file shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf({ trackedFiles: ['src/app.ts'] }),
+    });
+
+    const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+    expect(verification).not.toContain('SECRET_TOKEN');
+    expect(run.findings[0].verification).toBe('rejected');
   });
 
   it('keeps the evidence of a finding that the verification rejects', async () => {
@@ -960,6 +1002,13 @@ describe('the context of a review', () => {
     expect(await resolveInRepo(repo, '../secret.txt')).toBeUndefined();
   });
 
+  it('resolves a file whose name starts with two dots', async () => {
+    await writeFile(path.join(repo, '..config.ts'), 'export const a = 1;\n', 'utf-8');
+
+    expect(await resolveInRepo(repo, '..config.ts')).toBe(path.join(repo, '..config.ts'));
+    expect(await resolveInRepo(repo, '../secret.txt')).toBeUndefined();
+  });
+
   it('reads the metadata of a pull request', () => {
     const metadata = parsePullRequestMetadata({
       url: 'https://github.com/owner/name/pull/42',
@@ -1129,6 +1178,26 @@ describe('the context of a review', () => {
       const context = await collectReviewContext({ cwd });
 
       expect(context.baseRef).toBe('main');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(origin, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a default branch whose name contains a slash', async () => {
+    const origin = await createGitRepo();
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-clone-'));
+    try {
+      // A branch name may contain a slash: `release/2026` is one branch.
+      await gitIn(origin, 'checkout', '-b', 'release/2026');
+      await gitIn(cwd, 'clone', origin, '.');
+      await gitIn(cwd, 'remote', 'set-head', 'origin', '--delete');
+      await gitIn(cwd, 'branch', '-r', '-d', 'origin/main');
+      await gitIn(cwd, 'branch', '-r', '-d', 'origin/feature');
+
+      const context = await collectReviewContext({ cwd });
+
+      expect(context.baseRef).toBe('release/2026');
     } finally {
       await rm(cwd, { recursive: true, force: true });
       await rm(origin, { recursive: true, force: true });

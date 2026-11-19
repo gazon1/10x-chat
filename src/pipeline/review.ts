@@ -9,6 +9,7 @@ import {
   collectReviewContext,
   contextFiles,
   conventionFiles,
+  normalizeRepoPath,
   resolveInRepo,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
@@ -147,8 +148,14 @@ function step(
 async function excerptOf(
   repoRoot: string,
   finding: Finding,
+  tracked: Set<string>,
 ): Promise<{ text: string; exists: boolean; lineInRange: boolean }> {
   if (!finding.file) return { text: '', exists: false, lineInRange: false };
+  // Only a file of the revision under review is read: a local file that was
+  // never committed (a secret, a key) must not reach the backend.
+  if (!tracked.has(normalizeRepoPath(finding.file))) {
+    return { text: '', exists: false, lineInRange: false };
+  }
   const resolved = await resolveInRepo(repoRoot, finding.file);
   if (!resolved) return { text: '', exists: false, lineInRange: false };
   let content: string;
@@ -201,8 +208,9 @@ async function callersOf(repoRoot: string, file: string): Promise<string[]> {
 async function verificationMaterial(
   repoRoot: string,
   finding: Finding,
+  tracked: Set<string>,
 ): Promise<{ material: string; exists: boolean; lineInRange: boolean }> {
-  const excerpt = await excerptOf(repoRoot, finding);
+  const excerpt = await excerptOf(repoRoot, finding, tracked);
   const callers = finding.file ? await callersOf(repoRoot, finding.file) : [];
   const material = [
     `## ${finding.id} — ${finding.title}`,
@@ -237,15 +245,17 @@ async function verifyCandidates(options: {
   runId: string;
   candidates: Finding[];
   repoRoot: string;
+  /** The files of the revision under review — only they are read. */
+  tracked: Set<string>;
   model?: string;
   timeoutMs?: number;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
-  const { backend, runId, candidates, repoRoot } = options;
+  const { backend, runId, candidates, repoRoot, tracked } = options;
   const startedAt = Date.now();
   const material: string[] = [];
   const mechanical = new Map<string, { exists: boolean; lineInRange: boolean }>();
   for (const finding of candidates) {
-    const prepared = await verificationMaterial(repoRoot, finding);
+    const prepared = await verificationMaterial(repoRoot, finding, tracked);
     mechanical.set(finding.id, { exists: prepared.exists, lineInRange: prepared.lineInRange });
     material.push(prepared.material);
   }
@@ -302,7 +312,7 @@ async function verifyCandidates(options: {
         verification: 'rejected' as const,
         verificationNote: state.exists
           ? 'the line is outside the file'
-          : 'the file is not in the checkout',
+          : 'the file is not in the revision under review',
       };
     }
     if (!verdict) return { ...finding, verification: 'unverified' as const };
@@ -519,6 +529,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       runId,
       candidates: unique,
       repoRoot: context?.repoRoot ?? '',
+      tracked: new Set(context?.trackedFiles ?? []),
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });

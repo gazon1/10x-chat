@@ -54,6 +54,11 @@ finding that points at a file or a line that is not in the checkout is
 nobody is not a verification that passed: the step is `failed` and the findings
 stay `unverified`.
 
+Only the files of the revision under review are read for the evidence of a
+finding: they come from the commit, not from the disk of the checkout. A local
+file that was never committed — a secret, a key — never reaches the backend,
+and a finding that names it is `rejected`.
+
 An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came
 back truncated is `failed`, and the run is incomplete.
