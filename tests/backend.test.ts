@@ -17,11 +17,15 @@ import {
   resetBackends,
 } from '../src/backend/index.js';
 import { runChat } from '../src/core/orchestrator.js';
-import { getSession, listSessions, saveResponse } from '../src/session/index.js';
+import { getSession, listSessions, saveBundle, saveResponse } from '../src/session/index.js';
 
 vi.mock('../src/session/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/session/index.js')>();
-  return { ...actual, saveResponse: vi.fn(actual.saveResponse) };
+  return {
+    ...actual,
+    saveBundle: vi.fn(actual.saveBundle),
+    saveResponse: vi.fn(actual.saveResponse),
+  };
 });
 
 describe('Backend contract', () => {
@@ -420,6 +424,18 @@ describe('Chat through the backend contract', () => {
     );
     expect(error).toBeInstanceOf(BackendError);
     expect(backendFailureKind(error)).toBe('busy');
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
+  });
+
+  it('fails the session when the bundle cannot be stored', async () => {
+    vi.mocked(saveBundle).mockImplementationOnce(async () => {
+      throw new Error('the disk is full');
+    });
+    const backend = createFakeBackend([{ prompt: 'hello', answer: 'Hi there' }]);
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend })).rejects.toThrow(
+      'the disk is full',
+    );
     const sessions = await listSessions();
     expect(sessions[0].status).toBe('failed');
   });

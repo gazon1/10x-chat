@@ -76,7 +76,13 @@ export async function runBackendChat(
   // The backend answers the run — the session records it, so the history
   // does not claim that a provider answered.
   const session = await createSession(provider, options.prompt, model, backend.name);
-  await saveBundle(session.id, bundle);
+  try {
+    await saveBundle(session.id, bundle);
+  } catch (error) {
+    // The run never started — the session must not stay 'pending'.
+    await updateSession(session.id, { status: 'failed' });
+    throw error;
+  }
 
   // The images of the answer are saved by the backend itself: the downloader
   // of the browser path needs a page with the cookies. The directory is the
