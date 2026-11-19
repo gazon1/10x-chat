@@ -967,14 +967,21 @@ async function clickContextFullNewChat(page: Page): Promise<boolean> {
  * so the work goes on instead of dying at the context limit.
  */
 async function startSummaryChat(page: Page): Promise<boolean> {
+  // The identity of the chat before the click: the continuation must land in
+  // a different conversation. The banner disappears before the app has
+  // rendered the new chat, so the banner alone proves nothing.
+  const beforeId = conversationIdFromUrl('chatgpt', page.url());
+  const beforeTurns = await getAssistantTurnCount(page);
+
   const clicked = await clickContextFullNewChat(page);
   if (!clicked) return false;
 
-  // Wait until the banner is gone and the composer of the new chat is back.
+  // Wait until the banner is gone, the composer of the new chat is back and
+  // the app has really switched to the new conversation.
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await page.waitForTimeout(500);
-    ready = await page.evaluate(() => {
+    const visible = await page.evaluate(() => {
       const banner = /context window full/i.test(document.body?.innerText || '');
       const composer = Array.from(
         document.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
@@ -984,7 +991,20 @@ async function startSummaryChat(page: Page): Promise<boolean> {
       });
       return !banner && composer;
     });
-    if (ready) break;
+    if (!visible) continue;
+
+    const afterId = conversationIdFromUrl('chatgpt', page.url());
+    const afterTurns = await getAssistantTurnCount(page);
+    // The new chat is a different conversation: it has its own id. The
+    // landing page (`/`) has none — it can still show the old conversation,
+    // so there the number of the assistant turns decides.
+    const switched =
+      (afterId !== undefined && afterId !== beforeId) ||
+      (afterId === undefined && afterTurns !== beforeTurns);
+    if (!switched) continue;
+
+    ready = true;
+    break;
   }
 
   // The transition did not happen: the caller must not treat the exhausted

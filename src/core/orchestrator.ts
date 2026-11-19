@@ -196,6 +196,25 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
   };
 
   /**
+   * How many times this run has continued the conversation in a new chat.
+   *
+   * The counter belongs to the whole run: every path that continues the chat
+   * counts, so the limit cannot be bypassed by a different path.
+   */
+  let continuations = 0;
+
+  /**
+   * The error of a run that continued the conversation too often.
+   *
+   * The same error on every path: the limit of the continuations is a
+   * property of the run, not of the path that hit it.
+   */
+  const continuationLimitError = (): ProviderGenerationError =>
+    new ProviderGenerationError(
+      `The context window of the chat is full and the chat was already continued in a new one ${MAX_CONTINUATIONS} time(s).`,
+    );
+
+  /**
    * Continue the conversation in a new chat with an automatic summary.
    *
    * The new chat replaces the stored one: it is the working chat of this
@@ -205,6 +224,11 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
    */
   const continueInNewChat = async (): Promise<boolean> => {
     if (!provider.actions.continueInNewChat) return false;
+    // The limit is the same on every path: a chat that runs out again and
+    // again does not fit into any context window.
+    if (continuations >= MAX_CONTINUATIONS) {
+      throw continuationLimitError();
+    }
     console.log(
       chalk.dim(
         'The context window of the chat is full — continuing in a new chat with a summary.',
@@ -212,6 +236,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     );
     const started = await provider.actions.continueInNewChat(browser.page).catch(() => false);
     if (!started) return false;
+    continuations++;
 
     usingStoredConversation = false;
     storedConversation = undefined;
@@ -368,11 +393,14 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     const hasAttachments = Boolean(options.attach && options.attach.length > 0);
     const askWithRetry = async () => {
       let retried = false;
-      let continuations = 0;
+      // The context window ran out while the answer was generated: the next
+      // iteration continues the conversation in a new chat and asks again.
+      let pendingContinuation = false;
       for (;;) {
         // The context window can run out during the run: continue in a new
         // chat with a summary and ask there.
-        if (await contextWindowFull()) {
+        if (pendingContinuation || (await contextWindowFull())) {
+          pendingContinuation = false;
           const continued = await continueInNewChat();
           // The exhausted chat cannot answer: the run fails with a clear
           // reason instead of a timeout without an answer.
@@ -381,7 +409,6 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
               'The context window of the chat is full and the chat could not be continued in a new one.',
             );
           }
-          continuations++;
           await sessionCheck();
           if (modelName && provider.actions.selectModel) {
             await provider.actions.selectModel(browser.page, modelName);
@@ -396,9 +423,9 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
           // next iteration continues the conversation in a new chat and asks
           // again. The files of the request are attached to the new chat.
           if (error instanceof ContextWindowFullError) {
-            if (continuations >= MAX_CONTINUATIONS) throw error;
-            continuations++;
+            if (continuations >= MAX_CONTINUATIONS) throw continuationLimitError();
             console.log(chalk.dim('The context window ran out — continuing in a new chat.'));
+            pendingContinuation = true;
             continue;
           }
           if (retried || hasAttachments || !(error instanceof ProviderGenerationError)) throw error;

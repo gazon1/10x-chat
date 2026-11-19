@@ -170,6 +170,39 @@ describe('the continuation of an exhausted chat', () => {
     expect(attachFiles).toHaveBeenCalledTimes(2);
   });
 
+  it('stops the run after too many continuations', async () => {
+    // Every path that continues the chat counts: the limit belongs to the
+    // run, not to the path that hit it. A chat that runs out again and again
+    // does not fit into any context window.
+    const continueInNewChat = vi.fn(async () => true);
+    fake.page = {
+      url: () => 'https://chatgpt.com/c/abc',
+      evaluate: async () => '',
+      title: async () => '',
+      locator: () => ({ first: () => ({ isVisible: async () => false }) }),
+    } as never;
+    fake.provider = {
+      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      actions: {
+        isLoggedIn: async () => true,
+        contextWindowFull: async () => true,
+        continueInNewChat,
+        submitPrompt: async () => {},
+        captureResponse: async () => {
+          // The context runs out again while the answer is generated.
+          throw new ContextWindowFullError();
+        },
+      } as unknown as ProviderActions,
+    };
+
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow(
+      /already continued in a new one 3 time/,
+    );
+
+    // The chat was continued exactly as often as the limit allows.
+    expect(continueInNewChat).toHaveBeenCalledTimes(3);
+  });
+
   it('aborts the continuation when the files cannot be attached again', async () => {
     // The prompt must not be sent without the files of the request: the
     // answer would look successful and be wrong.
