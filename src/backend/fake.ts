@@ -66,14 +66,14 @@ const SUBMISSION_OF_FAILURE: Record<BackendFailureKind, BackendSubmission> = {
 };
 
 /** What the fake backend supports. */
-export const FAKE_BACKEND_CAPABILITIES: BackendCapabilities = {
+export const FAKE_BACKEND_CAPABILITIES: BackendCapabilities = Object.freeze({
   attachments: true,
   streaming: false,
   cancellation: true,
   conversationReuse: true,
   modelSelection: true,
   imageOutput: false,
-};
+});
 
 /** The state of a request the fake backend knows. */
 interface KnownRequest {

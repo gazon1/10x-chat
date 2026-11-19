@@ -403,6 +403,16 @@ describe('Chat through the backend contract', () => {
     ).rejects.toThrow('does not support attachments');
   });
 
+  it('keeps the capabilities of the fake backends immutable', () => {
+    const backend = createFakeBackend();
+    const other = createFakeBackend();
+    expect(Object.isFrozen(backend.capabilities)).toBe(true);
+    expect(() => {
+      (backend.capabilities as { attachments: boolean }).attachments = false;
+    }).toThrow();
+    expect(other.capabilities.attachments).toBe(true);
+  });
+
   it('fails the run when the backend answers with an empty response', async () => {
     const backend = createFakeBackend([{ prompt: 'hello', answer: '   ' }]);
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(

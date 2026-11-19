@@ -141,17 +141,17 @@ export type BackendOutcome<T> = { ok: true; value: T } | { ok: false; failure: B
 /** What a backend can do. */
 export interface BackendCapabilities {
   /** Files can be attached to the request. */
-  attachments: boolean;
+  readonly attachments: boolean;
   /** The answer arrives in pieces while it is generated — through `onChunk`. */
-  streaming: boolean;
+  readonly streaming: boolean;
   /** A running request can be cancelled. */
-  cancellation: boolean;
+  readonly cancellation: boolean;
   /** A request can continue an existing conversation. */
-  conversationReuse: boolean;
+  readonly conversationReuse: boolean;
   /** The caller can choose the model. */
-  modelSelection: boolean;
+  readonly modelSelection: boolean;
   /** The answer can contain images. */
-  imageOutput: boolean;
+  readonly imageOutput: boolean;
 }
 
 /**
