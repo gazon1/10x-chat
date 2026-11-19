@@ -459,14 +459,37 @@ export class RpcService {
           );
         }
 
+        // The creation is registered before the call starts and released
+        // when the browser settles it — not when the bound of the operation
+        // expires. A creation that outlasts its bound is still running inside
+        // the browser, and a switch must not take the browser away from it.
+        const creation = this.browser.newContext((args[0] as Record<string, unknown>) ?? {});
         this.switchGate.start();
+        // The gate is released when the creation has settled *and* this call
+        // is done: until then the context is neither registered nor idle.
+        let creationSettled = false;
+        let callDone = false;
+        const release = (): void => {
+          if (!creationSettled || !callDone) return;
+          this.switchGate.finish();
+        };
+        void creation.then(
+          () => {
+            creationSettled = true;
+            release();
+          },
+          () => {
+            creationSettled = true;
+            release();
+          },
+        );
         try {
           // The creation of a context can outlast the bound of the operation.
           // The client never learns the id of such a context, so nobody can
           // close it: a context that arrives late is closed instead of being
           // registered.
           const context = await withLateResultCleanup(
-            this.browser.newContext((args[0] as Record<string, unknown>) ?? {}),
+            creation,
             'browser.newContext',
             this.operationBound('browser', 'newContext', args),
             (late) => withOperationTimeout(late.close(), 'context.close', this.closeTimeoutMs),
@@ -490,7 +513,8 @@ export class RpcService {
           this.contexts.set(contextId, context);
           return { ok: true, result: toContextHandle(contextId) };
         } finally {
-          this.switchGate.finish();
+          callDone = true;
+          release();
         }
       }
 

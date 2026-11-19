@@ -22,6 +22,8 @@ A failed switch is never read as "the daemon is dead": a second daemon would tak
 
 The answer of the barrier is only used when it is complete: `ok: true`, all three counters are finite non-negative numbers, and `drained` is a boolean. A missing counter would look like "no session" and a missing `drained` would look like "idle" — both would allow a daemon with a foreign session to be stopped.
 
+A session creation stays registered until the browser settles it — not until the bound of the operation expires. A creation that outlasts its bound is still running inside the browser: a daemon that counted it as finished would look idle while the browser is busy, and the switch would take the browser away from that session. The counter is released when the creation has settled *and* the call that started it is done, so a context that is neither registered nor idle never counts as idle.
+
 ## The bounds of an RPC
 
 Every dispatched browser operation follows one contract (`src/browser/operation-timeout.ts`):

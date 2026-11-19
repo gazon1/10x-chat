@@ -10,6 +10,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RpcService } from '../src/browser/rpc-service.js';
+import { SwitchGate } from '../src/browser/switch-gate.js';
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -631,4 +632,66 @@ describe('the timeout contract of every dispatched method', () => {
       }
     });
   }
+});
+
+describe('the switch gate of the daemon', () => {
+  const servers: { close: () => Promise<void> }[] = [];
+
+  afterEach(async () => {
+    while (servers.length > 0) {
+      await servers.pop()?.close();
+    }
+  });
+
+  it('keeps a creation that outlasted its bound registered', async () => {
+    const world = createFakeWorld();
+    const switchGate = new SwitchGate();
+    const service = new RpcService({
+      browser: world.browser as never,
+      switchGate,
+      operationTimeoutMs: 100,
+      rpcTimeoutMs: 10_000,
+      closeTimeoutMs: 100,
+    });
+    const server = await startService(service);
+    servers.push(server);
+
+    // The creation hangs: it outlasts the bound of the operation.
+    world.hang('browser.newContext');
+    const hung = await rpc(server.url, { kind: 'browser', method: 'newContext' });
+    expect(hung.status).toBe(500);
+    expect(hung.body.error).toMatch(/browser\.newContext did not answer within 100ms/);
+
+    // The creation is still running inside the browser: the daemon must not
+    // look idle, and a switch must be refused.
+    expect(switchGate.pendingCreations).toBe(1);
+    expect(await switchGate.waitForIdle(50)).toBe(false);
+
+    // The creation settles: now the gate is idle.
+    world.settle();
+    await vi.waitFor(() => expect(switchGate.pendingCreations).toBe(0));
+    expect(await switchGate.waitForIdle(50)).toBe(true);
+  });
+
+  it('releases the gate once a finished creation is registered', async () => {
+    const world = createFakeWorld();
+    const switchGate = new SwitchGate();
+    const service = new RpcService({
+      browser: world.browser as never,
+      switchGate,
+      operationTimeoutMs: 1_000,
+      rpcTimeoutMs: 10_000,
+      closeTimeoutMs: 100,
+    });
+    const server = await startService(service);
+    servers.push(server);
+
+    const created = await rpc(server.url, { kind: 'browser', method: 'newContext' });
+    expect(created.status).toBe(200);
+
+    // The context is registered and the gate is idle again.
+    expect(service.health().activeContexts).toBe(1);
+    await vi.waitFor(() => expect(switchGate.pendingCreations).toBe(0));
+    expect(await switchGate.waitForIdle(50)).toBe(true);
+  });
 });
