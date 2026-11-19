@@ -59,6 +59,7 @@ function contextOf(overrides: Partial<ReviewContext> = {}): ReviewContext {
     headSha: 'b'.repeat(40),
     changedFiles: ['src/app.ts'],
     trackedFiles: ['src/app.ts'],
+    deletedFiles: [],
     diff: '--- a/src/app.ts\n+++ b/src/app.ts\n+export function run() {}',
     diffTruncated: false,
     ...overrides,
@@ -278,6 +279,96 @@ describe('the review pipeline', () => {
 
     expect(run.findings[0].verification).toBe('rejected');
     expect(run.findings[0].verificationNote).toContain('not in the revision under review');
+  });
+
+  it('verifies a finding against a file the change deleted', async () => {
+    // A deletion is a change: a finding against the file that is gone must be
+    // judged on the code it removed, not rejected because the file is missing.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-deleted-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'gone.ts'), 'export const gone = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', 'src/gone.ts');
+      await gitIn(cwd, 'commit', '-m', 'delete');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.deletedFiles).toContain('src/gone.ts');
+
+      const finding = { ...FINDING, file: 'src/gone.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+        {
+          prompt: '# Verification',
+          answer: JSON.stringify({
+            verdicts: [
+              {
+                id: findingId({ file: finding.file, line: finding.line, title: finding.title }),
+                verdict: 'confirmed',
+                evidence: 'the change removed the file the callers needed',
+              },
+            ],
+          }),
+        },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+      expect(verification).toContain('export const gone = 1;');
+      expect(run.findings[0].verification).toBe('confirmed');
+      expect(run.verdict).toBe('REQUEST CHANGES');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a confirmed grave finding as a remaining risk', async () => {
+    // A confirmed MAJOR is settled, but it is still open: the summary of the
+    // risks must not lose it.
+    const grave = { ...FINDING, severity: 'MAJOR' };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([grave]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: grave.file, line: grave.line, title: grave.title }),
+              verdict: 'confirmed',
+              evidence: 'the code shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const risks = run.report.split('## Remaining risks')[1] ?? '';
+    expect(risks).toContain(grave.title);
   });
 
   it('does not read a file that is not part of the revision under review', async () => {

@@ -242,6 +242,10 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   // not committed must not be read at all.
   const tracked = await trackedFiles(repoRoot, headSha);
 
+  // The files the change removes: they are gone from the head, but a finding
+  // against them is a finding about the deletion, not about a missing file.
+  const removed = await deletedFiles(repoRoot, baseSha, headSha);
+
   const diffOutput = await git(['diff', range], cwd);
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
@@ -260,6 +264,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     headSha,
     changedFiles,
     trackedFiles: tracked,
+    deletedFiles: removed,
     diff,
     diffTruncated,
   };
@@ -323,6 +328,40 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
  */
 export async function trackedFiles(repoRoot: string, headSha: string): Promise<string[]> {
   return gitNames(['ls-tree', '-r', '--name-only', '-z', headSha], repoRoot);
+}
+
+/**
+ * The files the change removes — the paths, relative to the root.
+ *
+ * A file that the change deletes is a file of the base revision: a finding
+ * against it must be verified against the content it had before the deletion,
+ * not rejected because it is gone from the head.
+ */
+export async function deletedFiles(
+  repoRoot: string,
+  baseSha: string,
+  headSha: string,
+): Promise<string[]> {
+  return gitNames(
+    ['diff', '--name-only', '-z', '--diff-filter=D', `${baseSha}...${headSha}`],
+    repoRoot,
+  );
+}
+
+/**
+ * The content of a file in a revision — `undefined` when it is not in it.
+ *
+ * The content comes from the commit, not from the disk: a deleted file is not
+ * in the checkout any more, and the checkout is not the revision either.
+ */
+export async function fileAtRevision(
+  repoRoot: string,
+  sha: string,
+  file: string,
+): Promise<string | undefined> {
+  const result = await run('git', ['show', `${sha}:${file}`], repoRoot);
+  if (result.code !== 0) return undefined;
+  return result.stdout;
 }
 
 /**

@@ -112,6 +112,14 @@ export interface ReviewContext {
    * (a secret, a key) never leaves the machine.
    */
   trackedFiles: string[];
+  /**
+   * The files the change removes — the paths, relative to the root.
+   *
+   * A file of this list is not in the head any more, but it is a file of the
+   * change: a finding against it is verified against its content in the base
+   * revision, not rejected because the file is gone.
+   */
+  deletedFiles: string[];
   /** The diff of the change, bounded. */
   diff: string;
   /** Whether the diff was cut — the bound of the bundle. */

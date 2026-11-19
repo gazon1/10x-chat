@@ -166,6 +166,10 @@ revision under review:
 - A file of a finding must be inside the repository by its **real** path: a
   symlink that points out of the checkout is refused, so nothing outside the
   repository can reach the prompt of the backend.
+- A file the change **deletes** is verified against its content in the base
+  revision, not rejected because it is gone from the head: a deletion is a
+  change, and a regression that comes with it must be seen. A path that is in
+  neither the head nor the base is still rejected.
 
 ## The verdict of the report
 

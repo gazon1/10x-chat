@@ -231,9 +231,9 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   lines.push('');
 
   lines.push('## Remaining risks');
-  const risks = run.findings.filter(
-    (finding) => finding.verification === 'unverified' || finding.severity === 'BLOCKING',
-  );
+  // Every finding that is still standing is a risk: a confirmed MAJOR is
+  // open even though it is settled, and a rejected one is no risk at all.
+  const risks = run.findings.filter((finding) => finding.verification !== 'rejected');
   if (risks.length === 0) {
     lines.push('- None — every finding was settled and none of them blocks the change.');
   } else {

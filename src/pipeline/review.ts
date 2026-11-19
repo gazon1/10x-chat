@@ -9,7 +9,9 @@ import {
   collectReviewContext,
   contextFiles,
   conventionFiles,
+  fileAtRevision,
   MAX_DIFF_CHARS,
+  normalizeRepoPath,
   resolveTrackedFile,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
@@ -148,28 +150,65 @@ function step(
   };
 }
 
+/** The lines of a file around a line — the lines with their numbers. */
+function sliceWithNumbers(lines: string[], line: number | undefined): string {
+  if (line === undefined || line < 1 || line > lines.length) {
+    return lines
+      .slice(0, 40)
+      .map((contentLine, index) => `${index + 1}: ${contentLine}`)
+      .join('\n');
+  }
+  const from = Math.max(0, line - 16);
+  const to = Math.min(lines.length, line + 15);
+  return lines
+    .slice(from, to)
+    .map((contentLine, index) => `${from + index + 1}: ${contentLine}`)
+    .join('\n');
+}
+
 /** The excerpt of a file around a line — the lines with their numbers. */
 async function excerptOf(
   repoRoot: string,
   finding: Finding,
   tracked: Set<string>,
-): Promise<{ text: string; exists: boolean; lineInRange: boolean }> {
-  if (!finding.file) return { text: '', exists: false, lineInRange: false };
+  deleted: Set<string>,
+  baseSha: string,
+): Promise<{ text: string; exists: boolean; lineInRange: boolean; deleted: boolean }> {
+  if (!finding.file) return { text: '', exists: false, lineInRange: false, deleted: false };
   // Only a file of the revision under review is read: a local file that was
   // never committed (a secret, a key) must not reach the backend.
   const resolved = await resolveTrackedFile(repoRoot, finding.file, tracked);
-  if (!resolved) return { text: '', exists: false, lineInRange: false };
+  if (!resolved) {
+    // The file is not in the head — it may be a file the change removed. Its
+    // content is read from the base revision: a deletion is a change, and a
+    // finding about it must be judged on the code it removed, not on the
+    // absence of the file.
+    const name = normalizeRepoPath(finding.file);
+    if (!deleted.has(name)) {
+      return { text: '', exists: false, lineInRange: false, deleted: false };
+    }
+    const content = await fileAtRevision(repoRoot, baseSha, name);
+    if (content === undefined) {
+      return { text: '', exists: false, lineInRange: false, deleted: true };
+    }
+    return {
+      text: sliceWithNumbers(content.split('\n'), finding.line),
+      exists: true,
+      lineInRange: true,
+      deleted: true,
+    };
+  }
   let content: string;
   try {
     content = await readFile(resolved, 'utf-8');
   } catch {
-    return { text: '', exists: false, lineInRange: false };
+    return { text: '', exists: false, lineInRange: false, deleted: false };
   }
   const lines = content.split('\n');
   const line = finding.line;
   const lineInRange = line === undefined || (line >= 1 && line <= lines.length);
   if (line === undefined) {
-    return { text: lines.slice(0, 40).join('\n'), exists: true, lineInRange: true };
+    return { text: lines.slice(0, 40).join('\n'), exists: true, lineInRange: true, deleted: false };
   }
   const from = Math.max(0, line - 16);
   const to = Math.min(lines.length, line + 15);
@@ -177,16 +216,19 @@ async function excerptOf(
     .slice(from, to)
     .map((contentLine, index) => `${from + index + 1}: ${contentLine}`)
     .join('\n');
-  return { text, exists: true, lineInRange };
+  return { text, exists: true, lineInRange, deleted: false };
 }
 
 /** The files that mention a file — the callers of a change. */
-async function callersOf(repoRoot: string, file: string): Promise<string[]> {
+async function callersOf(repoRoot: string, file: string, revision?: string): Promise<string[]> {
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     execFile(
       'git',
-      ['grep', '-l', '-F', '--', file],
+      // A deleted file is grepped in the revision it belongs to: the head does
+      // not have it any more, and the callers that matter are the ones of the
+      // code that was removed.
+      revision ? ['grep', '-l', '-F', file, revision] : ['grep', '-l', '-F', '--', file],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {
@@ -197,7 +239,9 @@ async function callersOf(repoRoot: string, file: string): Promise<string[]> {
           stdout
             .split('\n')
             .map((line) => line.trim())
-            .filter((line) => line !== '' && line !== file)
+            .filter((line) => line !== '')
+            .map((line) => (revision ? line.replace(`${revision}:`, '') : line))
+            .filter((line) => line !== '')
             .slice(0, 20),
         );
       },
@@ -210,9 +254,13 @@ async function verificationMaterial(
   repoRoot: string,
   finding: Finding,
   tracked: Set<string>,
+  deleted: Set<string>,
+  baseSha: string,
 ): Promise<{ material: string; exists: boolean; lineInRange: boolean }> {
-  const excerpt = await excerptOf(repoRoot, finding, tracked);
-  const callers = finding.file ? await callersOf(repoRoot, finding.file) : [];
+  const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, baseSha);
+  const callers = finding.file
+    ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : undefined)
+    : [];
   const material = [
     `## ${finding.id} — ${finding.title}`,
     `Severity: ${finding.severity} | Category: ${finding.category}`,
@@ -224,6 +272,9 @@ async function verificationMaterial(
     '```',
     excerpt.text || '(the file could not be read)',
     '```',
+    excerpt.deleted
+      ? `The change deletes this file: the excerpt is its content in the base revision (${baseSha.slice(0, 7)}).`
+      : '',
     callers.length > 0
       ? `Files that mention it: ${callers.join(', ')}`
       : 'No other file mentions it.',
@@ -248,15 +299,19 @@ async function verifyCandidates(options: {
   repoRoot: string;
   /** The files of the revision under review — only they are read. */
   tracked: Set<string>;
+  /** The files the change removes — they are read from the base revision. */
+  deleted: Set<string>;
+  /** The commit of the base revision — the source of a deleted file. */
+  baseSha: string;
   model?: string;
   timeoutMs?: number;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
-  const { backend, runId, candidates, repoRoot, tracked } = options;
+  const { backend, runId, candidates, repoRoot, tracked, deleted, baseSha } = options;
   const startedAt = Date.now();
   const material: string[] = [];
   const mechanical = new Map<string, { exists: boolean; lineInRange: boolean }>();
   for (const finding of candidates) {
-    const prepared = await verificationMaterial(repoRoot, finding, tracked);
+    const prepared = await verificationMaterial(repoRoot, finding, tracked, deleted, baseSha);
     mechanical.set(finding.id, { exists: prepared.exists, lineInRange: prepared.lineInRange });
     material.push(prepared.material);
   }
@@ -571,6 +626,8 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       candidates: unique,
       repoRoot: context?.repoRoot ?? '',
       tracked: new Set(context?.trackedFiles ?? []),
+      deleted: new Set(context?.deletedFiles ?? []),
+      baseSha: context?.baseSha ?? '',
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
