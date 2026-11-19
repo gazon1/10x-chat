@@ -456,6 +456,25 @@ describe('Chat through the backend contract', () => {
     await expect(stat(saveDir)).resolves.toBeDefined();
   });
 
+  it('keeps the partial answer of a failed request in the session', async () => {
+    const requests: BackendRequest[] = [];
+    const base = createFakeBackend([{ prompt: 'boom', failure: 'timeout', partial: 'half of it' }]);
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        requests.push(request);
+        return base.ask(request);
+      },
+    };
+    const error = await runChat({ prompt: 'boom', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    const session = await getSession(requests[0].requestId);
+    expect(session.responsePath).toBeDefined();
+    await expect(readFile(session.responsePath as string, 'utf8')).resolves.toBe('half of it');
+  });
+
   it('fails the run when the backend answers with a malformed response', async () => {
     const base = createFakeBackend();
     const backend: AiBackend = {

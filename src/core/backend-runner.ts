@@ -113,6 +113,11 @@ export async function runBackendChat(
   const durationMs = Date.now() - startTime;
 
   if (!outcome.ok) {
+    // The answer that arrived before the failure belongs to the session —
+    // otherwise the partial output of a timeout is lost.
+    if (outcome.failure.partialText) {
+      await saveResponse(session.id, outcome.failure.partialText);
+    }
     await updateSession(session.id, {
       status: outcome.failure.kind === 'timeout' ? 'timeout' : 'failed',
       durationMs,
