@@ -196,6 +196,13 @@ export interface AiBackend {
   readonly name: string;
   /** What the backend supports. */
   readonly capabilities: BackendCapabilities;
+  /**
+   * The backend is a test double: its answers are canned.
+   *
+   * A command that a user drives must not offer such a backend — an answer
+   * that is canned must never look like the answer of a provider.
+   */
+  readonly testDouble?: boolean;
   /** Send a request and wait for the answer. */
   ask(request: BackendRequest): Promise<BackendOutcome<BackendResponse>>;
   /** The state of a request. */

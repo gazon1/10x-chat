@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
 import { buildBundle } from '../core/bundle.js';
 import {
   type ChatAllResult,
@@ -39,6 +40,10 @@ export function createChatCommand(): Command {
       'Transport to use: browser (default) or api (requires --provider)',
     )
     .option(
+      '--backend <name>',
+      'Backend to use instead of the browser: chatgpt-use (the chatgpt-use CLI)',
+    )
+    .option(
       '--new-chat',
       'Start a new conversation instead of reusing the one stored for this repo/branch',
     )
@@ -67,6 +72,59 @@ export function createChatCommand(): Command {
         );
         process.exit(1);
       }
+      // ── The backend ─────────────────────────────────────────────
+      // A backend is not a provider and not a transport: the options that
+      // ask for one of them are refused, not ignored.
+      const backendName = options.backend as string | undefined;
+      if (backendName) {
+        // A test double answers with canned text: it is never offered to a
+        // user, even when it is registered.
+        const available = listBackends().filter((name) => !getBackend(name).testDouble);
+        if (!available.includes(backendName)) {
+          console.error(
+            chalk.red(`Unknown backend: ${backendName}. Available: ${available.join(', ')}`),
+          );
+          process.exit(1);
+        }
+        if (options.all) {
+          console.error(chalk.red('Cannot use --all and --backend together. Pick one.'));
+          process.exit(1);
+        }
+        if (transport) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend and --transport together: a backend is not a transport.',
+            ),
+          );
+          process.exit(1);
+        }
+        if (options.newChat === true) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend and --new-chat together: a backend does not manage conversations.',
+            ),
+          );
+          process.exit(1);
+        }
+        if (options.headed || options.headless || options.profile || options.isolatedProfile) {
+          console.error(
+            chalk.red(
+              'The browser flags (--headed, --headless, --profile, --isolated-profile) do not apply to a backend.',
+            ),
+          );
+          process.exit(1);
+        }
+        // The bundle is the same for every backend: a backend that the run
+        // never asks is a lie about what the run does.
+        if (options.dryRun || options.copy) {
+          console.error(
+            chalk.red(
+              'Cannot use --backend with --dry-run or --copy: the backend does not change the bundle.',
+            ),
+          );
+          process.exit(1);
+        }
+      }
       if (options.all && transport === 'api') {
         console.error(
           chalk.red(
@@ -79,6 +137,32 @@ export function createChatCommand(): Command {
         console.error(chalk.red('The --transport api option requires --provider <name>.'));
         process.exit(1);
       }
+
+      // The backend drives a provider of its own: the session of the run is
+      // labeled with it. A backend that names no provider cannot be run —
+      // the session must not claim the default provider instead.
+      const backendProvider = backendName ? providerOfBackend(backendName) : undefined;
+      if (backendName && !backendProvider) {
+        console.error(
+          chalk.red(`The backend '${backendName}' names no provider — it cannot be run.`),
+        );
+        process.exit(1);
+      }
+      // The images of an answer are saved by the backend itself: a backend
+      // that saves no image cannot be asked to save one.
+      if (backendName && options.saveImages && !getBackend(backendName).capabilities.imageOutput) {
+        console.error(chalk.red(`The backend '${backendName}' does not support image output.`));
+        process.exit(1);
+      }
+      if (backendProvider && provider && provider !== backendProvider) {
+        console.error(
+          chalk.red(
+            `The backend '${backendName}' drives ${backendProvider} — it cannot use the provider '${provider}'.`,
+          ),
+        );
+        process.exit(1);
+      }
+      const chatProvider = (provider ?? backendProvider) as ProviderName | undefined;
 
       const timeoutMs = (() => {
         if (options.timeout === undefined) return undefined;
@@ -141,10 +225,14 @@ export function createChatCommand(): Command {
 
       // ── Single provider ────────────────────────────────────────
       try {
-        const result = await runChat({
-          ...commonOpts,
-          provider: provider as ProviderName | undefined,
-        });
+        const result = await runChat(
+          {
+            ...commonOpts,
+            provider: chatProvider,
+          },
+          // A backend run never touches a browser.
+          backendName ? { backend: getBackend(backendName) } : {},
+        );
 
         renderChatResult(result);
       } catch (error) {

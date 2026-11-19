@@ -12,6 +12,7 @@ import {
   type BackendSubmission,
   SUBMISSIONS_OF_FAILURE,
 } from '../backend/contract.js';
+import { providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
@@ -35,7 +36,17 @@ export async function runBackendChat(
   backend: AiBackend,
 ): Promise<ChatResult> {
   const config = await loadConfig();
-  const provider = options.provider ?? config.defaultProvider;
+  // The provider of the run: the one the backend drives, the one of the
+  // command, the default of the config file — never another one.
+  const backendProvider = providerOfBackend(backend.name);
+  // A backend that drives a provider cannot answer for another one: the
+  // session of the run must not claim a provider that did not answer.
+  if (options.provider && backendProvider && options.provider !== backendProvider) {
+    throw new Error(
+      `The backend '${backend.name}' drives ${backendProvider} — it cannot use the provider '${options.provider}'.`,
+    );
+  }
+  const provider = options.provider ?? backendProvider ?? config.defaultProvider;
 
   // A capability the backend does not have is rejected, never ignored — the
   // same rule the API transport follows.

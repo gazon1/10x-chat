@@ -11,6 +11,9 @@ on:
         description: 'Providers to test (comma separated, empty = all)'
         required: false
         default: ''
+      chatgpt_use:
+        description: 'Run the live scenario of the ChatGPT backend (1 = yes, needs chatgpt-use on the runner)'
+        required: false
 
 jobs:
   live:
@@ -37,4 +40,7 @@ jobs:
         env:
           # `1` runs every provider, a comma separated list runs only those.
           TEN_X_CHAT_E2E_PROVIDERS: ${{ inputs.providers || '1' }}
+          # `1` runs the live scenario of the ChatGPT backend — the runner
+          # needs the `chatgpt-use` CLI and a logged-in ChatGPT.
+          TEN_X_CHAT_E2E_CHATGPT_USE: ${{ inputs.chatgpt_use }}
         run: bun run test:e2e

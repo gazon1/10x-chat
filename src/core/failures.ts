@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { BrowserContext, Page } from 'playwright';
+import { BackendError, type BackendFailure } from '../backend/contract.js';
 import { saveStorageState } from '../browser/state.js';
 import type { Provider, ProviderName, TransportName } from '../types.js';
 
@@ -162,7 +163,43 @@ export function failureHint(kind: FailureKind, transport?: TransportName): strin
 /** Print the hint of a classified failure — nothing for an unclassified one. */
 export function printFailureHint(error: unknown, transport?: TransportName): void {
   const kind = failureKind(error);
-  if (kind) console.error(chalk.yellow(`Hint: ${failureHint(kind, transport)}`));
+  if (kind) {
+    console.error(chalk.yellow(`Hint: ${failureHint(kind, transport)}`));
+    return;
+  }
+  // A backend has its own kinds: they say what the user can do about them.
+  if (error instanceof BackendError) {
+    console.error(chalk.yellow(`Hint: ${backendFailureHint(error.failure)}`));
+  }
+}
+
+/**
+ * What the user can do about a failure of a backend.
+ *
+ * The kinds of a backend are not the kinds of a provider run: a busy backend
+ * and a backend that does not know whether the request ran need their own
+ * advice.
+ */
+export function backendFailureHint(failure: BackendFailure): string {
+  switch (failure.kind) {
+    case 'busy':
+      return 'Another run uses the ChatGPT window. Wait for it — the next run queues behind it.';
+    case 'unavailable':
+      return 'The backend is not there: chatgpt-use must be installed and ChatGPT must be logged in.';
+    case 'timeout':
+      return 'The answer did not arrive in time. The request can be resumed — it is not sent again.';
+    case 'cancelled':
+      return 'The request was cancelled.';
+    case 'unknown_submission':
+      return 'The backend does not know whether the request ran — it must not be sent again. Look it up with: chatgpt-use status <request-id>';
+    case 'invalid_output':
+      // An unusable answer is not always a request that may be sent again:
+      // the request that reached the model must not be sent twice.
+      return failure.submission === 'not_submitted'
+        ? 'The answer of the backend was not usable. Run it again.'
+        : 'The answer of the backend was not usable — the request may have reached the model. ' +
+            'Do not send it again; look it up with: chatgpt-use status <request-id>';
+  }
 }
 
 // ── Bot challenge ───────────────────────────────────────────────

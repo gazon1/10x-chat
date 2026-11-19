@@ -209,6 +209,21 @@ currently has a native API transport (OpenAI-compatible chat completions); as
 other native or OpenAI-compatible providers gain API transports, configure them
 the same way. See [docs/transports.md](docs/transports.md).
 
+## Backends
+
+A prompt can also reach a provider through a **backend** — a program that
+answers it instead of a browser. The ChatGPT backend drives the
+[`chatgpt-use`](docs/chatgpt-use-backend.md) CLI, which owns the window of
+ChatGPT: no browser is started by 10x-chat, and the login lives in the
+browser of `chatgpt-use`.
+
+```bash
+10x-chat chat -p "Explain this" --backend chatgpt-use
+```
+
+A backend is not a provider and not a transport: `--all`, `--transport`,
+`--new-chat` and the browser flags are refused with it.
+
 ## Commands
 
 ### `login <provider>`
@@ -251,6 +266,7 @@ Send a prompt to an AI provider via browser automation.
 | `--headless` | Force headless, also for the providers that normally run headed |
 | `--timeout <ms>` | Response timeout in milliseconds (default: the provider's — 1800000 for ChatGPT) |
 | `--transport <name>` | `browser` (default) or `api` (requires `--provider` with API support) — see [docs/transports.md](docs/transports.md) |
+| `--backend <name>` | Backend instead of the browser: `chatgpt-use` (the `chatgpt-use` CLI) — see [docs/chatgpt-use-backend.md](docs/chatgpt-use-backend.md) |
 | `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |

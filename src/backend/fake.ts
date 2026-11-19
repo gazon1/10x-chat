@@ -214,6 +214,8 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
   return {
     name: 'fake',
     capabilities: FAKE_BACKEND_CAPABILITIES,
+    // The answers are canned: a command that a user drives must not offer it.
+    testDouble: true,
 
     ask: run,
 
