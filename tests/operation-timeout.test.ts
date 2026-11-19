@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DISPATCHED_METHODS,
   InvalidatedHandles,
   invalidatedHandle,
   invalidateOnTimeout,
@@ -68,36 +70,11 @@ describe('requestedTimeoutMs', () => {
  * is the audit of the timeout contract: a dispatched method that is missing
  * here is a hole in it.
  */
-const DISPATCHED: { kind: string; method: string; index: number | null }[] = [
-  { kind: 'browser', method: 'newContext', index: null },
-  { kind: 'context', method: 'newPage', index: null },
-  { kind: 'context', method: 'close', index: null },
-  { kind: 'context', method: 'storageState', index: null },
-  { kind: 'context', method: 'cookies', index: null },
-  { kind: 'page', method: 'goto', index: 1 },
-  { kind: 'page', method: 'waitForTimeout', index: null },
-  { kind: 'page', method: 'waitForLoadState', index: 1 },
-  { kind: 'page', method: 'waitForURL', index: 1 },
-  { kind: 'page', method: 'waitForEvent', index: 1 },
-  { kind: 'page', method: 'waitForFunction', index: 2 },
-  { kind: 'page', method: 'evaluate', index: null },
-  { kind: 'page', method: 'close', index: null },
-  { kind: 'page', method: 'title', index: null },
-  { kind: 'keyboard', method: 'press', index: null },
-  { kind: 'keyboard', method: 'type', index: null },
-  { kind: 'keyboard', method: 'insertText', index: null },
-  { kind: 'locator', method: 'waitFor', index: 0 },
-  { kind: 'locator', method: 'isVisible', index: 0 },
-  { kind: 'locator', method: 'click', index: 0 },
-  { kind: 'locator', method: 'fill', index: 1 },
-  { kind: 'locator', method: 'count', index: null },
-  { kind: 'locator', method: 'textContent', index: 0 },
-  { kind: 'locator', method: 'innerHTML', index: 0 },
-  { kind: 'locator', method: 'setInputFiles', index: 1 },
-  { kind: 'locator', method: 'evaluate', index: null },
-  { kind: 'event', method: 'setFiles', index: null },
-  { kind: 'event', method: 'saveAs', index: null },
-];
+const DISPATCHED = DISPATCHED_METHODS.map((entry) => ({
+  kind: entry.kind,
+  method: entry.method,
+  index: entry.optionsIndex,
+}));
 
 describe('the bound of the caller of every dispatched method', () => {
   const withBound = DISPATCHED.filter((entry) => entry.index !== null);
@@ -279,5 +256,69 @@ describe('InvalidatedHandles', () => {
     expect(handles.isInvalidated('page', 'p1')).toBe(true);
     // The context of the same id is a different session.
     expect(handles.isInvalidated('context', 'p1')).toBe(false);
+  });
+});
+
+/**
+ * The methods that the dispatcher of the RPC service handles.
+ *
+ * The dispatcher is the source of truth: a method that it handles and that
+ * the declaration does not name has no declared bound, and the contract of
+ * the timeouts has a hole in it.
+ */
+function handledByTheDispatcher(): string[] {
+  const source = readFileSync(new URL('../src/browser/rpc-service.ts', import.meta.url), 'utf8');
+  const dispatcher = source.slice(source.indexOf('private async handleRpc'));
+
+  const kinds: { kind: string; start: number; end: number }[] = [];
+  const kindCase = /^ {6}case '(\w+)':/gm;
+  let match: RegExpExecArray | null = kindCase.exec(dispatcher);
+  while (match !== null) {
+    kinds.push({ kind: match[1], start: match.index, end: dispatcher.length });
+    match = kindCase.exec(dispatcher);
+  }
+  kinds.forEach((entry, index) => {
+    entry.end = kinds[index + 1]?.start ?? dispatcher.length;
+  });
+
+  const handled: string[] = [];
+  for (const entry of kinds) {
+    const block = dispatcher.slice(entry.start, entry.end);
+    const methods = new Set<string>();
+    // A method is handled by a case of the switch of the kind or by a
+    // comparison with the method of the request.
+    for (const pattern of [
+      /case '(\w+)':/g,
+      /body\.method === '(\w+)'/g,
+      /body\.method !== '(\w+)'/g,
+    ]) {
+      pattern.lastIndex = 0;
+      let found: RegExpExecArray | null = pattern.exec(block);
+      while (found !== null) {
+        // The case of the kind itself is not a method of it.
+        if (!(found[1] === entry.kind && found.index < 40)) methods.add(found[1]);
+        found = pattern.exec(block);
+      }
+    }
+    for (const method of methods) handled.push(`${entry.kind}.${method}`);
+  }
+  return handled;
+}
+
+describe('the declaration of the dispatched methods', () => {
+  it('names every method that the dispatcher handles', () => {
+    // A method that is dispatched and not declared has no declared bound:
+    // the bound of the caller would be lost.
+    const declared = new Set(DISPATCHED.map((entry) => `${entry.kind}.${entry.method}`));
+    const missing = handledByTheDispatcher().filter((method) => !declared.has(method));
+    expect(missing).toEqual([]);
+  });
+
+  it('does not declare a method that the dispatcher does not handle', () => {
+    const handled = new Set(handledByTheDispatcher());
+    const extra = DISPATCHED.map((entry) => `${entry.kind}.${entry.method}`).filter(
+      (method) => !handled.has(method),
+    );
+    expect(extra).toEqual([]);
   });
 });

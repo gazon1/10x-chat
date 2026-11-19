@@ -34,7 +34,7 @@ Every dispatched browser operation follows one contract (`src/browser/operation-
 
 An operation that does not answer in time may still run inside the browser: the session of the operation (the page, or the context without a page) is invalidated — the handle is refused from now on, so a later operation cannot work on a half-changed page. A context or a page that arrives after its bound is closed instead of being registered: nobody learns its id.
 
-The bound of the caller is read from the options argument of the call and from nowhere else — the table in `tests/operation-timeout.test.ts` audits every dispatched method against that rule. `waitForFunction` is the one that is easy to get wrong: its options are the third argument, the second one being the argument of the function.
+The bound of the caller is read from the options argument of the call and from nowhere else — the declaration in `src/browser/operation-timeout.ts` (`DISPATCHED_METHODS`) names every dispatched method and the position of that argument, and the test in `tests/operation-timeout.test.ts` reads the dispatcher and fails when a method is dispatched and not declared. `waitForFunction` is the one that is easy to get wrong: its options are the third argument, the second one being the argument of the function.
 
 ## Ownership and cleanup
 

@@ -51,31 +51,64 @@ export const CLOSE_TIMEOUT_MS = 5_000;
  * long answer asks for a long wait, and the bound of the service must not
  * be shorter than the wait of the caller.
  *
- * The index of the option argument of every method that carries one: the
- * bound is read from there and from nowhere else, so an argument that
- * happens to have a `timeout` field (the data of an `evaluate`) is not
- * mistaken for a bound.
+ * Every method that the RPC service dispatches.
  *
- * Only the methods of Playwright that take a `timeout` in their options are
- * listed. A method that takes no bound (`keyboard.press`, `locator.count`,
- * `page.evaluate`) is not in this table: it has no bound to preserve.
+ * `optionsIndex` is the position of the argument that carries the bound of
+ * the caller in Playwright, or `null` when the method takes no bound. The
+ * table is the declaration of the timeout contract: a method that is
+ * dispatched but not declared here has no declared bound, and the test that
+ * reads the dispatcher fails until it is declared.
  */
-const OPTIONS_ARG_INDEX: Record<string, number> = {
-  'page.goto': 1,
-  'page.waitForLoadState': 1,
-  'page.waitForURL': 1,
-  'page.waitForEvent': 1,
+export const DISPATCHED_METHODS: readonly {
+  kind: string;
+  method: string;
+  optionsIndex: number | null;
+}[] = [
+  { kind: 'browser', method: 'newContext', optionsIndex: null },
+  { kind: 'context', method: 'newPage', optionsIndex: null },
+  { kind: 'context', method: 'close', optionsIndex: null },
+  { kind: 'context', method: 'storageState', optionsIndex: null },
+  { kind: 'context', method: 'cookies', optionsIndex: null },
+  { kind: 'page', method: 'goto', optionsIndex: 1 },
+  { kind: 'page', method: 'waitForTimeout', optionsIndex: null },
+  { kind: 'page', method: 'waitForLoadState', optionsIndex: 1 },
+  { kind: 'page', method: 'waitForURL', optionsIndex: 1 },
+  { kind: 'page', method: 'waitForEvent', optionsIndex: 1 },
   // `waitForFunction(pageFunction, arg, options)`: the bound lives in the
   // third argument — the second one is the argument of the function.
-  'page.waitForFunction': 2,
-  'locator.waitFor': 0,
-  'locator.isVisible': 0,
-  'locator.click': 0,
-  'locator.textContent': 0,
-  'locator.innerHTML': 0,
-  'locator.fill': 1,
-  'locator.setInputFiles': 1,
-};
+  { kind: 'page', method: 'waitForFunction', optionsIndex: 2 },
+  { kind: 'page', method: 'evaluate', optionsIndex: null },
+  { kind: 'page', method: 'close', optionsIndex: null },
+  { kind: 'page', method: 'title', optionsIndex: null },
+  { kind: 'keyboard', method: 'press', optionsIndex: null },
+  { kind: 'keyboard', method: 'type', optionsIndex: null },
+  { kind: 'keyboard', method: 'insertText', optionsIndex: null },
+  { kind: 'locator', method: 'waitFor', optionsIndex: 0 },
+  { kind: 'locator', method: 'isVisible', optionsIndex: 0 },
+  { kind: 'locator', method: 'click', optionsIndex: 0 },
+  { kind: 'locator', method: 'fill', optionsIndex: 1 },
+  { kind: 'locator', method: 'count', optionsIndex: null },
+  { kind: 'locator', method: 'textContent', optionsIndex: 0 },
+  { kind: 'locator', method: 'innerHTML', optionsIndex: 0 },
+  { kind: 'locator', method: 'setInputFiles', optionsIndex: 1 },
+  { kind: 'locator', method: 'evaluate', optionsIndex: null },
+  { kind: 'event', method: 'setFiles', optionsIndex: null },
+  { kind: 'event', method: 'saveAs', optionsIndex: null },
+];
+
+/**
+ * The index of the option argument of every method that carries one.
+ *
+ * The bound is read from there and from nowhere else, so an argument that
+ * happens to have a `timeout` field (the data of an `evaluate`) is not
+ * mistaken for a bound.
+ */
+const OPTIONS_ARG_INDEX: Record<string, number> = Object.fromEntries(
+  DISPATCHED_METHODS.filter((entry) => entry.optionsIndex !== null).map((entry) => [
+    `${entry.kind}.${entry.method}`,
+    entry.optionsIndex as number,
+  ]),
+);
 
 /**
  * The bound that the caller asked for, if the call names one.
