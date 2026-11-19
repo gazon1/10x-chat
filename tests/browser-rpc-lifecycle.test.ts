@@ -35,6 +35,8 @@ interface FakeState {
   pending: Deferred<unknown> | undefined;
   /** The result of the hung method, for its late completion. */
   late: unknown;
+  /** The arguments every method received. */
+  received: Record<string, unknown[][]>;
 }
 
 interface FakePage {
@@ -54,6 +56,8 @@ interface FakeWorld {
   hang: (key: string | undefined) => void;
   /** The late completion of the hung method. */
   settle: () => void;
+  /** The arguments every method received. */
+  received: Record<string, unknown[][]>;
 }
 
 /** A method that hangs when the test names it. */
@@ -63,6 +67,7 @@ function hangable(
   impl: (...args: unknown[]) => unknown = () => null,
 ) {
   return vi.fn(async (...args: unknown[]) => {
+    state.received[name] = args;
     const result = impl(...args);
     if (state.hang === name) {
       const pending = deferred<unknown>();
@@ -81,7 +86,7 @@ function hangable(
  * answer, and the operation finishes only when the test lets it.
  */
 function createFakeWorld(options: { latePage?: boolean } = {}): FakeWorld {
-  const state: FakeState = { hang: undefined, pending: undefined, late: null };
+  const state: FakeState = { hang: undefined, pending: undefined, late: null, received: {} };
   const latePage = deferred<unknown>();
 
   const fileChooser = { setFiles: hangable(state, 'event.setFiles') };
@@ -109,7 +114,12 @@ function createFakeWorld(options: { latePage?: boolean } = {}): FakeWorld {
     title: hangable(state, 'page.title', () => 'Example'),
     goto: hangable(state, 'page.goto'),
     waitForTimeout: hangable(state, 'page.waitForTimeout'),
-    waitForLoadState: hangable(state, 'page.waitForLoadState'),
+    waitForLoadState: hangable(state, 'page.waitForLoadState', async () => {
+      // The wait takes longer than the default bound of the service: only
+      // the bound the caller asked for lets it finish.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return null;
+    }),
     waitForURL: hangable(state, 'page.waitForURL'),
     waitForEvent: hangable(state, 'page.waitForEvent', (event: string) =>
       event === 'download' ? download : fileChooser,
@@ -146,6 +156,7 @@ function createFakeWorld(options: { latePage?: boolean } = {}): FakeWorld {
     settle: () => {
       state.pending?.resolve(state.late);
     },
+    received: state.received,
   };
 }
 
@@ -415,6 +426,97 @@ describe('the lifecycle of an RPC of the daemon', () => {
     });
     expect(refused.status).toBe(500);
     expect(refused.body.error).toMatch(/was invalidated after a timed-out operation/);
+  });
+});
+
+describe('the options of the caller', () => {
+  const servers: { close: () => Promise<void> }[] = [];
+
+  afterEach(async () => {
+    while (servers.length > 0) {
+      await servers.pop()?.close();
+    }
+  });
+
+  it('reach Playwright with the method that carries them', async () => {
+    const world = createFakeWorld();
+    const service = new RpcService({
+      browser: world.browser as never,
+      operationTimeoutMs: 100,
+      rpcTimeoutMs: 10_000,
+      closeTimeoutMs: 100,
+    });
+    const server = await startService(service);
+    servers.push(server);
+
+    const context = await rpc(server.url, { kind: 'browser', method: 'newContext' });
+    const contextId = (context.body.result as { id: string }).id;
+    const created = await rpc(server.url, {
+      kind: 'context',
+      method: 'newPage',
+      target: { contextId },
+    });
+    const pageId = (created.body.result as { id: string }).id;
+
+    const waited = await rpc(server.url, {
+      kind: 'page',
+      method: 'waitForLoadState',
+      target: { pageId },
+      args: ['load', { timeout: 1_000 }],
+    });
+    expect(waited.status).toBe(200);
+    // The options are not dropped by the dispatcher.
+    expect(world.received['page.waitForLoadState']?.[1]).toEqual({ timeout: 1_000 });
+
+    const filled = await rpc(server.url, {
+      kind: 'locator',
+      method: 'fill',
+      target: { pageId, steps: [{ type: 'locator', selector: '#target' }] },
+      args: ['text', { timeout: 5_000 }],
+    });
+    expect(filled.status).toBe(200);
+    expect(world.received['locator.fill']?.[1]).toEqual({ timeout: 5_000 });
+  });
+
+  it('give the operation the bound the caller asked for', async () => {
+    const world = createFakeWorld();
+    const service = new RpcService({
+      browser: world.browser as never,
+      operationTimeoutMs: 100,
+      rpcTimeoutMs: 10_000,
+      closeTimeoutMs: 100,
+    });
+    const server = await startService(service);
+    servers.push(server);
+
+    const context = await rpc(server.url, { kind: 'browser', method: 'newContext' });
+    const contextId = (context.body.result as { id: string }).id;
+    const created = await rpc(server.url, {
+      kind: 'context',
+      method: 'newPage',
+      target: { contextId },
+    });
+    const pageId = (created.body.result as { id: string }).id;
+
+    // The wait of the fake takes longer than the default bound of the
+    // service: it only finishes because the caller asked for a longer bound.
+    const waited = await rpc(server.url, {
+      kind: 'page',
+      method: 'waitForLoadState',
+      target: { pageId },
+      args: ['load', { timeout: 1_000 }],
+    });
+    expect(waited.status).toBe(200);
+
+    // Without a bound of its own the same call runs into the default bound.
+    const without = await rpc(server.url, {
+      kind: 'page',
+      method: 'waitForLoadState',
+      target: { pageId },
+      args: ['load'],
+    });
+    expect(without.status).toBe(500);
+    expect(without.body.error).toMatch(/page\.waitForLoadState did not answer within 100ms/);
   });
 });
 

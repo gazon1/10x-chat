@@ -345,7 +345,8 @@ function createRemotePageProxy(
     goto: async (url: string, options?: Record<string, unknown>) =>
       invoke('goto', [url, options ?? {}]),
     waitForTimeout: async (timeout: number) => invoke('waitForTimeout', [timeout]),
-    waitForLoadState: async (state?: string) => invoke('waitForLoadState', [state ?? 'load']),
+    waitForLoadState: async (state?: string, options?: Record<string, unknown>) =>
+      invoke('waitForLoadState', [state ?? 'load', options ?? {}]),
     waitForURL: async (
       url: string | RegExp | WaitForUrlPredicate,
       options?: Record<string, unknown>,
@@ -421,12 +422,14 @@ function createRemoteLocatorProxy(
     waitFor: async (options?: Record<string, unknown>) => invoke('waitFor', [options ?? {}]),
     isVisible: async (options?: Record<string, unknown>) => invoke('isVisible', [options ?? {}]),
     click: async (options?: Record<string, unknown>) => invoke('click', [options ?? {}]),
-    fill: async (value: string) => invoke('fill', [value]),
+    fill: async (value: string, options?: Record<string, unknown>) =>
+      invoke('fill', [value, options ?? {}]),
     count: async () => invoke('count'),
     textContent: async (options?: Record<string, unknown>) =>
       invoke('textContent', [options ?? {}]),
     innerHTML: async (options?: Record<string, unknown>) => invoke('innerHTML', [options ?? {}]),
-    setInputFiles: async (files: string | string[]) => invoke('setInputFiles', [files]),
+    setInputFiles: async (files: string | string[], options?: Record<string, unknown>) =>
+      invoke('setInputFiles', [files, options ?? {}]),
     evaluate: async (pageFunction: unknown, arg?: unknown) =>
       invoke('evaluate', [pageFunction, arg]),
   } as unknown as ReturnType<Page['locator']>;

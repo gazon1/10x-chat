@@ -565,8 +565,14 @@ export class RpcService {
             );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'waitForLoadState':
+            // The options carry the bound of the caller: they must reach
+            // Playwright, or a caller that asks for a long wait gets the
+            // default bound of Playwright instead.
             await this.run('page', 'waitForLoadState', args, 'page.waitForLoadState', () =>
-              page.waitForLoadState((args[0] as never) ?? 'load'),
+              page.waitForLoadState(
+                (args[0] as never) ?? 'load',
+                (args[1] as Record<string, unknown>) ?? {},
+              ),
             );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'waitForURL': {
@@ -721,7 +727,10 @@ export class RpcService {
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'fill':
             await this.run('locator', 'fill', args, 'locator.fill', () =>
-              locator.fill(String(args[0] ?? '')),
+              locator.fill(
+                String(args[0] ?? ''),
+                (args[1] as Record<string, unknown>) ?? ({} as never),
+              ),
             );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'count': {
@@ -756,7 +765,10 @@ export class RpcService {
           }
           case 'setInputFiles':
             await this.run('locator', 'setInputFiles', args, 'locator.setInputFiles', () =>
-              locator.setInputFiles((args[0] as string | string[]) ?? []),
+              locator.setInputFiles(
+                (args[0] as string | string[]) ?? [],
+                (args[1] as Record<string, unknown>) ?? ({} as never),
+              ),
             );
             return { ok: true, result: null, pageState: this.buildPageState(pageId) };
           case 'evaluate': {

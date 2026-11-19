@@ -66,6 +66,8 @@ const OPTIONS_ARG_INDEX: Record<string, number> = {
   'locator.click': 0,
   'locator.textContent': 0,
   'locator.innerHTML': 0,
+  'locator.fill': 1,
+  'locator.setInputFiles': 1,
   'keyboard.press': 1,
   'keyboard.type': 1,
 };
