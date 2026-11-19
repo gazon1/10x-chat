@@ -193,7 +193,12 @@ export function backendFailureHint(failure: BackendFailure): string {
     case 'unknown_submission':
       return 'The backend does not know whether the request ran — it must not be sent again. Look it up with: chatgpt-use status <request-id>';
     case 'invalid_output':
-      return 'The answer of the backend was not usable. Run it again.';
+      // An unusable answer is not always a request that may be sent again:
+      // the request that reached the model must not be sent twice.
+      return failure.submission === 'not_submitted'
+        ? 'The answer of the backend was not usable. Run it again.'
+        : 'The answer of the backend was not usable — the request may have reached the model. ' +
+            'Do not send it again; look it up with: chatgpt-use status <request-id>';
   }
 }
 

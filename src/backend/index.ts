@@ -26,4 +26,10 @@ export {
   type FakeBackendOutcome,
   type FakeBackendRule,
 } from './fake.js';
-export { getBackend, listBackends, registerBackend, resetBackends } from './registry.js';
+export {
+  getBackend,
+  listBackends,
+  providerOfBackend,
+  registerBackend,
+  resetBackends,
+} from './registry.js';

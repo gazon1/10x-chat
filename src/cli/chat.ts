@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { getBackend, listBackends } from '../backend/index.js';
+import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
 import { buildBundle } from '../core/bundle.js';
 import {
   type ChatAllResult,
@@ -14,16 +14,6 @@ import { isValidProvider } from '../providers/index.js';
 import type { ProviderName, TransportName } from '../types.js';
 
 const DIVIDER = chalk.dim('─'.repeat(60));
-
-/**
- * The provider a backend belongs to.
- *
- * The session of a run is labeled with it: the backend `chatgpt-use` drives
- * ChatGPT, so the session must not claim another provider.
- */
-const BACKEND_PROVIDER: Record<string, ProviderName> = {
-  'chatgpt-use': 'chatgpt',
-};
 
 export function createChatCommand(): Command {
   const cmd = new Command('chat')
@@ -139,8 +129,21 @@ export function createChatCommand(): Command {
       }
 
       // The backend drives a provider of its own: the session of the run is
-      // labeled with it.
-      const backendProvider = backendName ? BACKEND_PROVIDER[backendName] : undefined;
+      // labeled with it. A backend that names no provider cannot be run —
+      // the session must not claim the default provider instead.
+      const backendProvider = backendName ? providerOfBackend(backendName) : undefined;
+      if (backendName && !backendProvider) {
+        console.error(
+          chalk.red(`The backend '${backendName}' names no provider — it cannot be run.`),
+        );
+        process.exit(1);
+      }
+      // The images of an answer are saved by the backend itself: a backend
+      // that saves no image cannot be asked to save one.
+      if (backendName && options.saveImages && !getBackend(backendName).capabilities.imageOutput) {
+        console.error(chalk.red(`The backend '${backendName}' does not support image output.`));
+        process.exit(1);
+      }
       if (backendProvider && provider && provider !== backendProvider) {
         console.error(
           chalk.red(

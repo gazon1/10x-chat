@@ -45,6 +45,23 @@ async function stubEnv(): Promise<Record<string, string>> {
   };
 }
 
+/**
+ * A `chatgpt-use` that answers with something that is not an envelope.
+ *
+ * The request may have reached ChatGPT: the hint of the failure must not
+ * tell the user to send it again.
+ */
+async function garbageEnv(): Promise<Record<string, string>> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), '10x-chat-garbage-cli-'));
+  const stub = path.join(dir, 'chatgpt-use');
+  await writeFile(stub, ['#!/bin/sh', 'printf "not an envelope"', ''].join('\n'));
+  await chmod(stub, 0o755);
+  return {
+    TEN_X_CHAT_HOME: await tempHome(),
+    PATH: `${dir}:${process.env.PATH ?? ''}`,
+  };
+}
+
 describe('the --backend option of chat (CLI)', () => {
   it('rejects an unknown backend and names the ones that exist', async () => {
     const res = await runCli(['chat', '-p', 'hi', '--backend', 'nope'], {
@@ -89,5 +106,21 @@ describe('the --backend option of chat (CLI)', () => {
     expect(res.code).toBe(0);
     expect(res.stdout).toContain('Backend: chatgpt-use');
     expect(res.stdout).toContain('the answer of the stub');
+  });
+
+  it('refuses to save the images a backend does not produce', async () => {
+    const res = await runCli(
+      ['chat', '-p', 'hi', '--backend', 'chatgpt-use', '--save-images', '/tmp/images'],
+      await stubEnv(),
+    );
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/does not support image output/);
+  });
+
+  it('does not tell the user to send a request that may have reached ChatGPT again', async () => {
+    const res = await runCli(['chat', '-p', 'hi', '--backend', 'chatgpt-use'], await garbageEnv());
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Do not send it again/);
+    expect(res.output).not.toMatch(/Run it again/);
   });
 });

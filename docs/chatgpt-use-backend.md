@@ -20,9 +20,13 @@ no browser type crosses the seam.
   `--isolated-profile`) are refused with it, not ignored.
 - The backend drives ChatGPT: the provider of the run is `chatgpt`, and
   another one is refused.
+- The backend saves no image: `--save-images` is refused with it, not ignored.
 - The run is stored like any other session — the history of the runs shows it.
 - The failure of a backend has its own hint (`busy`, `unavailable`,
   `timeout`, `unknown_submission`, …), not the hint of a provider run.
+- The hint of an unusable answer depends on the state of the request: a
+  request that may have reached ChatGPT is never sent again — the receipt of
+  the CLI says what happened to it (`chatgpt-use status <request-id>`).
 
 ## How it is called
 
@@ -77,7 +81,9 @@ to the end of the turn, and it is what `status`, `resume` and `cancel` read.
 
 The CLI accepts letters, digits, `.` and `-` in an id. Every other byte of
 the id of the request is escaped (`_` and its hex code), so two requests never
-share a receipt; an id that is too long for the CLI becomes a hash of it.
+share a receipt; an id that is too long for the CLI becomes a hash of it, and
+the hash carries a trailing `_` — the escape never ends that way, so the two
+names cannot collide.
 
 - `status` prints the receipt: the state of the request, whether it reached
   ChatGPT (`yes`, `no`, `unknown`) and the conversation it belongs to. A

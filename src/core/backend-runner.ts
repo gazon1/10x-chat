@@ -12,6 +12,7 @@ import {
   type BackendSubmission,
   SUBMISSIONS_OF_FAILURE,
 } from '../backend/contract.js';
+import { providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
@@ -35,7 +36,9 @@ export async function runBackendChat(
   backend: AiBackend,
 ): Promise<ChatResult> {
   const config = await loadConfig();
-  const provider = options.provider ?? config.defaultProvider;
+  // The provider of the run: the one of the command, the one the backend
+  // drives, the default of the config file — never another one.
+  const provider = options.provider ?? providerOfBackend(backend.name) ?? config.defaultProvider;
 
   // A capability the backend does not have is rejected, never ignored — the
   // same rule the API transport follows.

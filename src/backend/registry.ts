@@ -1,3 +1,4 @@
+import type { ProviderName } from '../types.js';
 import { createChatgptUseBackend } from './chatgpt-use.js';
 import type { AiBackend } from './contract.js';
 import { createFakeBackend } from './fake.js';
@@ -6,14 +7,34 @@ import { createFakeBackend } from './fake.js';
 const backends = new Map<string, AiBackend>();
 
 /**
+ * The provider a backend drives — the label of the sessions of its runs.
+ *
+ * The registry is the point of integration: a backend that answers for a
+ * provider names it here, so the session of a run never claims another
+ * provider and a new backend needs no change in the command.
+ */
+const providers = new Map<string, ProviderName>();
+
+/**
  * Register a backend under its name.
  *
  * A backend with the same name replaces the old one — the last registration
- * wins, like in the provider registry.
+ * wins, like in the provider registry. A backend that drives a provider
+ * names it: the sessions of its runs are labeled with it.
  */
-export function registerBackend(backend: AiBackend): AiBackend {
+export function registerBackend(backend: AiBackend, provider?: ProviderName): AiBackend {
   backends.set(backend.name, backend);
+  if (provider) {
+    providers.set(backend.name, provider);
+  } else {
+    providers.delete(backend.name);
+  }
   return backend;
+}
+
+/** The provider a backend drives — undefined when it names none. */
+export function providerOfBackend(name: string): ProviderName | undefined {
+  return providers.get(name);
 }
 
 /** Get a backend by name, throws if not found. */
@@ -39,8 +60,9 @@ export function listBackends(): string[] {
  */
 export function resetBackends(): void {
   backends.clear();
+  providers.clear();
   registerBackend(createFakeBackend());
-  registerBackend(createChatgptUseBackend());
+  registerBackend(createChatgptUseBackend(), 'chatgpt');
 }
 
 /**
@@ -52,4 +74,4 @@ export function resetBackends(): void {
  * like the answer of a provider.
  */
 registerBackend(createFakeBackend());
-registerBackend(createChatgptUseBackend());
+registerBackend(createChatgptUseBackend(), 'chatgpt');

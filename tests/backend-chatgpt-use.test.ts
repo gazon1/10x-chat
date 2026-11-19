@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  CHATGPT_USE_BACKEND_NAME,
   createChatgptUseBackend,
   nodeProcessRunner,
   type ProcessResult,
   type ProcessRunner,
 } from '../src/backend/chatgpt-use.js';
+import { providerOfBackend } from '../src/backend/registry.js';
 
 interface Call {
   command: string;
@@ -554,4 +557,45 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     // The grace period is short: the run must not stay pending.
     expect(Date.now() - started).toBeLessThan(10_000);
   }, 15_000);
+
+  it('collects the output of a process and its exit code', async () => {
+    const result = await nodeProcessRunner.run(process.execPath, [
+      '-e',
+      'process.stdout.write("out"); process.stderr.write("err"); process.exit(3);',
+    ]);
+
+    // The stdout of the CLI stays machine-readable: the diagnostics come
+    // from the stderr.
+    expect(result.stdout).toBe('out');
+    expect(result.stderr).toBe('err');
+    expect(result.code).toBe(3);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it('reports a command that cannot be started', async () => {
+    await expect(
+      nodeProcessRunner.run('chatgpt-use-does-not-exist-either', ['ask']),
+    ).rejects.toThrow();
+  });
+
+  it('keeps the hash of an id out of the namespace of the ordinary ids', async () => {
+    // The receipt of the empty id is the hash of it — an ordinary id that is
+    // the hash itself must not land on the same receipt.
+    const digest = createHash('sha256').update('').digest('hex');
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    await backend.ask({ requestId: '', prompt: 'hello' });
+    await backend.ask({ requestId: digest, prompt: 'hello' });
+
+    const ids = calls.map((call) => call.args[call.args.indexOf('--request-id') + 1]);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it('is registered with the provider it drives', () => {
+    expect(providerOfBackend(CHATGPT_USE_BACKEND_NAME)).toBe('chatgpt');
+  });
 });

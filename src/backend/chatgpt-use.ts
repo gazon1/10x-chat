@@ -548,7 +548,8 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
  * receipt: the escape is reversible, so `a/b` and `a_2Fb` stay apart.
  *
  * An id that is empty or too long for the CLI becomes a hash of it — the
- * receipt of a request is unique, not readable.
+ * receipt of a request is unique, not readable. The hash carries a trailing
+ * `_`, which the escape above never produces: the two names cannot collide.
  */
 function encodeId(requestId: string): string {
   let encoded = '';
@@ -557,7 +558,8 @@ function encodeId(requestId: string): string {
     encoded += /[A-Za-z0-9.-]/.test(char) ? char : `_${byte.toString(16).padStart(2, '0')}`;
   }
   if (encoded !== '' && encoded.length <= MAX_ID_LENGTH) return encoded;
-  return createHash('sha256').update(requestId).digest('hex');
+  // The escape never ends with `_` — the hash is in a namespace of its own.
+  return `${createHash('sha256').update(requestId).digest('hex')}_`;
 }
 
 /** The longest id the CLI accepts. */
