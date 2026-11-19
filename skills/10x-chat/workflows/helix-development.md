@@ -8,7 +8,7 @@ Use it when the user asks for a change to be built in a repository — feature, 
 
 - The prompt carries the **GitHub coordinates** — repository URL, branch, commit SHA — plus the checkpoint's goal and acceptance criteria. Nothing else.
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded).
-- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 5), when the user asked for that publication. If the checkpoint cannot be pushed, the review does not run — the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
+- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 5), when the user asked for that publication. **A pull request is not required** — a pushed branch without a PR is reviewed by its base and head SHA, exactly as in the PR-review playbook. If the checkpoint cannot be pushed at all, the independent review does not run: the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
 
 ## 1. Understand before touching
 
@@ -66,19 +66,24 @@ Record for each check: the exact command, the exit code, and the relevant output
 
 A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is never rewritten into a pass, and "probably fine" is not a result.
 
-## 5. Commit, push and open the pull request
+## 5. Commit, push and — only on request — open the pull request
 
-A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it, push the branch, and make sure the pull request exists. **Publication needs the user's word**: the read-only check and the publication are two separate procedures, and the commands of the second one run only after the user said yes.
+A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it and push the branch. **Publication needs the user's word**: the read-only check and the publication are two separate procedures, and the commands of the second one run only after the user said yes.
 
-- **The pull request exists and the branch is pushed** → review the checkpoint as it is. Nothing is committed, nothing is pushed.
-- **The checkpoint is still local** → ask the user first: *"The checkpoint is not on `origin` yet — may I commit and push it?"* Only after the answer comes the publication block.
-- **The answer is no** → publish nothing. The checkpoint stays local and its review is `UNAVAILABLE`.
+**A pull request is a convenience, not a precondition.** There are three targets, exactly as in the PR-review playbook:
+
+| Target | How you recognise it | The reviewer reviews it by |
+|---|---|---|
+| **A — a pull request exists** | `gh pr view` prints a number | the PR: number, URL, base/head SHA, the diff and the discussion |
+| **B — the branch is pushed, no pull request** | the branch is on `origin`, `gh pr view` prints nothing | base/head SHA, the compare URL and the commit page |
+| **C — the checkpoint is still local** | `git status --short` is not empty and the change is not on `origin` | ask about publication first |
 
 Read the state first — this block never publishes:
 
 ```bash
 git status --short                 # read it: only the files of this checkpoint
-gh pr view --json number,url -q '"#\(.number) \(.url)"'
+git branch --show-current
+gh pr view --json number,url -q '"#\(.number) \(.url)"' 2>/dev/null || echo "no pull request"
 ```
 
 **Publication — only after the user's word:**
@@ -88,21 +93,42 @@ git add <path> …                   # add those paths by name — never everyth
 git commit -m "<message in the repository's style>"
 git push origin <branch>
 git rev-parse HEAD
-
-# Does the pull request exist? Opening one is a publication — the user's word
-gh pr view --json number,url >/dev/null 2>&1 \
-  || echo "no pull request yet — ask the user before opening one"
 ```
 
-**The pull request is opened only with the user's word.** If the check above says that no pull request exists, ask the user: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:
+**Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the checkpoint by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
+
+**Target A — a pull request exists.** Nothing is committed, nothing is pushed, no PR is created. Take the coordinates from it:
+
+```bash
+gh pr view <n> --json number,url,baseRefOid,headRefOid \
+  -q '{number: .number, url: .url, base: .baseRefOid, head: .headRefOid}'
+```
+
+**Target B — the branch is pushed, no pull request.** The base of the comparison is the **default branch of the repository** — resolve it, never assume `main`:
+
+```bash
+BASE_REF=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+git fetch origin "$BASE_REF" --quiet
+BASE=$(git rev-parse "origin/$BASE_REF")
+HEAD=$(git rev-parse "origin/<branch>")
+```
+
+If the repository has no default branch, take the base from the pull request the branch would open (`gh pr view <branch> --json baseRefName -q .baseRefName`), and if there is none, from `git symbolic-ref --short refs/remotes/origin/HEAD`. **Never leave `BASE_REF` empty** — an unset variable makes the fetch fail with an error that looks like a network problem.
+
+The reviewer opens the compare URL `https://github.com/<owner>/<name>/compare/<base-sha>...<head-sha>` and the commit page `https://github.com/<owner>/<name>/commit/<head-sha>` itself. **Do not hold the review back for a pull request, and do not treat its absence as a blocker.**
+
+**Target C — the checkpoint is still local.** The reviewer reads the repository on GitHub, so it cannot see an unpushed checkpoint. Ask the user: *"The checkpoint is not on `origin` yet — may I commit and push it?"*
+
+- **Yes** → publish (the block above), then continue with target **A** or **B**.
+- **No, or the push is impossible** (no rights, no remote, nothing to push) → publish nothing. The checkpoint stays local and the independent review is `UNAVAILABLE` — with the reason in the report. The checkpoint itself is not lost: the local analysis of the change still happens and is labelled as such, exactly as the local review path of the PR-review playbook describes it.
+
+**Opening the pull request is optional and happens only with the user's word.** If there is no pull request, ask: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes the creation:
 
 ```bash
 gh pr create --base <base> --head <branch> --title "<title>" --body "<what this branch changes>"
 ```
 
-**Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in everything in the working tree — a leftover file, a local config, a `.env` with credentials. Read `git status --short` first, add the paths of the checkpoint by name, and read the diff (`git diff --cached --stat`) before the commit. A file that looks like a secret (`.env`, `*.pem`, `credentials*`, a token in a config) stops the commit and goes to the user.
-
-The reviewer reads the change at the pull request: the diff, the discussion, the head SHA, in its real context. If the push or the pull request cannot be created — no rights, no remote, a protected branch — the review does not run: leave the checkpoint open, report the review as `UNAVAILABLE` with the reason, and go back to the user.
+Without that answer nothing is created — and the review still runs as target **B**.
 
 Pushing the branch and opening the pull request are part of the pipeline, when the user asked for them. Merging, tagging a release or deploying is never (step 9).
 
@@ -115,20 +141,26 @@ Ask 10x-chat for an adversarial review of *this checkpoint*, in a fresh conversa
   -p "You are an adversarial reviewer. Your job is to find the ways this change fails.
 Assume it is wrong until the code proves it.
 
-Read the code yourself on GitHub (the pull request page, its diff and the discussion) — do not guess and do not ask for the files:
+Read the code yourself on GitHub — do not guess and do not ask for the files:
   Repository:   https://github.com/<owner>/<name>
   Pull request: #<n> — https://github.com/<owner>/<name>/pull/<n>
+  Compare:      https://github.com/<owner>/<name>/compare/<base-sha>...<head-sha>
+  Commit:       https://github.com/<owner>/<name>/commit/<sha of the checkpoint>
   Branch:       <branch>
-  Commit:       <sha of the checkpoint>
+  Base:         <base-sha>
+  Head:         <sha of the checkpoint>
   Conventions:  read AGENTS.md and CONTRIBUTING.md at that commit
 
-Look for: wrong logic, unhandled edge cases, missing error handling, races, security holes, broken callers, violated conventions of this repository, missing tests, and scope that creeps beyond the stated goal.
+If the checkpoint has no pull request, review the compare URL and the commit page instead of the pull request page.
+Open every changed file at the head SHA and the code around it. Look for: wrong logic, unhandled edge cases, missing error handling, races, security holes, broken callers, violated conventions of this repository, missing tests, and scope that creeps beyond the stated goal.
 For each finding: SEVERITY (BLOCKING | MAJOR | MINOR | INFO), LOCATION (file:line), PROBLEM, IMPACT (the concrete failure scenario), EVIDENCE (the code that shows it), FIX (the minimal correction).
 Also state explicitly whether the acceptance criteria below are met by the code as written.
 Acceptance criteria:
 <the checkpoint's criteria>
 If you find nothing blocking, say so. Do not invent problems, and do not rewrite the code."
 ```
+
+Fill every placeholder with the coordinates of the target of step 5: for target **A** the pull request coordinates, for target **B** the base and head SHA and the compare URL. **A pull request is never a precondition** — the review of a pushed branch runs exactly the same way.
 
 Use a second provider for the same checkpoint when the change is risky — two independent adversarial reviews catch more than one twice. `chat --all` sends the *same* prompt to every provider, so it works here as a second opinion on one role, but not as role-specific reviews.
 
@@ -158,7 +190,7 @@ If a gate fails, stop and report. Do not push the problem into the next checkpoi
 
 ## 9. Never merge or release autonomously
 
-Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 5) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the review is `UNAVAILABLE`. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
+Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 5) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the independent review is `UNAVAILABLE`. **A pull request is never required**: a pushed branch without one is reviewed by its base and head SHA. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
 
 ## 10. Integration review and completion report
 
@@ -178,6 +210,7 @@ After the last checkpoint, run one review over the *combined* change — at the 
 - [ ] Only the current checkpoint implemented; no speculative refactoring.
 - [ ] Repository's own checks run, each recorded as PASSED / FAILED / SKIPPED / UNAVAILABLE with its command and output.
 - [ ] The checkpoint is committed and pushed to `origin` — with the user's word — and the reviewer read that SHA; no file was attached — neither `--file` nor `--attach`.
+- [ ] The review target identified: an existing pull request, or a pushed branch without one. A pull request was never required, and its absence was not treated as a blocker.
 - [ ] Independent adversarial review of the checkpoint; findings fixed, rejected with reason, or explicitly accepted.
 - [ ] Every acceptance criterion has recorded evidence.
 - [ ] Proceeded only with the gates satisfied or an explicit human exception.

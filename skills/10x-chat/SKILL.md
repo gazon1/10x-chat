@@ -121,13 +121,15 @@ Read the state — this block never publishes:
 
 ```bash
 REPO=<owner>/<name>               # the repository under review
-BASE_REF=main
+BASE_REF=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)   # never assume main
 git fetch origin "$BASE_REF" --quiet
 git status --short                 # read it — add the paths of the change by name
 BASE=$(git rev-parse "origin/$BASE_REF")
 HEAD=$(git rev-parse HEAD)
 PR=$(gh pr view --json number,url -q '"#\(.number) \(.url)"' 2>/dev/null || echo "")
 ```
+
+If the repository has no default branch, take the base from the pull request the branch would open (`gh pr view <branch> --json baseRefName -q .baseRefName`), and if there is none, from `git symbolic-ref --short refs/remotes/origin/HEAD`. An empty `BASE_REF` makes the fetch fail with an error that looks like a network problem.
 
 Publication — **only after the user's word**, and only when the change is not on `origin` yet:
 

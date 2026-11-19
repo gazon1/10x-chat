@@ -48,13 +48,30 @@ The reviewers get the PR number, the PR URL, the base and head SHA and the chang
 
 #### B — a pushed branch without a pull request
 
+The base of the comparison is the **default branch of the repository** — resolve it, never assume `main`:
+
 ```bash
+BASE_REF=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 git fetch origin "$BASE_REF" --quiet
 BASE=$(git rev-parse "origin/$BASE_REF")
 HEAD=$(git rev-parse "origin/<branch>")
 git diff --name-only "$BASE...$HEAD"                  # the changed files
 gh api "repos/<owner>/<name>/compare/$BASE...$HEAD" --jq '.files[].filename'
 ```
+
+If the repository has no default branch (an empty repository), or `gh repo view` fails, take the base from the pull request the branch will open:
+
+```bash
+BASE_REF=$(gh pr view <branch> --json baseRefName -q .baseRefName)
+```
+
+and, if there is no pull request either, from the remote's HEAD:
+
+```bash
+BASE_REF=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|^origin/||')
+```
+
+**Never leave `BASE_REF` empty** — an unset variable makes the fetch and the comparison fail with an error that looks like a network problem.
 
 The reviewers get the base and head SHA and the compare URL
 `https://github.com/<owner>/<name>/compare/<base-sha>...<head-sha>` plus the commit page
