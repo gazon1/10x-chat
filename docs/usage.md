@@ -189,9 +189,9 @@ cd ~/src/my-project          # branch: feature/login
   conversation is kept for after `10x-chat login`.
 - `--new-chat` forces a fresh conversation and replaces the stored entry.
 - **An exhausted context window does not end the work.** When the provider reports
-  that the context window of the conversation is full (ChatGPT shows a
-  "Context window full" banner), the run continues in a **new chat with an
-  automatic summary** of the old one — the native mechanism of the app, not a
+  that the context window of the conversation is full (ChatGPT shows a banner
+  with a "Continue in a new chat" button), the run continues in a **new chat with
+  an automatic summary** of the old one — the native mechanism of the app, not a
   paraphrase. The new chat becomes the stored conversation of the repository and
   the branch, so the next run appends to it, until its own context window runs
   out too. The check happens before the prompt and again before every retry, so

@@ -164,7 +164,7 @@ Fill every placeholder with the coordinates of the target of step 5: for target 
 
 Use a second provider for the same checkpoint when the change is risky — two independent adversarial reviews catch more than one twice. `chat --all` sends the *same* prompt to every provider, so it works here as a second opinion on one role, but not as role-specific reviews.
 
-**A full context window is not a failed review.** When the conversation runs out of context (ChatGPT shows a "Context window full" banner), 10x-chat continues in a new chat with an automatic summary of the old one and asks there — the same conversation, a fresh window. The new chat stays bound to the same repository and branch, so the following checkpoint appends to it. Treat the answer as the answer of that reviewer; never restart a role because the chat was continued.
+**A full context window is not a failed review.** When the conversation runs out of context (ChatGPT shows a banner with a "Continue in a new chat" button), 10x-chat continues in a new chat with an automatic summary of the old one and asks there — the same conversation, a fresh window. The new chat stays bound to the same repository and branch, so the following checkpoint appends to it. Treat the answer as the answer of that reviewer; never restart a role because the chat was continued.
 
 ## 7. Resolve the findings
 

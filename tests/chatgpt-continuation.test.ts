@@ -280,7 +280,8 @@ const DOM_OPTIONS = {
   scopeSelector: 'main, #thread, [role="main"]',
   navigationSelector: 'nav, aside, [role="navigation"], [data-testid*="sidebar" i]',
   bannerPattern: 'context window full',
-  newChatLabel: '^new chat$',
+  newChatLabel: '^(?:continue in a new chat|new chat)$',
+  continuationLabel: '^continue in a new chat$',
   bannerMaxText: 400,
 };
 
@@ -482,6 +483,66 @@ describe('the banner of the exhausted context window', () => {
       children: [fakeElement({ tag: 'button', text: 'New chat', visible: false })],
     });
     const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, banner] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(false);
+  });
+
+  it('is seen in the box with the button of the shipped app', () => {
+    // The shipped app names the button of the banner "Continue in a new chat"
+    // (the string "chatgptConversations.contextContinuation.continue" of the
+    // product) and words the banner differently in every version.
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const banner = fakeElement({
+      tag: 'div',
+      text: 'You have reached the limit of the chat. Continue in a new chat.',
+      children: [fakeElement({ tag: 'button', text: 'Continue in a new chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: 'The chat of the run' })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, banner, chat] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(true);
+    // The button of the banner, not the one of the sidebar.
+    expect(state.newChatButtonIndex).toBe(1);
+  });
+
+  it('is not taken from the button of the navigation', () => {
+    // The sidebar holds a "New chat" button. It starts a chat in the
+    // navigation: it is never the banner of the exhausted window.
+    const sidebar = fakeElement({
+      tag: 'nav',
+      children: [fakeElement({ tag: 'button', text: 'New chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: 'The chat of the run' })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [sidebar, chat] }));
+
+    const state = readContinuationDomState(DOM_OPTIONS, page);
+    expect(state.bannerPresent).toBe(false);
+    expect(state.newChatButtonIndex).toBe(-1);
+  });
+
+  it('is not seen in a button of the continuation without a title next to it', () => {
+    // A box with the button alone is a wrapper of the button: the banner
+    // holds a title next to it.
+    const wrapper = fakeElement({
+      tag: 'div',
+      children: [fakeElement({ tag: 'button', text: 'Continue in a new chat' })],
+    });
+    const chat = fakeElement({
+      tag: 'main',
+      children: [fakeElement({ tag: 'p', text: 'The chat of the run' })],
+    });
+    const page = fakeDocument(fakeElement({ tag: 'body', children: [wrapper, chat] }));
 
     const state = readContinuationDomState(DOM_OPTIONS, page);
     expect(state.bannerPresent).toBe(false);

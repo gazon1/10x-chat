@@ -898,8 +898,8 @@ async function dismissOverlays(page: Page): Promise<void> {
 /**
  * Is the context window of the chat exhausted?
  *
- * The app shows a banner ("Context window full") with a "New chat" button
- * that continues the conversation in a new chat with an automatic summary.
+ * The app shows a banner with a "Continue in a new chat" button that
+ * continues the conversation in a new chat with an automatic summary.
  */
 async function detectContextFull(page: Page): Promise<boolean> {
   const state = await page.evaluate(readContinuationDomState, continuationDomOptions());
@@ -907,7 +907,7 @@ async function detectContextFull(page: Page): Promise<boolean> {
 }
 
 /**
- * Click the "New chat" button of the "Context window full" banner.
+ * Click the button of the banner of the exhausted context window.
  *
  * The button is the one the banner check has found — its index among the
  * buttons of the page. The button of the sidebar is not a candidate: the
@@ -931,8 +931,20 @@ const CONTEXT_FULL_PATTERN = 'context window full';
 
 /**
  * The label of the button that continues the chat in a new one.
+ *
+ * The shipped app names it "Continue in a new chat" (the string
+ * "chatgptConversations.contextContinuation.continue" of the product); the
+ * earlier UI had a plain "New chat" button in the banner.
  */
-const NEW_CHAT_LABEL_PATTERN = '^new chat$';
+const NEW_CHAT_LABEL_PATTERN = '^(?:continue in a new chat|new chat)$';
+
+/**
+ * The label of the button of the shipped continuation.
+ *
+ * It is the strong sign of the exhausted window: the app shows this button
+ * only when the chat can go on in a new one.
+ */
+const CONTINUATION_LABEL_PATTERN = '^continue in a new chat$';
 
 /**
  * The longest text a box without a conversation may have to be the banner.
@@ -1070,6 +1082,8 @@ export interface ContinuationDomOptions {
   bannerPattern: string;
   /** The pattern of the label of the button of the banner. */
   newChatLabel: string;
+  /** The pattern of the label of the button of the shipped continuation. */
+  continuationLabel: string;
   /** The longest text a box without a conversation may have to be the banner. */
   bannerMaxText: number;
 }
@@ -1082,6 +1096,7 @@ function continuationDomOptions(): ContinuationDomOptions {
     navigationSelector: NAVIGATION_SELECTOR,
     bannerPattern: CONTEXT_FULL_PATTERN,
     newChatLabel: NEW_CHAT_LABEL_PATTERN,
+    continuationLabel: CONTINUATION_LABEL_PATTERN,
     bannerMaxText: BANNER_MAX_TEXT,
   };
 }
@@ -1098,6 +1113,12 @@ function continuationDomOptions(): ContinuationDomOptions {
  * exhausted window, and the body of the app then carries the words of the
  * banner while the banner is long gone. The banner is the box that holds the
  * words and the "New chat" button and does not hold the conversation.
+ *
+ * The shipped app names the button of the banner "Continue in a new chat" and
+ * words the banner differently in every version of the product. The label of
+ * the button is therefore the stable sign: a button with that label that
+ * holds a title next to it is the banner, even when the words of the banner
+ * are unknown.
  *
  * The document is an argument so that the check can be run against a fake one
  * in the test; in the browser it is the document of the page.
@@ -1125,6 +1146,7 @@ export function readContinuationDomState(
   const buttons = Array.from(doc.querySelectorAll('button'));
   const bannerWords = new RegExp(options.bannerPattern, 'i');
   const newChatLabel = new RegExp(options.newChatLabel, 'i');
+  const continuationLabel = new RegExp(options.continuationLabel, 'i');
   let bannerPresent = false;
   let bannerButtonIndex = -1;
   let bannerDepth = Number.POSITIVE_INFINITY;
@@ -1133,21 +1155,29 @@ export function readContinuationDomState(
     const button = buttons[index];
     const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
     if (!newChatLabel.test(text)) continue;
+    // The button of the navigation starts a chat in the sidebar: it is never
+    // the banner of the exhausted window.
+    if (button.closest(options.navigationSelector)) continue;
     const rect = button.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
+    // The shipped app names the button of the banner "Continue in a new
+    // chat": the words of the banner are not the same in every version of
+    // the app, the label of the button is the stable sign.
+    const continuationButton = continuationLabel.test(text);
 
     let depth = 0;
     let node: HTMLElement | null = button.parentElement;
     while (node && node !== doc.body && node !== doc.documentElement) {
       depth++;
       const box = node.innerText || node.textContent || '';
-      if (bannerWords.test(box)) {
-        const holdsConversation = conversation ? node.contains(conversation) : false;
-        const short = box.length <= options.bannerMaxText;
-        // The box of the banner does not hold the conversation, and it is
-        // short: the text around the banner is the whole app, and the words of
-        // the banner are in it as well.
-        if (!holdsConversation && short) {
+      const holdsConversation = conversation ? node.contains(conversation) : false;
+      const short = box.length <= options.bannerMaxText;
+      if (!holdsConversation && short) {
+        const words = bannerWords.test(box);
+        // The box of the banner holds a title next to the button: a box with
+        // the button alone is a wrapper of the button, not the banner.
+        const withTitle = box.length > text.length + 4;
+        if (words || (continuationButton && withTitle)) {
           if (depth < bannerDepth) {
             bannerDepth = depth;
             bannerPresent = true;
