@@ -58,11 +58,15 @@ Only the files of the revision under review are read for the evidence of a
 finding: they come from the commit, not from the disk of the checkout. A local
 file that was never committed — a secret, a key — never reaches the backend,
 and a finding that names it is `rejected`. A tracked symlink does not open the
-way out: the file behind it must be a file of the revision too.
+way out: the file behind it must be a file of the revision too. The files are
+named as Git names them: a name that holds a backslash is a name with a
+backslash, not a path with a separator.
 
 Two verdicts for one finding that contradict each other settle nothing: the
 order of the answer must not decide the state of a finding. The finding stays
-`unverified` with the note that says why.
+`unverified` with the note that says why. Two verdicts that agree are one
+verdict: their evidence is merged, so the order of the answer decides nothing
+either.
 
 An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came

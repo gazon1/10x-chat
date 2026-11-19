@@ -47,6 +47,29 @@ async function git(args: string[], cwd: string): Promise<string> {
   return result.stdout.trim();
 }
 
+/** Run a git command and keep its output as it is — nothing is trimmed. */
+async function gitRaw(args: string[], cwd: string): Promise<string> {
+  const result = await run('git', args, cwd);
+  if (result.code !== 0) {
+    throw new Error(
+      `git ${args.join(' ')} failed: ${result.stderr.trim() || result.stdout.trim() || 'no output'}`,
+    );
+  }
+  return result.stdout;
+}
+
+/**
+ * The names a git command prints — one name per name, as git names them.
+ *
+ * The command must be asked for `-z`: without it git quotes a name that holds
+ * a backslash or a character outside of ASCII, and the quoted text is not the
+ * name of the file.
+ */
+async function gitNames(args: string[], cwd: string): Promise<string[]> {
+  const listed = await gitRaw(args, cwd);
+  return listed.split('\0').filter((name) => name !== '');
+}
+
 /** The `owner/name` of a remote URL — the empty string when it has none. */
 export function repositoryOf(remoteUrl: string): string {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '');
@@ -213,11 +236,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   // cannot be computed is an error — an empty diff would be a review of
   // nothing that looks like a clean review.
   const range = `${baseSha}...${headSha}`;
-  const files = await git(['diff', '--name-only', range], cwd);
-  const changedFiles = files
-    .split('\n')
-    .map((file) => file.trim())
-    .filter((file) => file !== '');
+  const changedFiles = await gitNames(['diff', '--name-only', '-z', range], cwd);
 
   // The files of the revision: the verification reads them, and a file that is
   // not committed must not be read at all.
@@ -303,19 +322,19 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
  * revision and must not be read for a review.
  */
 export async function trackedFiles(repoRoot: string, headSha: string): Promise<string[]> {
-  const listed = await git(['ls-tree', '-r', '--name-only', headSha], repoRoot);
-  return listed
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '');
+  return gitNames(['ls-tree', '-r', '--name-only', '-z', headSha], repoRoot);
 }
 
 /**
  * The path of a file as the repository names it — relative to the root, with
  * the `/` of the tree of Git.
+ *
+ * A backslash is a separator only on Windows: on POSIX it is a character of
+ * the name of a file, and turning it into a slash renames the file.
  */
 export function normalizeRepoPath(file: string): string {
-  const normalized = path.posix.normalize(file.replace(/\\/g, '/'));
+  const unified = path.sep === '\\' ? file.replace(/\\/g, '/') : file;
+  const normalized = path.posix.normalize(unified);
   return normalized.startsWith('./') ? normalized.slice(2) : normalized;
 }
 

@@ -306,7 +306,17 @@ async function verifyCandidates(options: {
       verdicts.set(verdict.id, verdict);
       continue;
     }
-    if (known.verdict !== verdict.verdict) contradictory.add(verdict.id);
+    if (known.verdict !== verdict.verdict) {
+      contradictory.add(verdict.id);
+      continue;
+    }
+    // Two verdicts that say the same thing are one verdict: their evidence is
+    // merged, so a finding is not settled by the order of the answer.
+    verdicts.set(verdict.id, {
+      ...known,
+      evidence: mergeEvidence(known.evidence, verdict.evidence),
+      note: known.note ?? verdict.note,
+    });
   }
   const findings = candidates.map((finding) => {
     const state = mechanical.get(finding.id);
@@ -385,6 +395,14 @@ async function verifyCandidates(options: {
       startedAt,
     ),
   };
+}
+
+/**
+ * The evidence of two verdicts that agree — both of them, without a duplicate.
+ */
+function mergeEvidence(first: string, second: string): string {
+  const parts = [first, second].map((part) => part.trim()).filter((part) => part !== '');
+  return [...new Set(parts)].join('\n');
 }
 
 /**

@@ -8,8 +8,10 @@ import {
   collectReviewContext,
   conventionFiles,
   MAX_DIFF_CHARS,
+  normalizeRepoPath,
   parsePullRequestMetadata,
   resolveInRepo,
+  trackedFiles,
 } from '../src/pipeline/context.js';
 import {
   dedupeFindings,
@@ -584,6 +586,95 @@ describe('the review pipeline', () => {
     expect(run.findings[0].verificationNote).toContain('no file');
   });
 
+  it('does not confirm a finding that points at no line', async () => {
+    const homeless = { ...FINDING, line: undefined };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([homeless]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: homeless.file, title: homeless.title }),
+              verdict: 'confirmed',
+              evidence: 'the claim is true',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.findings[0].verificationNote).toContain('no line');
+  });
+
+  it('does not settle a finding by the order of two verdicts that agree', async () => {
+    const id = findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title });
+    const verdicts = [
+      { id, verdict: 'confirmed', evidence: '' },
+      { id, verdict: 'confirmed', evidence: 'the code shows it' },
+    ];
+
+    for (const answers of [verdicts, [...verdicts].reverse()]) {
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+        { prompt: '# Verification', answer: JSON.stringify({ verdicts: answers }) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(run.findings[0].verification).toBe('confirmed');
+      expect(run.findings[0].evidence).toContain('the code shows it');
+    }
+  });
+
+  it('finds a file whose name holds a backslash', async () => {
+    // A backslash is a character of the name of a file on POSIX: it is not a
+    // separator, and the name must not be read as another name.
+    const name = 'weird\\name.ts';
+    await writeFile(path.join(repo, name), 'export const a = 1;\n', 'utf-8');
+    const finding = { ...FINDING, file: name, line: 1 };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([finding]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: finding.file, line: finding.line, title: finding.title }),
+              verdict: 'confirmed',
+              evidence: 'the file shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf({ trackedFiles: [name] }),
+    });
+
+    expect(run.findings[0].verification).toBe('confirmed');
+  });
+
   it('does not confirm a finding that the verifier confirms without evidence', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
@@ -1014,6 +1105,38 @@ describe('the context of a review', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'names a file with a backslash as git names it',
+    async () => {
+      const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-git-'));
+      try {
+        const git = async (...args: string[]) => {
+          const { execFile } = await import('node:child_process');
+          return new Promise<void>((resolve, reject) => {
+            execFile(
+              'git',
+              ['-c', 'user.email=t@example.com', '-c', 'user.name=Test', ...args],
+              { cwd },
+              (error) => (error ? reject(error) : resolve()),
+            );
+          });
+        };
+        await git('init', '--initial-branch=main');
+        await writeFile(path.join(cwd, 'weird\\name.ts'), 'export const a = 1;\n', 'utf-8');
+        await git('add', '.');
+        await git('commit', '-m', 'first');
+        const sha = await gitIn(cwd, 'rev-parse', 'HEAD');
+
+        // Git quotes a name like this one unless it is asked for `-z`: the
+        // quoted text is not the name of the file.
+        expect(await trackedFiles(cwd, sha)).toEqual(['weird\\name.ts']);
+        expect(normalizeRepoPath('weird\\name.ts')).toBe('weird\\name.ts');
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('fails when the difference of the commits cannot be computed', async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-git-'));
