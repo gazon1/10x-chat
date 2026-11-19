@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import {
   type AiBackend,
   BackendError,
+  type BackendFailure,
   type BackendOutcome,
   type BackendRequest,
   type BackendResponse,
@@ -92,6 +93,13 @@ export async function runBackendChat(
   }
 
   const response = outcome.value;
+  // A success without an answer is not an answer: the contract says a
+  // failure is never an empty value — and an empty value is not a success.
+  const invalid = invalidOutput(response, request.requestId);
+  if (invalid) {
+    await updateSession(session.id, { status: 'failed', durationMs });
+    throw new BackendError(invalid);
+  }
   await saveResponse(session.id, response.text);
   await updateSession(session.id, {
     status: response.truncated ? 'timeout' : 'completed',
@@ -107,4 +115,29 @@ export async function runBackendChat(
     ...(response.conversationId ? { conversationId: response.conversationId } : {}),
     ...(response.images && response.images.length > 0 ? { images: response.images } : {}),
   };
+}
+
+/**
+ * The failure of a successful response that cannot be used.
+ *
+ * An empty answer is an answer that did not arrive, and an answer of another
+ * request belongs to another request — both are `invalid_output`.
+ */
+function invalidOutput(response: BackendResponse, requestId: string): BackendFailure | undefined {
+  if (response.requestId !== requestId) {
+    return {
+      kind: 'invalid_output',
+      message: `The backend answered the request '${response.requestId}' instead of '${requestId}'.`,
+      submission: response.submission,
+    };
+  }
+  const hasImages = (response.images?.length ?? 0) > 0;
+  if (response.text.trim() === '' && !hasImages) {
+    return {
+      kind: 'invalid_output',
+      message: 'The backend answered with an empty response.',
+      submission: response.submission,
+    };
+  }
+  return undefined;
 }

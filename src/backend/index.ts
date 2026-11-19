@@ -14,6 +14,7 @@ export {
 export {
   createFakeBackend,
   FAKE_BACKEND_CAPABILITIES,
+  type FakeBackendOutcome,
   type FakeBackendRule,
 } from './fake.js';
 export { getBackend, listBackends, registerBackend, resetBackends } from './registry.js';

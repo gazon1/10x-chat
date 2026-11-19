@@ -7,6 +7,7 @@ import {
   BackendError,
   type BackendFailureKind,
   type BackendRequest,
+  backendFailureKind,
   createFakeBackend,
   getBackend,
   listBackends,
@@ -89,20 +90,36 @@ describe('Fake backend', () => {
     expect(unknown.failure.kind).toBe('unknown_submission');
   });
 
-  it('cancels a request and refuses an unknown one', async () => {
+  it('cancels a running request and refuses an unknown one', async () => {
     const backend = createFakeBackend();
-    await backend.ask({ requestId: 'req-1', prompt: 'hello' });
 
+    const running = backend.ask({ requestId: 'req-1', prompt: 'hello' });
     const cancelled = await backend.cancel('req-1');
     expect(cancelled.ok).toBe(true);
     if (!cancelled.ok) return;
     expect(cancelled.value.cancelled).toBe(true);
     expect((await backend.status('req-1')).cancelled).toBe(true);
 
+    const outcome = await running;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('cancelled');
+
     const unknown = await backend.cancel('nope');
     expect(unknown.ok).toBe(false);
     if (unknown.ok) return;
     expect(unknown.failure.kind).toBe('unknown_submission');
+  });
+
+  it('does not cancel a request that has already answered', async () => {
+    const backend = createFakeBackend();
+    await backend.ask({ requestId: 'req-1', prompt: 'hello' });
+
+    const cancelled = await backend.cancel('req-1');
+    expect(cancelled.ok).toBe(true);
+    if (!cancelled.ok) return;
+    expect(cancelled.value.cancelled).toBe(false);
+    expect((await backend.status('req-1')).cancelled).toBe(false);
   });
 
   it('keeps the submission state of a failed request', async () => {
@@ -148,6 +165,20 @@ describe('Fake backend', () => {
     if (outcome.ok) return;
     expect(outcome.failure.kind).toBe('unknown_submission');
     expect(outcome.failure.submission).toBe('unknown');
+  });
+
+  it('recovers a failed request with a resume', async () => {
+    const backend = createFakeBackend([
+      { prompt: 'boom', failure: 'timeout', resume: { answer: 'the recovered answer' } },
+    ]);
+    const failed = await backend.ask({ requestId: 'req-1', prompt: 'boom' });
+    expect(failed.ok).toBe(false);
+
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'boom' });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.text).toBe('the recovered answer');
+    expect((await backend.status('req-1')).submission).toBe('submitted');
   });
 
   it('maps every failure kind and never answers with an empty success', async () => {
@@ -293,5 +324,31 @@ describe('Chat through the backend contract', () => {
     await expect(
       runChat({ prompt: 'hello', provider: 'chatgpt', attach: ['a.png'] }, { backend: limited }),
     ).rejects.toThrow('does not support attachments');
+  });
+
+  it('fails the run when the backend answers with an empty response', async () => {
+    const backend = createFakeBackend([{ prompt: 'hello', answer: '   ' }]);
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('fails the run when the backend answers another request', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return { ok: true as const, value: { ...outcome.value, requestId: 'another-request' } };
+      },
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
   });
 });

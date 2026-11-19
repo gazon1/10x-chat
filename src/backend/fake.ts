@@ -11,6 +11,14 @@ import type {
 } from './contract.js';
 
 /**
+ * The outcome of a rule: what it answers with, or how it fails.
+ *
+ * It is a rule without its prompt — the outcome of a resume is bound to the
+ * request of the rule it recovers.
+ */
+export type FakeBackendOutcome = Omit<FakeBackendRule, 'prompt' | 'resume'>;
+
+/**
  * A rule of the fake backend: what it does with a prompt.
  *
  * The first rule whose prompt matches wins. A prompt without a rule is
@@ -32,6 +40,13 @@ export interface FakeBackendRule {
   partial?: string;
   /** The answer is cut off. */
   truncated?: boolean;
+  /**
+   * What a resume of this rule produces.
+   *
+   * Without it a resume repeats the rule and fails the same way — the
+   * recovery of a failed request cannot be tested.
+   */
+  resume?: FakeBackendOutcome;
 }
 
 /**
@@ -68,6 +83,8 @@ interface KnownRequest {
   /** Whether the request reached the model. */
   submission: BackendSubmission;
   cancelled: boolean;
+  /** The request is still running — a cancel can still reach it. */
+  running: boolean;
 }
 
 /**
@@ -87,8 +104,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     });
   };
 
-  const answer = (request: BackendRequest): BackendResponse => {
-    const rule = ruleFor(request.prompt);
+  const answer = (request: BackendRequest, rule?: FakeBackendOutcome): BackendResponse => {
     return {
       requestId: request.requestId,
       conversationId: request.conversationId ?? `fake-conversation-${request.requestId}`,
@@ -100,8 +116,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     };
   };
 
-  const failureFor = (request: BackendRequest, kind: BackendFailureKind): BackendFailure => {
-    const rule = ruleFor(request.prompt);
+  const failureFor = (kind: BackendFailureKind, rule?: FakeBackendOutcome): BackendFailure => {
     return {
       kind,
       message: `The fake backend failed with '${kind}'.`,
@@ -110,26 +125,56 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     };
   };
 
-  const run = async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
-    const rule = ruleFor(request.prompt);
+  const run = async (
+    request: BackendRequest,
+    override?: FakeBackendOutcome,
+  ): Promise<BackendOutcome<BackendResponse>> => {
+    const rule = override ?? ruleFor(request.prompt);
     const previous = known.get(request.requestId);
+    // The request runs now: a cancel that arrives before the answer ends it.
+    known.set(request.requestId, {
+      request,
+      submission: 'submitted',
+      cancelled: previous?.cancelled === true,
+      running: true,
+    });
+    // The yield opens the window in which a cancel reaches the request.
+    await Promise.resolve();
+    if (known.get(request.requestId)?.cancelled === true) {
+      known.set(request.requestId, {
+        request,
+        submission: 'submitted',
+        cancelled: true,
+        running: false,
+      });
+      return {
+        ok: false,
+        failure: {
+          kind: 'cancelled',
+          message: 'The request was cancelled.',
+          submission: 'submitted',
+        },
+      };
+    }
     if (rule?.failure) {
-      const failure = failureFor(request, rule.failure);
+      const failure = failureFor(rule.failure, rule);
       // The request is remembered even when it failed: a timeout was sent,
       // and the status of the request must say so.
       known.set(request.requestId, {
         request,
         submission: failure.submission,
         cancelled: previous?.cancelled === true,
+        running: false,
       });
       return { ok: false, failure };
     }
-    const response = answer(request);
+    const response = answer(request, rule);
     known.set(request.requestId, {
       request,
       response,
       submission: 'submitted',
       cancelled: previous?.cancelled === true,
+      running: false,
     });
     return { ok: true, value: response };
   };
@@ -172,8 +217,10 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
         };
       }
       // The prompt of a resume is the prompt of the recorded request: a
-      // resume never sends a new prompt.
-      return run(entry.request);
+      // resume never sends a new prompt. The outcome of the resume is the
+      // recovery of the rule, when it has one.
+      const rule = ruleFor(entry.request.prompt);
+      return run(entry.request, rule?.resume);
     },
 
     cancel: async (requestId: string): Promise<BackendOutcome<{ cancelled: boolean }>> => {
@@ -188,6 +235,8 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
           },
         };
       }
+      // A finished request cannot be cancelled — there is nothing running.
+      if (!entry.running) return { ok: true, value: { cancelled: false } };
       entry.cancelled = true;
       return { ok: true, value: { cancelled: true } };
     },
