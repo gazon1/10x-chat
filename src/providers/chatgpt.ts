@@ -960,6 +960,112 @@ async function clickContextFullNewChat(page: Page): Promise<boolean> {
 }
 
 /**
+ * The words the app uses when it continues an exhausted conversation in a new
+ * chat: "Continued from …", a summary of the old chat, and so on.
+ */
+const CONTINUATION_MARKER_PATTERN =
+  'continued from|previous conversation|earlier conversation|summary|контекст|продолж';
+
+/**
+ * Does the text hold a sign that the native continuation has happened?
+ */
+export function hasContinuationMarker(text: string): boolean {
+  return new RegExp(CONTINUATION_MARKER_PATTERN, 'i').test(text);
+}
+
+/**
+ * Does the URL point to a conversation other than the one before the click?
+ *
+ * The id in the URL is the only proof of the identity of the conversation: the
+ * number of the turns can change because the UI re-rendered or because the
+ * summary was inserted into the old chat. A URL without an id proves nothing
+ * — the landing page can still show the old conversation.
+ */
+export function conversationIdChanged(
+  beforeId: string | undefined,
+  afterId: string | undefined,
+): boolean {
+  return afterId !== undefined && afterId !== beforeId;
+}
+
+/**
+ * Was the conversation replaced by another one?
+ *
+ * The summary of the old chat is the sign of the native continuation. Without
+ * it the structural sign is used: the new chat shows fewer turns than the
+ * exhausted one and has at least one turn of its own — that is not the old
+ * conversation.
+ */
+export function conversationReplaced(
+  beforeTurns: number,
+  afterTurns: number,
+  hasSummaryMarker: boolean,
+): boolean {
+  if (hasSummaryMarker) return true;
+  return afterTurns > 0 && afterTurns < beforeTurns;
+}
+
+/**
+ * The signals of a finished transition into the new chat.
+ */
+export interface ContinuationSignals {
+  /** The banner of the exhausted context window is gone. */
+  bannerGone: boolean;
+  /** The composer of the new chat is visible and can be typed into. */
+  composerUsable: boolean;
+  /** The URL points to a conversation other than the one before the click. */
+  conversationChanged: boolean;
+  /** The new chat shows the continuation of the exhausted one. */
+  continuationSignal: boolean;
+  /** The exhausted conversation is no longer on the screen. */
+  oldConversationGone: boolean;
+}
+
+/**
+ * Is the continuation ready to be used?
+ *
+ * Every signal is required: the orchestrator sends the prompt of the run into
+ * the chat that the transition leaves behind, and a guess would write it into
+ * the exhausted conversation.
+ */
+export function continuationReady(signals: ContinuationSignals): boolean {
+  return (
+    signals.bannerGone &&
+    signals.composerUsable &&
+    signals.conversationChanged &&
+    signals.continuationSignal &&
+    signals.oldConversationGone
+  );
+}
+
+/** The state of the page that the continuation is judged by. */
+interface ContinuationDomState {
+  bannerGone: boolean;
+  composerUsable: boolean;
+  summaryMarker: boolean;
+  oldConversationGone: boolean;
+}
+
+/**
+ * Mark the turns of the exhausted conversation.
+ *
+ * They are the content of the old chat: when the app has really moved into
+ * the new chat, they are gone from the screen.
+ */
+async function markExhaustedConversation(page: Page): Promise<void> {
+  await page.evaluate((selectors: readonly string[]) => {
+    for (const node of Array.from(document.querySelectorAll('[data-10x-exhausted="1"]'))) {
+      node.removeAttribute('data-10x-exhausted');
+    }
+    for (const selector of selectors) {
+      for (const node of Array.from(document.querySelectorAll(selector))) {
+        node.setAttribute('data-10x-exhausted', '1');
+      }
+    }
+  }, ASSISTANT_TURN_COUNT_SELECTORS);
+}
+
+/**
  * Continue the conversation in a new chat with an automatic summary.
  *
  * This is the native mechanism of the app for an exhausted context window:
@@ -972,36 +1078,67 @@ async function startSummaryChat(page: Page): Promise<boolean> {
   // rendered the new chat, so the banner alone proves nothing.
   const beforeId = conversationIdFromUrl('chatgpt', page.url());
   const beforeTurns = await getAssistantTurnCount(page);
+  await markExhaustedConversation(page);
 
   const clicked = await clickContextFullNewChat(page);
   if (!clicked) return false;
 
-  // Wait until the banner is gone, the composer of the new chat is back and
-  // the app has really switched to the new conversation.
+  // Wait until the transition has really happened: the banner is gone, the
+  // composer of the new chat is usable, the URL names another conversation,
+  // the new chat holds the continuation of the old one and the exhausted
+  // conversation is no longer on the screen.
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     await page.waitForTimeout(500);
-    const visible = await page.evaluate(() => {
-      const banner = /context window full/i.test(document.body?.innerText || '');
-      const composer = Array.from(
+    const dom: ContinuationDomState = await page.evaluate((markerPattern: string) => {
+      const bodyText = document.body?.innerText || '';
+      const banner = /context window full/i.test(bodyText);
+
+      const composerUsable = Array.from(
         document.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
       ).some((element) => {
         const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        if (element.closest('[aria-disabled="true"], [disabled]')) return false;
+        const editable =
+          element instanceof HTMLTextAreaElement ||
+          (element instanceof HTMLElement && element.isContentEditable);
+        if (!editable) return false;
+        // The composer must not be covered: the overlay of the banner of the
+        // exhausted window stays in the DOM for a while.
+        const center = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        return center === element || element.contains(center);
       });
-      return !banner && composer;
-    });
-    if (!visible) continue;
+
+      const stale = Array.from(document.querySelectorAll('[data-10x-exhausted="1"]')).some(
+        (element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        },
+      );
+
+      return {
+        bannerGone: !banner,
+        composerUsable,
+        summaryMarker: new RegExp(markerPattern, 'i').test(bodyText),
+        oldConversationGone: !stale,
+      };
+    }, CONTINUATION_MARKER_PATTERN);
 
     const afterId = conversationIdFromUrl('chatgpt', page.url());
     const afterTurns = await getAssistantTurnCount(page);
-    // The new chat is a different conversation: it has its own id. The
-    // landing page (`/`) has none — it can still show the old conversation,
-    // so there the number of the assistant turns decides.
-    const switched =
-      (afterId !== undefined && afterId !== beforeId) ||
-      (afterId === undefined && afterTurns !== beforeTurns);
-    if (!switched) continue;
+
+    const signals: ContinuationSignals = {
+      bannerGone: dom.bannerGone,
+      composerUsable: dom.composerUsable,
+      conversationChanged: conversationIdChanged(beforeId, afterId),
+      continuationSignal: conversationReplaced(beforeTurns, afterTurns, dom.summaryMarker),
+      oldConversationGone: dom.oldConversationGone,
+    };
+    if (!continuationReady(signals)) continue;
 
     ready = true;
     break;
