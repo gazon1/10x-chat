@@ -136,7 +136,7 @@ export async function runBackendChat(
   const response = outcome.value;
   // A success without an answer is not an answer: the contract says a
   // failure is never an empty value — and an empty value is not a success.
-  const invalid = invalidOutput(response, request.requestId);
+  const invalid = invalidOutput(response, request.requestId, backend.capabilities.imageOutput);
   if (invalid) {
     await updateSession(session.id, { status: 'failed', durationMs });
     throw new BackendError(invalid);
@@ -169,7 +169,11 @@ export async function runBackendChat(
  * not trusted. The check never throws — a malformed answer is a failure, not
  * a crash of the run.
  */
-function invalidOutput(response: BackendResponse, requestId: string): BackendFailure | undefined {
+function invalidOutput(
+  response: BackendResponse,
+  requestId: string,
+  imageOutput: boolean,
+): BackendFailure | undefined {
   if (!response || typeof response !== 'object') {
     return {
       kind: 'invalid_output',
@@ -220,6 +224,15 @@ function invalidOutput(response: BackendResponse, requestId: string): BackendFai
       return {
         kind: 'invalid_output',
         message: 'The backend answered with malformed images.',
+        submission,
+      };
+    }
+    // A backend that cannot produce images must not produce images: the
+    // answer contradicts the capability the backend announced.
+    if (!imageOutput && response.images.length > 0) {
+      return {
+        kind: 'invalid_output',
+        message: 'The backend answered with images, but it does not support them.',
         submission,
       };
     }

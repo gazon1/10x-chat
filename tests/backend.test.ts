@@ -550,6 +550,44 @@ describe('Chat through the backend contract', () => {
     expect(backendFailureKind(error)).toBe('invalid_output');
   });
 
+  it('fails the run when the backend answers with images it cannot produce', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return {
+          ok: true as const,
+          value: { ...outcome.value, images: [{ url: 'https://example.com/a.png' }] },
+        };
+      },
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('accepts the images of a backend that supports them', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      capabilities: { ...base.capabilities, imageOutput: true },
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return {
+          ok: true as const,
+          value: { ...outcome.value, images: [{ url: 'https://example.com/a.png' }] },
+        };
+      },
+    };
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    expect(result.images?.[0]?.url).toBe('https://example.com/a.png');
+  });
+
   it('fails the run when the backend answers without the state of the answer', async () => {
     const base = createFakeBackend();
     const backend: AiBackend = {
