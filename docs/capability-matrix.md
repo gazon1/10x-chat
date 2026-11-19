@@ -106,3 +106,7 @@ The contract of the application does not know these providers yet — they still
 run through the browser path of `src/core/orchestrator.ts`. The matrix says
 what a browser backend of each provider may promise when the providers are
 migrated to the contract.
+
+A backend that promises `streaming: true` writes every piece of the answer
+into the `onChunk` of the request — the same convention the browser providers
+use today. The final answer of the response stays the whole text.

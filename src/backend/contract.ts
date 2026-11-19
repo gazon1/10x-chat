@@ -61,6 +61,13 @@ export interface BackendRequest {
   attachments?: string[];
   /** The deadline of the request in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Called with every piece of the answer, when the backend streams.
+   *
+   * The final answer of the response stays the whole text — the chunks are
+   * only what the application shows while the answer is generated.
+   */
+  onChunk?: (chunk: string) => void;
 }
 
 /** The answer of a backend. */
@@ -110,7 +117,7 @@ export type BackendOutcome<T> = { ok: true; value: T } | { ok: false; failure: B
 export interface BackendCapabilities {
   /** Files can be attached to the request. */
   attachments: boolean;
-  /** The answer arrives in pieces while it is generated. */
+  /** The answer arrives in pieces while it is generated — through `onChunk`. */
   streaming: boolean;
   /** A running request can be cancelled. */
   cancellation: boolean;

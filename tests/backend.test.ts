@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AiBackend,
   BackendError,
@@ -350,5 +350,29 @@ describe('Chat through the backend contract', () => {
     );
     expect(error).toBeInstanceOf(BackendError);
     expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('gives a streaming backend the channel of the answer', async () => {
+    const written: string[] = [];
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      const base = createFakeBackend();
+      const backend: AiBackend = {
+        ...base,
+        capabilities: { ...base.capabilities, streaming: true },
+        ask: async (request) => {
+          request.onChunk?.('first ');
+          request.onChunk?.('second');
+          return base.ask(request);
+        },
+      };
+      await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    } finally {
+      write.mockRestore();
+    }
+    expect(written.join('')).toContain('first second');
   });
 });

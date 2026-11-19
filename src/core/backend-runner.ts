@@ -70,6 +70,11 @@ export async function runBackendChat(
     // The timeout of a chat: the flag of the command, then the config file.
     // The default of a provider does not apply — a backend has its own.
     ...(timeoutMs ? { timeoutMs } : {}),
+    // A streaming backend writes its answer while it is generated — the
+    // same convention the browser providers use.
+    onChunk: (chunk: string) => {
+      process.stdout.write(chalk.dim(chunk));
+    },
   };
 
   const startTime = Date.now();
