@@ -32,6 +32,16 @@ export function getSessionsDir(): string {
   return path.join(getAppDir(), 'sessions');
 }
 
+/** Reviews root: ~/.10x-chat/reviews */
+export function getReviewsDir(): string {
+  return path.join(getAppDir(), 'reviews');
+}
+
+/** Review directory of a run: ~/.10x-chat/reviews/<id> */
+export function getReviewDir(runId: string): string {
+  return path.join(getReviewsDir(), runId);
+}
+
 /** Session directory for a specific session: ~/.10x-chat/sessions/<id> */
 export function getSessionDir(sessionId: string): string {
   return path.join(getSessionsDir(), sessionId);

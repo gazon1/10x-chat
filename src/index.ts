@@ -31,6 +31,35 @@ export {
   runBackendChat,
   runChat,
 } from './core/index.js';
+export {
+  collectReviewContext,
+  MAX_CONTEXT_FILES,
+  MAX_DIFF_CHARS,
+} from './pipeline/context.js';
+export {
+  dedupeFindings,
+  findingId,
+  parseReviewerFindings,
+  parseVerdicts,
+} from './pipeline/findings.js';
+export { renderReviewReport } from './pipeline/report.js';
+export {
+  persistRun,
+  REVIEW_STEP_IDS,
+  runReviewPipeline,
+} from './pipeline/review.js';
+export type {
+  Finding,
+  FindingCategory,
+  FindingSeverity,
+  FindingVerification,
+  ReviewContext,
+  ReviewRole,
+  ReviewRun,
+  ReviewTarget,
+  StepOutcome,
+  StepStatus,
+} from './pipeline/types.js';
 export { getApiTransport, listApiProviders } from './providers/api/registry.js';
 export { getProvider, isValidProvider, listProviders } from './providers/index.js';
 export {
