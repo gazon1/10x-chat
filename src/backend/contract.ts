@@ -82,6 +82,9 @@ export interface BackendRequest {
    * The application does not download them: it has no page with the cookies
    * of a provider. A backend that produces images saves them itself and
    * reports the local paths in the answer.
+   *
+   * The directory exists when the request is made — the one of the session,
+   * unless the caller asked for another one.
    */
   saveDir?: string;
   /** The deadline of the request in milliseconds. */

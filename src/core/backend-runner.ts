@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import chalk from 'chalk';
 import {
   type AiBackend,
@@ -9,6 +11,7 @@ import {
   type BackendSubmission,
 } from '../backend/contract.js';
 import { loadConfig } from '../config.js';
+import { getSessionDir } from '../paths.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ChatOptions } from '../types.js';
 import { buildBundle } from './bundle.js';
@@ -75,14 +78,18 @@ export async function runBackendChat(
   console.log(chalk.dim(`Session: ${session.id}`));
   console.log(chalk.blue(`Backend: ${backend.name}`));
 
+  // The images of the answer are saved by the backend itself: the downloader
+  // of the browser path needs a page with the cookies. The directory is the
+  // one of the session, as it is without --save-images.
+  const saveDir = options.saveImages ?? path.join(getSessionDir(session.id), 'images');
+  await mkdir(saveDir, { recursive: true });
+
   const request: BackendRequest = {
     requestId: session.id,
     prompt: bundle,
     ...(model ? { model } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
-    // The images of the answer are saved by the backend itself: the
-    // downloader of the browser path needs a page with the cookies.
-    ...(options.saveImages ? { saveDir: options.saveImages } : {}),
+    saveDir,
     // The timeout of a chat: the flag of the command, then the config file.
     // The default of a provider does not apply — a backend has its own.
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),

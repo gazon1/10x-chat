@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -442,11 +442,18 @@ describe('Chat through the backend contract', () => {
   it('gives a backend the directory of the images it has to save', async () => {
     const requests: BackendRequest[] = [];
     const backend = recordingBackend(requests);
-    await runChat(
-      { prompt: 'hello', provider: 'chatgpt', saveImages: '/tmp/ten-x-chat-images' },
-      { backend },
-    );
-    expect(requests[0].saveDir).toBe('/tmp/ten-x-chat-images');
+    const wanted = path.join(tempHome, 'images');
+    await runChat({ prompt: 'hello', provider: 'chatgpt', saveImages: wanted }, { backend });
+    expect(requests[0].saveDir).toBe(wanted);
+  });
+
+  it('gives a backend the image directory of the session by default', async () => {
+    const requests: BackendRequest[] = [];
+    const backend = recordingBackend(requests);
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    const saveDir = requests[0].saveDir as string;
+    expect(saveDir).toBe(path.join(tempHome, 'sessions', result.sessionId, 'images'));
+    await expect(stat(saveDir)).resolves.toBeDefined();
   });
 
   it('fails the run when the backend answers with a malformed response', async () => {
