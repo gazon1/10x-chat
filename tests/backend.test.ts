@@ -591,8 +591,24 @@ describe('Chat through the backend contract', () => {
     expect(other.capabilities.attachments).toBe(true);
   });
 
-  it('fails the run when the backend answers with an empty response', async () => {
+  it('never answers with an empty text', async () => {
     const backend = createFakeBackend([{ prompt: 'hello', answer: '   ' }]);
+    const outcome = await backend.ask({ requestId: 'req-1', prompt: 'hello' });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+  });
+
+  it('fails the run when the backend answers with an empty response', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return { ok: true as const, value: { ...outcome.value, text: '   ' } };
+      },
+    };
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
       (thrown: unknown) => thrown,
     );

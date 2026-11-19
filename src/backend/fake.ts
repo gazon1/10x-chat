@@ -184,6 +184,23 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       return { ok: false, failure };
     }
     const response = answer(request, rule);
+    // The contract: a failure is never an empty success — the fake does not
+    // answer with an empty text either.
+    if (response.text.trim() === '') {
+      const empty = failure(
+        'invalid_output',
+        'The fake backend answered with an empty response.',
+        'submitted',
+      );
+      known.set(request.requestId, {
+        request,
+        failure: empty,
+        submission: 'submitted',
+        cancelled: previous?.cancelled === true,
+        running: false,
+      });
+      return { ok: false, failure: empty };
+    }
     known.set(request.requestId, {
       request,
       response,
