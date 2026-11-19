@@ -66,6 +66,7 @@ function isValidSessionMeta(value: unknown): value is SessionMeta {
   if (typeof meta.createdAt !== 'string' || Number.isNaN(Date.parse(meta.createdAt))) return false;
   if (typeof meta.updatedAt !== 'string' || Number.isNaN(Date.parse(meta.updatedAt))) return false;
   if (meta.model !== undefined && typeof meta.model !== 'string') return false;
+  if (meta.backend !== undefined && typeof meta.backend !== 'string') return false;
   if (
     meta.durationMs !== undefined &&
     (typeof meta.durationMs !== 'number' || !Number.isFinite(meta.durationMs))
@@ -145,12 +146,14 @@ export async function createSession(
   provider: ProviderName,
   promptPreview: string,
   model?: string,
+  backend?: string,
 ): Promise<SessionMeta> {
   const id = randomUUID();
   const now = new Date().toISOString();
   const meta: SessionMeta = {
     id,
     provider,
+    ...(backend ? { backend } : {}),
     model,
     promptPreview: promptPreview.slice(0, 200),
     createdAt: now,

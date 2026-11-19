@@ -39,7 +39,7 @@ export function createStatusCommand(): Command {
 
         console.log(
           `  ${statusIcon} ${chalk.cyan(session.id.slice(0, 8))} ` +
-            `${chalk.bold(session.provider)} ${duration}`,
+            `${chalk.bold(session.backend ?? session.provider)} ${duration}`,
         );
         console.log(`    ${chalk.dim(session.promptPreview.slice(0, 80))}`);
         console.log(`    ${chalk.dim(new Date(session.createdAt).toLocaleString())}`);
@@ -61,6 +61,7 @@ export function createSessionCommand(): Command {
         console.log(chalk.bold('Session Details\n'));
         console.log(`  ID:       ${meta.id}`);
         console.log(`  Provider: ${meta.provider}`);
+        if (meta.backend) console.log(`  Backend:  ${meta.backend}`);
         console.log(`  Model:    ${meta.model ?? chalk.dim('(default)')}`);
         console.log(`  Status:   ${meta.status}`);
         console.log(`  Created:  ${new Date(meta.createdAt).toLocaleString()}`);

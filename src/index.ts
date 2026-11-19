@@ -1,7 +1,33 @@
+export {
+  type AiBackend,
+  type BackendCapabilities,
+  BackendError,
+  type BackendFailure,
+  type BackendFailureKind,
+  type BackendOutcome,
+  type BackendRequest,
+  type BackendResponse,
+  type BackendStatus,
+  type BackendSubmission,
+  backendFailureKind,
+  createFakeBackend,
+  type FakeBackendRule,
+  getBackend,
+  listBackends,
+  registerBackend,
+  resetBackends,
+} from './backend/index.js';
 export { type BrowserSession, launchBrowser } from './browser/index.js';
 export { loadConfig, resolveEffectiveProxy, saveConfig } from './config.js';
 export { getProviderApiKey } from './core/credentials.js';
-export { buildBundle, type ChatResult, runApiChat, runChat } from './core/index.js';
+export {
+  buildBundle,
+  type ChatDeps,
+  type ChatResult,
+  runApiChat,
+  runBackendChat,
+  runChat,
+} from './core/index.js';
 export { getApiTransport, listApiProviders } from './providers/api/registry.js';
 export { getProvider, isValidProvider, listProviders } from './providers/index.js';
 export {

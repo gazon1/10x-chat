@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import type { GeneratedImage } from './backend/contract.js';
 
 // ── Profile Types ───────────────────────────────────────────────
 
@@ -36,18 +37,9 @@ export interface ProviderConfig {
   requiresHeaded?: boolean;
 }
 
-export interface GeneratedImage {
-  /** Source URL of the generated image (may require auth cookies). */
-  url: string;
-  /** Alt text or description. */
-  alt?: string;
-  /** Natural width in pixels. */
-  width?: number;
-  /** Natural height in pixels. */
-  height?: number;
-  /** Local file path after download (set by orchestrator). */
-  localPath?: string;
-}
+// The image type belongs to the backend contract — it is re-exported here,
+// so the public API of the package does not change.
+export type { GeneratedImage };
 
 export interface CapturedResponse {
   text: string;
@@ -194,6 +186,8 @@ export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'ti
 export interface SessionMeta {
   id: string;
   provider: ProviderName;
+  /** The backend that answered the run — a backend run is not a provider run. */
+  backend?: string;
   model?: string;
   promptPreview: string;
   createdAt: string;

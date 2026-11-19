@@ -11,6 +11,9 @@
 | `src/providers/submit.ts` | Shared prompt submission helper (composer → type → send) |
 | `src/core/orchestrator.ts` | Single + parallel chat execution (`runChat`, `runChatAll`) |
 | `src/core/api-orchestrator.ts` | The same chat through the HTTP API of a provider (`runApiChat`) |
+| `src/backend/contract.ts` | The provider-independent backend contract (`AiBackend`: `ask`/`status`/`resume`/`cancel`) |
+| `src/backend/fake.ts` | The deterministic backend of the tests (`createFakeBackend`) |
+| `src/backend/registry.ts` | Backend name → backend mapping, the injection point of the contract |
 | `src/transport/http.ts` | The shared HTTP client of the API transports (honors the effective proxy) |
 | `src/providers/api/` | The API transports of the providers (`registry.ts` maps a provider to its transport) |
 | `src/core/failures.ts` | Bot-challenge detection, failure kinds (`antibot`/`unauthorized`/`unavailable`) |
@@ -111,6 +114,7 @@ Provider actions implement:
 - **Conversation reuse**: `runChat` opens the conversation stored for the current git repo + branch + provider (`~/.10x-chat/conversations.json`), or a new chat when the provider no longer serves it. The repository is identified by its origin URL, so worktrees and clones of one repo share the chat; without a remote the git common dir is used. `--new-chat` forces a new conversation. Every provider baselines its existing turns in `submitPrompt` so the capture does not return the previous answer
 - **Model selection**: Orchestrator calls `selectModel()` before `submitPrompt()` if the provider implements it. Model resolved from `--model` flag → `defaultModel` of the config file → `provider.config.defaultModel` (chat commands only). Gemini supports modes: Fast, Thinking (default), Pro. ChatGPT's current UI has no picker; `selectModel` probes briefly and keeps the current model
 - **The transport**: `--transport browser|api` (the browser is the default). The API transport (`src/core/api-orchestrator.ts`) sends the prompt to the HTTP API of the provider with the key of `providerKeys.<provider>` — no browser, no login check, no profile. A capability the transport does not have (attachments, streaming, cancellation) is **rejected**, never ignored. The key never reaches an error message (`redactSecretValues`) — see `docs/transports.md`
+- **The backend contract**: `src/backend/contract.ts` is the provider-independent seam — `ask`, `status`, `resume`, `cancel` over typed requests, responses and failures, without a page, a selector or a session. A failure is never an empty answer: the submission state (`not_submitted`/`submitted`/`unknown`) and the failure kind (`busy`/`unavailable`/`timeout`/`invalid_output`/`cancelled`/`unknown_submission`) say what happened. An empty answer is not a success either — it is `invalid_output`. `runChat(options, { backend })` runs a chat through it instead of a browser; the providers are **not** migrated yet — the capabilities of every provider are in `docs/capability-matrix.md`
 
 ## Pre-Commit Checklist
 

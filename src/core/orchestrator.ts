@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { AiBackend } from '../backend/contract.js';
 import { browserError } from '../browser/diagnostics.js';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
@@ -7,6 +8,7 @@ import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { CapturedResponse, ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
+import { runBackendChat } from './backend-runner.js';
 import { buildBundle } from './bundle.js';
 import {
   clearStoredConversation,
@@ -68,6 +70,8 @@ const CHAT_PROVIDERS: ProviderName[] = [
 export interface ChatResult {
   sessionId: string;
   provider: ProviderName;
+  /** The backend that answered the run — set when the run went through a backend. */
+  backend?: string;
   response: string;
   truncated: boolean;
   durationMs: number;
@@ -75,6 +79,17 @@ export interface ChatResult {
   images?: GeneratedImage[];
   /** The provider conversation id, when the provider exposes one. */
   conversationId?: string;
+}
+
+/**
+ * The dependencies of a chat run.
+ *
+ * The backend is the seam: a run with a backend never touches a browser.
+ * Without one, the provider path of the browser runs as before.
+ */
+export interface ChatDeps extends ApiChatDeps {
+  /** The backend of the run — the provider path is not used when it is set. */
+  backend?: AiBackend;
 }
 
 /**
@@ -88,8 +103,14 @@ export interface ChatResult {
  *
  * With `--transport api` the prompt goes to the HTTP API of the provider
  * instead: no browser, no login check, the API key of the secrets store.
+ *
+ * With a backend the prompt goes to that backend: no browser, no provider.
  */
-export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Promise<ChatResult> {
+export async function runChat(options: ChatOptions, deps: ChatDeps = {}): Promise<ChatResult> {
+  if (deps.backend) {
+    return runBackendChat(options, deps.backend);
+  }
+
   if (resolveTransport(options) === 'api') {
     return runApiChat(options, deps);
   }
