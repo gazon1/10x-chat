@@ -19,9 +19,16 @@ const chatgptSubmitBaseline = new WeakMap<
   {
     turnCount: number;
     /**
+     * The number of the messages of the user when the prompt was sent: a
+     * message that appears later is the prompt of this run.
+     */
+    userCount: number;
+    /** The flat text of the last message of the user when the prompt was sent. */
+    lastUserText: string;
+    /**
      * The pieces of the prompt that must be in the DOM when it has landed.
-     * The chat collapses its history, so the number of messages of the user
-     * is not a reliable sign that the prompt is there.
+     * The chat collapses its history, so the number of the messages of the
+     * user is not a reliable sign that the prompt is there.
      */
     markers: string[];
     /** The prompt of this run: the message of the user must not be taken
@@ -118,13 +125,20 @@ interface AssistantSnapshot {
    */
   viaFallback: boolean;
   /**
-   * The bodies belong to the turn of the last message of the user.
+   * The bodies belong to the turn of the prompt of this run: the message of
+   * the user that holds the prompt has landed, and the answer follows it.
    *
    * Then they are the answer of this run, even when their text is the same
    * as the text of the answer of the previous turn: the difference is not
    * visible in the text.
    */
   scoped: boolean;
+  /** The message of the user that holds the prompt of this run. */
+  promptMatched: boolean;
+  /** The number of the messages of the user in the chat. */
+  userCount: number;
+  /** The number of the turns of the assistant in the chat. */
+  turnCount: number;
 }
 
 export const CHATGPT_CONFIG: ProviderConfig = {
@@ -232,15 +246,27 @@ async function getAssistantTurnCount(page: Page): Promise<number> {
  * The chat collapses its history ("Show more"), so the number of the messages
  * of the user is not a reliable sign. The text of the message of the user is:
  * the tail of the prompt is in the DOM even when the message is collapsed.
+ *
+ * The list is never empty for a prompt that has text: an empty list would
+ * mean "the prompt has landed" for every prompt, and the answer of the
+ * previous turn would be taken for the answer of this run.
  */
 function promptMarkers(prompt: string): string[] {
   const flat = prompt.replace(/\s+/g, '').toLowerCase();
+  if (!flat) return [];
   const markers: string[] = [];
   const tail = flat.slice(-60);
   if (tail.length >= 20) markers.push(tail);
   const middle = flat.slice(Math.floor(flat.length / 2), Math.floor(flat.length / 2) + 60);
   if (middle.length >= 20) markers.push(middle);
+  // A short prompt has no long piece: its whole text is the marker.
+  if (markers.length === 0) markers.push(flat);
   return markers;
+}
+
+/** The text without its whitespace and in lower case. */
+function flatText(value: string): string {
+  return value.replace(/\s+/g, '').toLowerCase();
 }
 
 /**
@@ -317,12 +343,36 @@ function generationErrorOf(
  * elements (the markdown root, the response body, the dil renderer). The
  * longest text of a group is the answer of that message.
  *
- * The snapshot carries the text of the last message of the user: the caller
- * needs it to know that the prompt of this run has landed.
+ * The snapshot is scoped to the prompt of this run: the bodies are the ones
+ * that follow the message of the user that holds the prompt. The caller needs
+ * to know that the prompt has landed — until then the answer of the previous
+ * turn is still in the DOM.
  */
-async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot> {
+async function getLatestAssistantSnapshot(
+  page: Page,
+  opts: {
+    asked?: string;
+    markers?: string[];
+    baselineUserCount?: number;
+    baselineLastUserText?: string;
+  } = {},
+): Promise<AssistantSnapshot> {
+  const asked = flatText(opts.asked ?? '');
+  const markers = opts.markers ?? [];
+  const baselineUserCount = opts.baselineUserCount ?? 0;
+  const baselineLastUserText = flatText(opts.baselineLastUserText ?? '');
   return page.evaluate(
-    ({ bodySelectors, fallbackSelectors, messageSelectors, userSelectors }) => {
+    ({
+      bodySelectors,
+      fallbackSelectors,
+      messageSelectors,
+      userSelectors,
+      turnSelectors,
+      asked,
+      markers,
+      baselineUserCount,
+      baselineLastUserText,
+    }) => {
       const errorText = Array.from(
         document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
       )
@@ -342,15 +392,40 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       const textOf = (element: Element): string =>
         ((element as HTMLElement).innerText || element.textContent || '').trim();
 
+      const flatOf = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
+
+      // The text of a message of the user: the label of the message ("You
+      // said:") is not a part of the prompt.
+      const userTextOf = (element: Element): string => {
+        const own = textOf(element);
+        const parent = element.parentElement ? textOf(element.parentElement) : '';
+        return flatOf(parent.length > own.length ? parent : own);
+      };
+
+      /**
+       * Whether the message of the user holds the prompt of this run.
+       *
+       * The match is positive: a short prompt must be the whole message, and
+       * a long one is recognized by a piece of it — the chat shows the tail
+       * of the message even when the history is collapsed.
+       */
+      const holdsPrompt = (element: Element): boolean => {
+        if (!asked) return false;
+        const text = userTextOf(element);
+        if (!text) return false;
+        if (asked.length < 20) {
+          return text.replace(/^yousaid:/, '') === asked;
+        }
+        return markers.some((marker) => text.includes(marker));
+      };
+
       const groups = new Map<Element, { text: string; html: string; element: Element }>();
 
-      // The answer of this turn is what follows the last message of the user.
-      // A chat that continues an exhausted conversation keeps the old turns,
-      // and their answers are not the answer of this run.
+      // The messages of the user: the answer of this run is what follows the
+      // one that holds the prompt.
       const userTurns = Array.from(document.querySelectorAll(userSelectors));
       const lastUserTurn = userTurns.length > 0 ? userTurns[userTurns.length - 1] : null;
-      // The text of the message of the user: the prompt of this run has landed
-      // when it is in there.
+      // The text of the last message of the user.
       const lastUserText = lastUserTurn
         ? (
             ((lastUserTurn.parentElement as HTMLElement)?.innerText ??
@@ -358,6 +433,45 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
               '') as string
           ).slice(-800)
         : '';
+
+      // The message of the user that holds the prompt of this run: the last
+      // one that holds it — the same prompt can be in the chat twice.
+      let promptTurn: Element | null = null;
+      for (const turn of userTurns) {
+        if (holdsPrompt(turn)) promptTurn = turn;
+      }
+      // The prompt has landed: a new message of the user appeared, and it is
+      // the one that holds the prompt. The text of the message is the sign:
+      // the chat collapses its history, so the number of the messages of the
+      // user is not a reliable one.
+      const newUserTurn =
+        userTurns.length > baselineUserCount || flatOf(lastUserText) !== baselineLastUserText;
+      const landed = asked
+        ? newUserTurn && promptTurn !== null && promptTurn === lastUserTurn
+        : lastUserTurn !== null;
+      // The bodies of the answer of this run are the ones after the prompt.
+      const anchor = landed && promptTurn ? promptTurn : lastUserTurn;
+
+      // The turns of the assistant in the chat: a new one means that the
+      // assistant has answered.
+      const turnElements = new Set<Element>();
+      for (const selector of turnSelectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          if (element.closest(userSelectors)) continue;
+          turnElements.add(element);
+        }
+      }
+      const turnRoots = new Set<Element>();
+      for (const element of turnElements) {
+        let node = element.parentElement;
+        let root = element;
+        while (node) {
+          if (turnElements.has(node)) root = node;
+          node = node.parentElement;
+        }
+        turnRoots.add(root);
+      }
+      const turnCount = turnRoots.size;
 
       // Every body element of the page, no matter which selector found it.
       const matched = new Set<Element>();
@@ -383,14 +497,6 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
 
       for (const element of matched) {
         if (element.closest(userSelectors)) continue;
-        // Only the messages after the last message of the user belong to the
-        // answer of this turn.
-        if (
-          lastUserTurn &&
-          !(lastUserTurn.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)
-        ) {
-          continue;
-        }
         const text = textOf(element);
         if (!text) continue;
         const container = element.closest(messageSelectors.join(',')) ?? outermostMatched(element);
@@ -400,38 +506,51 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
         }
       }
 
-      const sorted = Array.from(groups.values())
-        .sort((a, b) =>
-          a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
-        )
-        .map(({ text, html }) => ({ text, html }));
+      const sorted = Array.from(groups.values()).sort((a, b) =>
+        a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+      );
 
       // The renderer of a message can nest the body of the message in several
       // elements, and it can render the same message twice while it streams.
       // The text of such a body is contained in the text of the bigger one —
       // keep the biggest one, or the answer repeats.
       const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
-      const bodies = sorted.filter((body, index) => {
-        const text = normalize(body.text);
-        if (!text) return false;
-        return !sorted.some(
-          (other, otherIndex) =>
-            otherIndex !== index &&
-            normalize(other.text).length > text.length &&
-            normalize(other.text).includes(text),
-        );
-      });
+      const withoutDuplicates = (
+        list: { text: string; html: string }[],
+      ): { text: string; html: string }[] =>
+        list.filter((body, index) => {
+          const text = normalize(body.text);
+          if (!text) return false;
+          return !list.some(
+            (other, otherIndex) =>
+              otherIndex !== index &&
+              normalize(other.text).length > text.length &&
+              normalize(other.text).includes(text),
+          );
+        });
+
+      // Only the messages after the prompt belong to the answer of this run.
+      const afterAnchor = anchor
+        ? sorted.filter(
+            (group) =>
+              anchor.compareDocumentPosition(group.element) & Node.DOCUMENT_POSITION_FOLLOWING,
+          )
+        : sorted;
+      const bodies = withoutDuplicates(afterAnchor.map(({ text, html }) => ({ text, html })));
 
       if (bodies.length > 0) {
-        // The bodies were taken from the messages after the last message of
-        // the user: they are the answer of this turn.
+        // The bodies were taken from the messages after the prompt of this
+        // run: they are the answer of this turn.
         return {
           found: true,
           bodies,
           errorText,
           lastUserText,
           viaFallback: false,
-          scoped: lastUserTurn !== null,
+          scoped: landed,
+          promptMatched: promptTurn !== null,
+          userCount: userTurns.length,
+          turnCount,
         };
       }
 
@@ -439,17 +558,17 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       for (const selector of fallbackSelectors) {
         const matches = Array.from(document.querySelectorAll(selector));
         if (matches.length === 0) continue;
-        // The answer of this turn is after the last message of the user. If
-        // there is one, the fallback is scoped to it — the answer of the
-        // previous turn must not be taken for the answer of this run.
-        const afterUserTurn = lastUserTurn
+        // The answer of this turn is after the prompt. If there is one, the
+        // fallback is scoped to it — the answer of the previous turn must not
+        // be taken for the answer of this run.
+        const afterPrompt = anchor
           ? matches.filter(
               (element) =>
-                lastUserTurn.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING,
+                anchor.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING,
             )
           : [];
-        const scoped = afterUserTurn.length > 0;
-        const candidates = scoped ? afterUserTurn : matches;
+        const scoped = landed && afterPrompt.length > 0;
+        const candidates = afterPrompt.length > 0 ? afterPrompt : matches;
         const visibleMatches = candidates.filter(isVisible);
         const last = (visibleMatches.length > 0 ? visibleMatches : candidates).at(-1);
         if (!(last instanceof Element)) continue;
@@ -465,6 +584,9 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
           lastUserText,
           viaFallback: true,
           scoped,
+          promptMatched: promptTurn !== null,
+          userCount: userTurns.length,
+          turnCount,
         };
       }
 
@@ -475,6 +597,9 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
         lastUserText,
         viaFallback: true,
         scoped: false,
+        promptMatched: promptTurn !== null,
+        userCount: userTurns.length,
+        turnCount,
       };
     },
     {
@@ -482,6 +607,11 @@ async function getLatestAssistantSnapshot(page: Page): Promise<AssistantSnapshot
       fallbackSelectors: [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
       messageSelectors: [...MESSAGE_CONTAINER_SELECTORS],
       userSelectors: USER_MESSAGE_SELECTORS,
+      turnSelectors: [...ASSISTANT_TURN_COUNT_SELECTORS],
+      asked,
+      markers,
+      baselineUserCount,
+      baselineLastUserText,
     },
   );
 }
@@ -1070,7 +1200,11 @@ export const chatgptActions: ProviderActions = {
     await dismissOverlays(page);
     const snapshot = await getLatestAssistantSnapshot(page);
     chatgptSubmitBaseline.set(page, {
-      turnCount: await getAssistantTurnCount(page),
+      turnCount: snapshot.turnCount,
+      // The messages of the user before the prompt: a message that appears
+      // later is the prompt of this run.
+      userCount: snapshot.userCount,
+      lastUserText: flatText(snapshot.lastUserText),
       // The pieces of the prompt that must be in the DOM when it has landed.
       markers: promptMarkers(prompt),
       // The message of the user is rendered in the same elements as the
@@ -1140,7 +1274,9 @@ export const chatgptActions: ProviderActions = {
     };
     const startTime = Date.now();
     const baseline = chatgptSubmitBaseline.get(page) ?? {
-      turnCount: await getAssistantTurnCount(page),
+      turnCount: 0,
+      userCount: 0,
+      lastUserText: '',
       // Without a prompt in this process there is no baseline: the gate of
       // the prompt stays off.
       markers: [] as string[],
@@ -1150,7 +1286,6 @@ export const chatgptActions: ProviderActions = {
       errorText: '',
       url: page.url(),
     };
-    const normalize = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
 
     // ponytail: direct text polling beats ChatGPT's constantly shifting turn DOM.
     // The text of the last answer of this run: it starts empty, because a
@@ -1172,19 +1307,23 @@ export const chatgptActions: ProviderActions = {
         const full = await detectContextFull(page).catch(() => false);
         if (full === true) throw new ContextWindowFullError();
       }
-      const snapshot = await getLatestAssistantSnapshot(page);
-      // The prompt of this run is not in the DOM yet: the last message of the
-      // chat is still the answer of the previous turn, and it is not the
-      // answer of this run.
-      const lastUserText = normalize(snapshot.lastUserText ?? '');
-      const landed =
-        baseline.markers.length === 0 ||
-        baseline.markers.some((marker) => lastUserText.includes(marker));
-      if (!landed) {
+      const snapshot = await getLatestAssistantSnapshot(page, {
+        asked: baseline.promptText,
+        markers: baseline.markers,
+        baselineUserCount: baseline.userCount,
+        baselineLastUserText: baseline.lastUserText,
+      });
+      // The prompt of this run is not in the DOM yet: the answer of the
+      // previous turn is still there, and it is not the answer of this run.
+      // The gate is positive: an empty marker never means that the prompt
+      // has landed.
+      const scoped = snapshot.scoped === true;
+      // A new turn of the assistant: it has answered the prompt.
+      const turnAdvanced = snapshot.turnCount > baseline.turnCount;
+      if (baseline.promptText && !scoped && !turnAdvanced) {
         await page.waitForTimeout(1000);
         continue;
       }
-      const scoped = snapshot.scoped === true;
       const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies, scoped).filter(
         (body) => !isPromptEcho(body.text, baseline.promptText),
       );
@@ -1267,7 +1406,12 @@ export const chatgptActions: ProviderActions = {
     // Extract the final HTML content using page.evaluate instead of locator.textContent/innerHTML.
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
-    const finalSnapshot = await getLatestAssistantSnapshot(page);
+    const finalSnapshot = await getLatestAssistantSnapshot(page, {
+      asked: baseline.promptText,
+      markers: baseline.markers,
+      baselineUserCount: baseline.userCount,
+      baselineLastUserText: baseline.lastUserText,
+    });
     const finalBodies = newAssistantBodies(
       baseline.bodies,
       finalSnapshot.bodies,

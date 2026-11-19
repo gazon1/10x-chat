@@ -332,6 +332,11 @@ describe('ChatGPT Provider', () => {
                     : oldAnswer.bodies,
               errorText: '',
               lastUserText: landed ? prompt : 'the prompt of the chat before this run',
+              // The snapshot is scoped to the prompt of this run: the bodies
+              // are the answer of this turn.
+              scoped: landed,
+              userCount: landed ? 2 : 1,
+              turnCount: landed ? 2 : 1,
             };
           }
           // The send button of the page is clicked.
@@ -390,7 +395,17 @@ describe('ChatGPT Provider', () => {
             polls++;
             // The submit happens before the prompt is in the DOM. Then the
             // message of the user is found first, and the answer comes later.
-            if (polls === 1) return { found: false, bodies: [], errorText: '', lastUserText: '' };
+            if (polls === 1) {
+              return {
+                found: false,
+                bodies: [],
+                errorText: '',
+                lastUserText: '',
+                scoped: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
             const isTheMessageOfTheUser = polls === 2;
             return {
               found: true,
@@ -399,6 +414,11 @@ describe('ChatGPT Provider', () => {
                 : [{ text: answer, html: '<p>answer</p>' }],
               errorText: '',
               lastUserText: prompt,
+              // The prompt of this run has landed: the snapshot is scoped to
+              // its turn.
+              scoped: true,
+              userCount: 2,
+              turnCount: 2,
             };
           }
           // The send button of the page is clicked.
@@ -581,6 +601,100 @@ describe('ChatGPT Provider', () => {
       });
 
       expect(response.text).toBe(answer);
+    });
+
+    it('does not capture the answer of the previous turn for a short prompt', async () => {
+      // A short prompt has no long piece for the marker of the prompt: an
+      // empty marker would mean "the prompt has landed" for every prompt, and
+      // the answer of the previous turn of the reused chat would be taken for
+      // the answer of this run.
+      const prompt = 'Hi';
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      let polls = 0;
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // The first snapshot is the baseline: the answer of the previous
+            // turn, still streaming. It grows after the baseline was taken.
+            if (polls === 1) {
+              return {
+                found: true,
+                bodies: [{ text: 'Answer', html: '<p>Answer</p>' }],
+                errorText: '',
+                lastUserText: 'the prompt of the chat before this run',
+                scoped: false,
+                promptMatched: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
+            // The prompt has not landed yet: the answer of the previous turn
+            // is still in the DOM.
+            if (polls === 2) {
+              return {
+                found: true,
+                bodies: [{ text: 'Answer of the previous turn', html: '<p>old</p>' }],
+                errorText: '',
+                lastUserText: 'the prompt of the chat before this run',
+                scoped: false,
+                promptMatched: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
+            // The prompt has landed: the answer of this turn is in the DOM.
+            return {
+              found: true,
+              bodies: [{ text: 'Answer of this turn', html: '<p>new</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+              scoped: true,
+              promptMatched: true,
+              userCount: 2,
+              turnCount: 2,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      // The answer of the previous turn must not be streamed as the answer of
+      // this run.
+      expect(chunks.join('')).not.toContain('previous turn');
+      expect(response.text).toBe('Answer of this turn');
     });
 
     it('fails with the context error when the banner appears during the answer', async () => {

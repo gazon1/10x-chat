@@ -123,6 +123,9 @@ export async function submitPromptToComposer(
     // is concatenated without a separator. A prompt that lost its line
     // structure — the typing fallback of a code prompt, for instance — does
     // not land.
+    //
+    // The empty lines are kept: a lost paragraph break changes the meaning of
+    // a prompt with Markdown or code in it, and the verification must see it.
     const readLines = async (): Promise<string[]> =>
       composer
         .evaluate((element) => {
@@ -130,10 +133,17 @@ export async function submitPromptToComposer(
             value.replace(/[\u00a0\u200b\ufeff]/g, ' ').replace(/\s+$/, '');
 
           const blocks = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'SECTION']);
-          const collect = (node: Node, out: string[]): void => {
+          const isBlock = (node: Node): boolean =>
+            node.nodeType === 1 && blocks.has((node as HTMLElement).tagName);
+
+          // The text of a block without the blocks in it: a line break for
+          // every <br>. The trailing break of ProseMirror only marks an empty
+          // paragraph — it is not a line of the prompt.
+          const inlineText = (node: Node): string => {
+            let out = '';
             for (const child of Array.from(node.childNodes)) {
               if (child.nodeType === 3) {
-                out.push(child.textContent ?? '');
+                out += child.textContent ?? '';
                 continue;
               }
               if (child.nodeType !== 1) continue;
@@ -146,14 +156,30 @@ export async function submitPromptToComposer(
                 continue;
               }
               if (childElement.tagName === 'BR') {
-                out.push('\n');
+                const classes = childElement.classList;
+                if (
+                  classes &&
+                  typeof classes.contains === 'function' &&
+                  classes.contains('ProseMirror-trailingBreak')
+                ) {
+                  continue;
+                }
+                out += '\n';
                 continue;
               }
-              const isBlock = blocks.has(childElement.tagName);
-              if (isBlock) out.push('\n');
-              collect(childElement, out);
-              if (isBlock) out.push('\n');
+              if (isBlock(child)) continue;
+              out += inlineText(child);
             }
+            return out;
+          };
+
+          // A block that holds no other block is a paragraph of the prompt.
+          const hasBlockChild = (node: Node): boolean => {
+            for (const child of Array.from(node.childNodes)) {
+              if (isBlock(child)) return true;
+              if (child.nodeType === 1 && hasBlockChild(child)) return true;
+            }
+            return false;
           };
 
           // Only the editable part of the composer holds the prompt.
@@ -163,23 +189,34 @@ export async function submitPromptToComposer(
               ? element
               : (element.querySelector('[contenteditable="true"]') ?? element);
 
-          const parts: string[] = [];
-          collect(editable, parts);
-          const collected = parts.join('');
-          const text =
-            collected.trim().length === 0
-              ? // No child nodes: the composer is a plain text holder.
+          const paragraphs: Element[] = [];
+          for (const child of Array.from(editable.childNodes)) {
+            if (!isBlock(child)) continue;
+            if (hasBlockChild(child)) continue;
+            paragraphs.push(child as Element);
+          }
+
+          const lines =
+            paragraphs.length > 0
+              ? paragraphs.flatMap((paragraph) => inlineText(paragraph).split('\n'))
+              : // No paragraphs: the composer is a plain text holder.
                 (() => {
                   const rendered = (element as HTMLElement).innerText;
-                  return typeof rendered === 'string' ? rendered : (editable.textContent ?? '');
-                })()
-              : collected;
-          return text
-            .split('\n')
-            .map(clean)
-            .filter((line) => line.length > 0);
+                  const text =
+                    typeof rendered === 'string' ? rendered : (editable.textContent ?? '');
+                  return text.split('\n');
+                })();
+          return lines.map(clean);
         })
         .catch(() => [] as string[]);
+
+    // The editor keeps an empty paragraph at the end of the text: the trailing
+    // empty lines are not a part of the prompt.
+    const withoutTrailingEmptyLines = (lines: string[]): string[] => {
+      const copy = [...lines];
+      while (copy.length > 0 && copy[copy.length - 1] === '') copy.pop();
+      return copy;
+    };
 
     // Empty the composer before every insertion: a partly inserted prompt that
     // stays in the composer is sent twice — once as a half prompt, once as the
@@ -192,7 +229,7 @@ export async function submitPromptToComposer(
       // still holds the old text produces a prompt that is not the one asked
       // for.
       const left = await readLines();
-      if (left.length > 0) {
+      if (withoutTrailingEmptyLines(left).length > 0) {
         throw new Error('The composer could not be cleared — the old text is still in it.');
       }
     };
@@ -202,16 +239,16 @@ export async function submitPromptToComposer(
     const landed = async (): Promise<boolean> => {
       const expected = prompt
         .split(/\r?\n/)
-        .map((line) => line.replace(/[\u00a0\u200b\ufeff]/g, ' ').replace(/\s+$/, ''))
-        .filter((line) => line.length > 0);
+        .map((line) => line.replace(/[\u00a0\u200b\ufeff]/g, ' ').replace(/\s+$/, ''));
       if (expected.length === 0) return false;
       const actual = await readLines();
       // Exactly the prompt, line by line: extra words mean that the composer
       // held something else — the old text of a previous prompt, for instance
-      // — and missing line breaks mean that the prompt was flattened.
-      return (
-        actual.length === expected.length && actual.every((line, index) => line === expected[index])
-      );
+      // — and missing line breaks mean that the prompt was flattened. The
+      // empty lines count: a lost paragraph break is a lost prompt.
+      const wanted = withoutTrailingEmptyLines(expected);
+      const got = withoutTrailingEmptyLines(actual);
+      return got.length === wanted.length && got.every((line, index) => line === wanted[index]);
     };
 
     // One insertion instead of one keystroke per character: a rich composer

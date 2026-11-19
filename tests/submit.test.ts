@@ -30,16 +30,19 @@ class FakeElement {
 }
 
 /** The editor turns every line of the prompt into a paragraph. */
-function setComposerText(element: FakeElement, value: string): void {
+function setComposerText(element: FakeElement, value: string, losesBlankLines = false): void {
   const lines = value.split('\n');
-  element.childNodes = lines.map((line) => ({
+  // A composer that drops the empty paragraphs loses the paragraph breaks of
+  // the prompt.
+  const kept = losesBlankLines ? lines.filter((line) => line !== '') : lines;
+  element.childNodes = kept.map((line) => ({
     nodeType: 1,
     tagName: 'P',
     textContent: line,
     childNodes: [{ nodeType: 3, textContent: line }],
   }));
   // The real DOM concatenates the paragraphs without a separator.
-  element.textContent = lines.join('');
+  element.textContent = kept.join('');
 }
 
 const globals = globalThis as unknown as { HTMLElement?: unknown; InputEvent?: unknown };
@@ -66,6 +69,8 @@ function createSubmitPage(options: {
   clearFails?: boolean;
   /** The composer ignores Shift+Enter and flattens the prompt. */
   ignoresLineBreaks?: boolean;
+  /** The composer drops the empty paragraphs of the prompt. */
+  losesBlankLines?: boolean;
   /** A hidden composer sits in front of the visible one. */
   hiddenFirst?: boolean;
 }) {
@@ -78,6 +83,7 @@ function createSubmitPage(options: {
     losesSeparators = false,
     clearFails = false,
     ignoresLineBreaks = false,
+    losesBlankLines = false,
     hiddenFirst = false,
   } = options;
   // The raw text of the composer, before the editor merges the paragraphs.
@@ -98,7 +104,7 @@ function createSubmitPage(options: {
       raw = value;
     }),
     evaluate: vi.fn(async (fn: unknown, arg?: string) => {
-      setComposerText(element, raw);
+      setComposerText(element, raw, losesBlankLines);
       const call = fn as (this: FakeElement, element: FakeElement, arg?: string) => unknown;
       return call.call(element, element, arg);
     }),
@@ -370,6 +376,26 @@ describe('submitPromptToComposer', () => {
         sendButtonSelector: '#send',
       }),
     ).rejects.toThrow('composer');
+
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a prompt whose blank lines were lost', async () => {
+    // A composer that drops the empty paragraphs turns a prompt with a
+    // paragraph break into a prompt without one: the Markdown and the code of
+    // the prompt change their meaning.
+    const { page, sendButton } = createSubmitPage({
+      contenteditable: true,
+      losesBlankLines: true,
+    });
+    const prompt = 'First paragraph.\n\nSecond paragraph.';
+
+    await expect(
+      submitPromptToComposer(page as never, prompt, {
+        composerSelector: '#composer',
+        sendButtonSelector: '#send',
+      }),
+    ).rejects.toThrow('could not be entered into the composer');
 
     expect(sendButton.click).not.toHaveBeenCalled();
   });
