@@ -350,6 +350,35 @@ describe('Chat through the backend contract', () => {
     );
   });
 
+  it('fails the run when the backend answers with a malformed failure', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({ ok: false, failure: null }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
+  });
+
+  it('fails the run when the backend answers without an outcome', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () => undefined as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
   it('passes the timeout of the config file to the backend', async () => {
     await writeFile(
       path.join(tempHome, 'config.json'),

@@ -5,6 +5,7 @@ import {
   type AiBackend,
   BackendError,
   type BackendFailure,
+  type BackendFailureKind,
   type BackendOutcome,
   type BackendRequest,
   type BackendResponse,
@@ -120,17 +121,29 @@ export async function runBackendChat(
   }
   const durationMs = Date.now() - startTime;
 
+  if (!outcome || typeof outcome !== 'object') {
+    await updateSession(session.id, { status: 'failed', durationMs });
+    throw new BackendError({
+      kind: 'invalid_output',
+      message: 'The backend answered without an outcome.',
+      submission: 'unknown',
+    });
+  }
+
   if (!outcome.ok) {
+    // A backend is an implementation of another program: its failure is
+    // checked, not trusted. A malformed failure is a failure too.
+    const failure = validFailure(outcome.failure);
     // The answer that arrived before the failure belongs to the session —
     // otherwise the partial output of a timeout is lost.
-    if (outcome.failure.partialText) {
-      await saveResponse(session.id, outcome.failure.partialText);
+    if (failure.partialText) {
+      await saveResponse(session.id, failure.partialText);
     }
     await updateSession(session.id, {
-      status: outcome.failure.kind === 'timeout' ? 'timeout' : 'failed',
+      status: failure.kind === 'timeout' ? 'timeout' : 'failed',
       durationMs,
     });
-    throw new BackendError(outcome.failure);
+    throw new BackendError(failure);
   }
 
   const response = outcome.value;
@@ -247,6 +260,48 @@ function invalidOutput(
   }
   return undefined;
 }
+
+/**
+ * The failure of a backend that could not be trusted.
+ *
+ * A malformed failure is not a reason to crash the run: it is a failure the
+ * application cannot use — `invalid_output` — with the state the backend did
+ * answer.
+ */
+function validFailure(failure: unknown): BackendFailure {
+  if (!failure || typeof failure !== 'object') {
+    return {
+      kind: 'invalid_output',
+      message: 'The backend failed without a failure.',
+      submission: 'unknown',
+    };
+  }
+  const value = failure as Partial<BackendFailure>;
+  const kind = FAILURE_KINDS.includes(value.kind as BackendFailureKind)
+    ? (value.kind as BackendFailureKind)
+    : 'invalid_output';
+  return {
+    kind,
+    message:
+      typeof value.message === 'string' && value.message !== ''
+        ? value.message
+        : 'The backend failed without a message.',
+    submission: submissionOf(value.submission),
+    ...(typeof value.partialText === 'string' && value.partialText !== ''
+      ? { partialText: value.partialText }
+      : {}),
+  };
+}
+
+/** The kinds of a failure the contract defines. */
+const FAILURE_KINDS: readonly BackendFailureKind[] = [
+  'busy',
+  'unavailable',
+  'timeout',
+  'invalid_output',
+  'cancelled',
+  'unknown_submission',
+];
 
 /** The submission state of a response — the state it claims, when it is one. */
 function submissionOf(submission: unknown): BackendSubmission {
