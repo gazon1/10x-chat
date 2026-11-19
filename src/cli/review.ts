@@ -75,10 +75,18 @@ export function createReviewCommand(): Command {
           console.log(chalk.dim(`Report: ${options.out}`));
         }
 
-        // A review that could not collect its context is a failed review, not
-        // a review with nothing to say.
-        const failed = run.steps.find((step) => step.status === 'failed');
-        if (failed) {
+        // A review that could not collect its context, or whose reviewer or
+        // verification did not run, is a failed review — not a review with
+        // nothing to say.
+        const incomplete = run.steps.find(
+          (step) => step.id !== 'render-report' && step.status !== 'passed',
+        );
+        if (incomplete) {
+          console.error(
+            chalk.red(
+              `The review is incomplete: ${incomplete.id} — ${incomplete.detail ?? incomplete.status}`,
+            ),
+          );
           process.exit(1);
         }
       } catch (error) {

@@ -53,28 +53,84 @@ export interface ParsedVerdicts {
 }
 
 /**
- * The JSON of an answer.
+ * The balanced slice that starts at an opening delimiter.
  *
- * A model wraps its JSON in a fence, in a sentence, or in both. The first
- * balanced object or array of the answer is the payload; anything that is not
- * JSON at all is no payload.
+ * The scan knows the strings: a brace inside a string value does not open a
+ * nested object, and an escaped quote does not close a string.
  */
-export function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced?.[1] ? [fenced[1], text] : [text];
-  for (const candidate of candidates) {
-    const start = candidate.search(/[[{]/);
-    if (start < 0) continue;
-    const close = candidate[start] === '[' ? ']' : '}';
-    const end = candidate.lastIndexOf(close);
-    if (end <= start) continue;
-    try {
-      return JSON.parse(candidate.slice(start, end + 1));
-    } catch {
-      // Not the payload — the next candidate may be.
+function balancedSlice(text: string, start: number): string | undefined {
+  const open = text[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === open) {
+      depth += 1;
+    } else if (character === close) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
     }
   }
   return undefined;
+}
+
+/**
+ * The JSON of an answer.
+ *
+ * A model wraps its JSON in a fence, in a sentence, or in both — and a
+ * sentence may carry brackets of its own before the payload. Every balanced
+ * object and array of the answer is therefore read, and the one that carries
+ * the wanted key wins; the biggest array is the fallback for an answer that
+ * is a bare list.
+ */
+export function extractJson(text: string, key?: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidates = fenced?.[1] ? [fenced[1], text] : [text];
+  const parsed: unknown[] = [];
+  for (const candidate of candidates) {
+    for (let index = 0; index < candidate.length; index += 1) {
+      const character = candidate[index];
+      if (character !== '{' && character !== '[') continue;
+      const slice = balancedSlice(candidate, index);
+      if (!slice) continue;
+      try {
+        parsed.push(JSON.parse(slice));
+      } catch {
+        // Not the payload — the next opening delimiter may be.
+      }
+    }
+  }
+  if (key !== undefined) {
+    const withKey = parsed.find(
+      (value) =>
+        value !== null && typeof value === 'object' && !Array.isArray(value) && key in value,
+    );
+    if (withKey !== undefined) return withKey;
+  }
+  const arrays = parsed.filter((value): value is unknown[] => Array.isArray(value));
+  if (arrays.length > 0) {
+    return arrays.reduce((biggest, array) => (array.length > biggest.length ? array : biggest));
+  }
+  const objects = parsed.find(
+    (value) => value !== null && typeof value === 'object' && !Array.isArray(value),
+  );
+  return objects ?? parsed[0];
 }
 
 /** The entries of a payload — an array of them, or the list under a key. */
@@ -94,11 +150,22 @@ function textOf(value: unknown): string | undefined {
   return text === '' ? undefined : text;
 }
 
-/** A line number — a number, or a string that holds one. */
+/**
+ * A line number — a number, or a string that holds one.
+ *
+ * A malformed value is no line: `12garbage` and `12.9` are not a line 12.
+ */
 function lineOf(value: unknown): number | undefined {
-  const parsed = typeof value === 'string' ? Number.parseInt(value, 10) : value;
-  if (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return Math.trunc(parsed);
+  const parsed = typeof value === 'string' ? Number(value.trim()) : value;
+  if (typeof parsed !== 'number' || !Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+/** A value that is there but is not a line number. */
+function malformedLine(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string' && value.trim() === '') return false;
+  return lineOf(value) === undefined;
 }
 
 /** The severity of a finding — unknown ones are `INFO`. */
@@ -197,7 +264,7 @@ export function normalizeTitle(title: string): string {
  * promoted.
  */
 export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFindings {
-  const payload = extractJson(text);
+  const payload = extractJson(text, 'findings');
   const entries = entriesOf(payload, 'findings');
   if (!entries) {
     return { findings: [], invalid: ['the answer contains no JSON payload of findings'] };
@@ -231,6 +298,10 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
       return;
     }
     const file = textOf(value.file);
+    if (malformedLine(value.line) || malformedLine(value.endLine)) {
+      invalid.push(`findings[${index}]: line malformed`);
+      return;
+    }
     const line = lineOf(value.line);
     const endLine = lineOf(value.endLine);
     const fix = textOf(value.fix);
@@ -263,7 +334,7 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
  * state is no verdict: both are invalid.
  */
 export function parseVerdicts(text: string): ParsedVerdicts {
-  const payload = extractJson(text);
+  const payload = extractJson(text, 'verdicts');
   const entries = entriesOf(payload, 'verdicts');
   if (!entries) {
     return { verdicts: [], invalid: ['the answer contains no JSON payload of verdicts'] };
@@ -308,7 +379,18 @@ function worstSeverity(a: FindingSeverity, b: FindingSeverity): FindingSeverity 
   return SEVERITY_ORDER.indexOf(a) <= SEVERITY_ORDER.indexOf(b) ? a : b;
 }
 
-/** How much two titles overlap — one is the same defect when they overlap. */
+/**
+ * How much two titles overlap — one is the same defect when they overlap.
+ *
+ * The coverage of the shorter title and the coverage of the longer one both
+ * count: a title that is swallowed by a much longer one is a different
+ * defect, not the same one written twice.
+ *
+ * shortcut: two titles that differ by a single word still merge — no token
+ * metric separates "reaches shell" from "reaches shell command". Upgrade to a
+ * comparison of the claims themselves when a review reports two defects of one
+ * place as one.
+ */
 function overlap(a: string, b: string): number {
   const tokensA = tokensOf(a);
   const tokensB = tokensOf(b);
@@ -317,7 +399,7 @@ function overlap(a: string, b: string): number {
   for (const token of tokensA) {
     if (tokensB.has(token)) shared += 1;
   }
-  return shared / Math.min(tokensA.size, tokensB.size);
+  return Math.min(shared / tokensA.size, shared / tokensB.size);
 }
 
 /** The state that wins when two states of the same finding disagree. */

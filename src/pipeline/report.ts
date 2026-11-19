@@ -65,7 +65,13 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
   return run.findings.filter((finding) => finding.reportedBy.includes(role as never));
 }
 
-/** The verdict of the run — a confirmed grave finding asks for changes. */
+/**
+ * The verdict of the run.
+ *
+ * A confirmed grave finding asks for changes — and so does a review that did
+ * not finish: a run whose reviewers all failed has found nothing, and nothing
+ * is not an approval.
+ */
 function verdictOf(run: ReviewRun): { verdict: string; reason: string } {
   const grave = run.findings.filter(
     (finding) =>
@@ -76,6 +82,16 @@ function verdictOf(run: ReviewRun): { verdict: string; reason: string } {
     return {
       verdict: 'REQUEST CHANGES',
       reason: `${grave.length} confirmed finding(s) of the severity BLOCKING or MAJOR.`,
+    };
+  }
+  const incomplete = run.steps.filter(
+    (step) =>
+      step.status === 'failed' || step.status === 'skipped' || step.status === 'unavailable',
+  );
+  if (incomplete.length > 0) {
+    return {
+      verdict: 'REQUEST CHANGES',
+      reason: `the review is incomplete: ${incomplete.map((step) => step.id).join(', ')} did not pass.`,
     };
   }
   const confirmed = run.findings.filter((finding) => finding.verification === 'confirmed').length;

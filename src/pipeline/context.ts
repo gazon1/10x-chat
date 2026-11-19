@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
@@ -170,16 +171,35 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     title = await git(['log', '-1', '--format=%s', headSha], cwd).catch(() => '');
   }
 
+  // The bundle and the evidence of the verification are read from the
+  // checkout: the checkout must be the revision under review, or they are the
+  // evidence of the wrong code.
+  const checkoutSha = await git(['rev-parse', 'HEAD^{commit}'], cwd);
+  if (checkoutSha !== headSha) {
+    throw new Error(
+      `The checkout is at ${checkoutSha.slice(0, 7)} but the review is of ${headSha.slice(0, 7)}` +
+        ` — check out ${headRef} first (git checkout ${headRef}).`,
+    );
+  }
+  const dirty = await git(['status', '--porcelain', '--untracked-files=no'], cwd);
+  if (dirty !== '') {
+    throw new Error(
+      'The checkout has uncommitted changes — the review reads the files of the checkout, so they must be the ones of the head.',
+    );
+  }
+
   // The merge base is the real difference: a branch that lags behind its base
-  // must not show the commits of the base as its own change.
+  // must not show the commits of the base as its own change. A diff that
+  // cannot be computed is an error — an empty diff would be a review of
+  // nothing that looks like a clean review.
   const range = `${baseSha}...${headSha}`;
-  const files = await git(['diff', '--name-only', range], cwd).catch(() => '');
+  const files = await git(['diff', '--name-only', range], cwd);
   const changedFiles = files
     .split('\n')
     .map((file) => file.trim())
     .filter((file) => file !== '');
 
-  const diffOutput = await git(['diff', range], cwd).catch(() => '');
+  const diffOutput = await git(['diff', range], cwd);
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
     ? `${diffOutput.slice(0, MAX_DIFF_CHARS)}\n\n[the diff was cut here — ${diffOutput.length - MAX_DIFF_CHARS} characters are missing]`
@@ -210,10 +230,21 @@ export function contextFiles(context: ReviewContext): string[] {
   return context.changedFiles.slice(0, MAX_CONTEXT_FILES);
 }
 
-/** The path of a file of the repository — outside the root is refused. */
-export function resolveInRepo(repoRoot: string, file: string): string | undefined {
+/**
+ * The path of a file of the repository — outside the root is refused.
+ *
+ * The real path decides, not the lexical one: a symlink inside the checkout
+ * can point outside of it, and the file behind it is not a file of the
+ * repository.
+ */
+export async function resolveInRepo(repoRoot: string, file: string): Promise<string | undefined> {
   const resolved = path.resolve(repoRoot, file);
   const relative = path.relative(repoRoot, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
-  return resolved;
+  const realRoot = await realpath(repoRoot).catch(() => repoRoot);
+  const realFile = await realpath(resolved).catch(() => undefined);
+  if (!realFile) return undefined;
+  const realRelative = path.relative(realRoot, realFile);
+  if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) return undefined;
+  return realFile;
 }

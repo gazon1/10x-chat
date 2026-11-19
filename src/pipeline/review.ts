@@ -143,7 +143,7 @@ async function excerptOf(
   finding: Finding,
 ): Promise<{ text: string; exists: boolean; lineInRange: boolean }> {
   if (!finding.file) return { text: '', exists: false, lineInRange: false };
-  const resolved = resolveInRepo(repoRoot, finding.file);
+  const resolved = await resolveInRepo(repoRoot, finding.file);
   if (!resolved) return { text: '', exists: false, lineInRange: false };
   let content: string;
   try {
@@ -317,16 +317,17 @@ async function verifyCandidates(options: {
   });
 
   const confirmed = findings.filter((finding) => finding.verification === 'confirmed').length;
+  // A verification that answered for nobody is not a verification that passed.
+  const answered = candidates.filter((finding) => verdicts.has(finding.id)).length;
+  const complete = parsed.invalid.length === 0 && answered === candidates.length;
   return {
     findings,
     step: step(
       'verify-findings',
-      'passed',
-      `${candidates.length} candidates, ${confirmed} confirmed, ${
-        parsed.invalid.length > 0
-          ? `${parsed.invalid.length} invalid verdicts`
-          : 'no invalid verdict'
-      }`,
+      complete ? 'passed' : 'failed',
+      `${candidates.length} candidates, ${confirmed} confirmed, ${answered} answered` +
+        (parsed.invalid.length > 0 ? `, ${parsed.invalid.length} invalid verdicts` : '') +
+        (complete ? '' : ' — the verification is incomplete'),
       startedAt,
     ),
   };
@@ -466,7 +467,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   const unique = dedupeFindings(candidates);
   let findings = unique;
   if (unique.length === 0) {
-    steps.push(step('verify-findings', 'skipped', 'no candidate finding to verify'));
+    // Nothing to verify is a finished verification — the status 'skipped' is
+    // for a step that could not run, and it makes the verdict incomplete.
+    steps.push(step('verify-findings', 'passed', 'no candidate finding to verify'));
   } else {
     const verification = await verifyCandidates({
       backend,

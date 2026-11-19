@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
-import { collectReviewContext } from '../src/pipeline/context.js';
-import { findingId } from '../src/pipeline/findings.js';
+import { collectReviewContext, resolveInRepo } from '../src/pipeline/context.js';
+import { dedupeFindings, findingId, parseReviewerFindings } from '../src/pipeline/findings.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { ReviewContext } from '../src/pipeline/types.js';
 
@@ -288,6 +288,94 @@ describe('the review pipeline', () => {
       expect(content).not.toMatch(/from '.*\/browser\//);
     }
   });
+
+  it('does not approve a review whose reviewer did not answer', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: 'I found a bug in the input handling.' },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).toContain('REQUEST CHANGES');
+    expect(run.report).toContain('the review is incomplete');
+  });
+
+  it('marks a verification that answered for nobody as failed', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      { prompt: '# Verification', answer: JSON.stringify({ verdicts: [] }) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'verify-findings');
+    expect(step?.status).toBe('failed');
+    expect(run.findings[0].verification).toBe('unverified');
+  });
+});
+
+describe('the parsing of the answers', () => {
+  it('reads the payload of an answer that carries prose around it', () => {
+    const answer = [
+      'Here is what I found [note].',
+      '```json',
+      JSON.stringify({ findings: [FINDING] }),
+      '```',
+      'Let me know if you want more.',
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('reads a payload that carries a brace inside a string value', () => {
+    const answer = JSON.stringify({
+      findings: [{ ...FINDING, problem: 'the brace } of the template is not closed' }],
+    });
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].problem).toContain('}');
+  });
+
+  it('rejects a line that is not a line number', () => {
+    const parsed = parseReviewerFindings(
+      answerWith([{ ...FINDING, line: '12garbage' }]),
+      'correctness',
+    );
+    expect(parsed.findings).toHaveLength(0);
+    expect(parsed.invalid[0]).toContain('line malformed');
+  });
+
+  it('does not merge two different defects of one place', () => {
+    const short = { ...FINDING, title: 'Unchecked input reaches the sink' };
+    const long = {
+      ...FINDING,
+      title: 'Unchecked input reaches the sink of the command runner of the service',
+    };
+    const merged = dedupeFindings(
+      [short, long].map((finding) => ({
+        ...finding,
+        id: findingId(finding),
+        verification: 'unverified' as const,
+        reportedBy: ['correctness' as const],
+        evidence: [],
+      })),
+    );
+    expect(merged).toHaveLength(2);
+  });
 });
 
 describe('the context of a review', () => {
@@ -323,5 +411,81 @@ describe('the context of a review', () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it('fails when the difference of the commits cannot be computed', async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-git-'));
+    try {
+      const git = async (...args: string[]) => {
+        const { execFile } = await import('node:child_process');
+        return new Promise<void>((resolve, reject) => {
+          execFile(
+            'git',
+            ['-c', 'user.email=t@example.com', '-c', 'user.name=Test', ...args],
+            { cwd },
+            (error) => (error ? reject(error) : resolve()),
+          );
+        });
+      };
+      await git('init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'a.txt'), 'one\n', 'utf-8');
+      await git('add', '.');
+      await git('commit', '-m', 'first');
+      // A second root commit: the two histories have no merge base, so the
+      // difference of them cannot be computed.
+      await git('checkout', '--orphan', 'other');
+      await git('rm', '-rf', '.');
+      await writeFile(path.join(cwd, 'b.txt'), 'two\n', 'utf-8');
+      await git('add', '.');
+      await git('commit', '-m', 'second');
+
+      await expect(collectReviewContext({ cwd, base: 'main', head: 'other' })).rejects.toThrow(
+        /merge base/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a checkout that is not the revision under review', async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-git-'));
+    try {
+      const git = async (...args: string[]) => {
+        const { execFile } = await import('node:child_process');
+        return new Promise<void>((resolve, reject) => {
+          execFile(
+            'git',
+            ['-c', 'user.email=t@example.com', '-c', 'user.name=Test', ...args],
+            { cwd },
+            (error) => (error ? reject(error) : resolve()),
+          );
+        });
+      };
+      await git('init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'a.txt'), 'one\n', 'utf-8');
+      await git('add', '.');
+      await git('commit', '-m', 'first');
+      await git('checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'b.txt'), 'two\n', 'utf-8');
+      await git('add', '.');
+      await git('commit', '-m', 'second');
+      await git('checkout', 'main');
+
+      await expect(collectReviewContext({ cwd, base: 'main', head: 'feature' })).rejects.toThrow(
+        /checkout is at/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a file that is a symlink out of the repository', async () => {
+    const outside = path.join(home, 'secret.txt');
+    await writeFile(outside, 'the key of the machine\n', 'utf-8');
+    await symlink(outside, path.join(repo, 'src', 'link.ts'));
+
+    expect(await resolveInRepo(repo, 'src/link.ts')).toBeUndefined();
+    expect(await resolveInRepo(repo, 'src/app.ts')).toBe(path.join(repo, 'src', 'app.ts'));
+    expect(await resolveInRepo(repo, '../secret.txt')).toBeUndefined();
   });
 });
