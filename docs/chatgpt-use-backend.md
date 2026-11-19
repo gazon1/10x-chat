@@ -79,7 +79,7 @@ The id of the request is the receipt of the CLI:
 `~/.chatgpt-use/requests/<id>.json`. It is written from before the submission
 to the end of the turn, and it is what `status`, `resume` and `cancel` read.
 
-The CLI accepts letters, digits, `.` and `-` in an id. Every other byte of
+The CLI accepts letters, digits, `.`, `_` and `-` in an id. Every other byte of
 the id of the request is escaped (`_` and its hex code), so two requests never
 share a receipt; an id that is too long for the CLI becomes a hash of it, and
 the hash carries a trailing `_` — the escape never ends that way, so the two

@@ -593,6 +593,10 @@ describe('the ChatGPT backend of chatgpt-use', () => {
 
     const ids = calls.map((call) => call.args[call.args.indexOf('--request-id') + 1]);
     expect(ids[0]).not.toBe(ids[1]);
+    // The CLI accepts letters, digits, `.`, `_` and `-` (up to 128).
+    for (const id of ids) {
+      expect(id).toMatch(/^[A-Za-z0-9._-]{1,128}$/);
+    }
   });
 
   it('is registered with the provider it drives', () => {

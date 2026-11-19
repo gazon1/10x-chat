@@ -543,7 +543,7 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
 /**
  * The receipt id of a request for the CLI.
  *
- * The CLI accepts letters, digits, `.` and `-`. Every other byte is escaped
+ * The CLI accepts letters, digits, `.`, `_` and `-`. Every other byte is escaped
  * as `_` and its hex code, so two different request ids never share a
  * receipt: the escape is reversible, so `a/b` and `a_2Fb` stay apart.
  *
