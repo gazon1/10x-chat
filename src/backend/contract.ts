@@ -1,5 +1,3 @@
-import type { GeneratedImage } from '../types.js';
-
 /**
  * The seam between the application and whatever answers the prompt.
  *
@@ -8,6 +6,25 @@ import type { GeneratedImage } from '../types.js';
  * browser providers of today, an HTTP API, a CLI tool, or a fake for the
  * tests.
  */
+
+/**
+ * An image of an answer.
+ *
+ * The type lives here and not in the types of the providers: the contract
+ * must not depend on the browser, and the types of the providers do.
+ */
+export interface GeneratedImage {
+  /** Source URL of the generated image (may require auth cookies). */
+  url: string;
+  /** Alt text or description. */
+  alt?: string;
+  /** Natural width in pixels. */
+  width?: number;
+  /** Natural height in pixels. */
+  height?: number;
+  /** Local file path after download (set by orchestrator). */
+  localPath?: string;
+}
 
 /**
  * Whether a request reached the model.

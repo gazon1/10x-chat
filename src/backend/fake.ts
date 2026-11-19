@@ -80,6 +80,8 @@ interface KnownRequest {
   request: BackendRequest;
   /** The answer — a failed request has none. */
   response?: BackendResponse;
+  /** The failure of the request — a failed request has no answer. */
+  failure?: BackendFailure;
   /** Whether the request reached the model. */
   submission: BackendSubmission;
   cancelled: boolean;
@@ -162,6 +164,7 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       // and the status of the request must say so.
       known.set(request.requestId, {
         request,
+        failure,
         submission: failure.submission,
         cancelled: previous?.cancelled === true,
         running: false,
@@ -213,6 +216,21 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
             message: `The fake backend does not know the request '${request.requestId}'.`,
             // The backend cannot tell whether the request ran.
             submission: 'unknown',
+          },
+        };
+      }
+      // A request that has already answered is not continued: the answer
+      // that is recorded stays the answer of the request.
+      if (entry.response) return { ok: true, value: entry.response };
+      // A request that never reached the model cannot be continued either —
+      // it has to be sent again.
+      if (entry.submission === 'not_submitted') {
+        return {
+          ok: false,
+          failure: {
+            kind: entry.failure?.kind ?? 'unknown_submission',
+            message: `The request '${request.requestId}' was never submitted — it must be sent again.`,
+            submission: 'not_submitted',
           },
         };
       }

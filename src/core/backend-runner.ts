@@ -55,7 +55,7 @@ export async function runBackendChat(
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
-  const session = await createSession(provider, options.prompt, options.model);
+  const session = await createSession(provider, options.prompt, model);
   await saveBundle(session.id, bundle);
   await updateSession(session.id, { status: 'running' });
 

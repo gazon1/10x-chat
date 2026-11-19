@@ -23,6 +23,9 @@ describe('Backend contract', () => {
     expect(source).not.toMatch(/playwright/i);
     expect(source).not.toMatch(/\b(Page|Locator|BrowserContext)\b/);
     expect(source).not.toMatch(/\.(locator|evaluate|innerHTML|content)\(/);
+    // The types of the providers depend on Playwright — the contract must
+    // not reach them, not even through an import.
+    expect(source).not.toMatch(/from '\.\.\/types\.js'/);
   });
 
   it('keeps the request id and the conversation id', async () => {
@@ -167,6 +170,26 @@ describe('Fake backend', () => {
     expect(outcome.failure.submission).toBe('unknown');
   });
 
+  it('does not run a completed request again', async () => {
+    const backend = createFakeBackend([
+      { prompt: 'hello', answer: 'the first answer', resume: { answer: 'the second answer' } },
+    ]);
+    await backend.ask({ requestId: 'req-1', prompt: 'hello' });
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'hello' });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value.text).toBe('the first answer');
+  });
+
+  it('refuses to resume a request that was never submitted', async () => {
+    const backend = createFakeBackend([{ prompt: 'busy', failure: 'busy' }]);
+    await backend.ask({ requestId: 'req-1', prompt: 'busy' });
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'busy' });
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.failure.submission).toBe('not_submitted');
+  });
+
   it('recovers a failed request with a resume', async () => {
     const backend = createFakeBackend([
       { prompt: 'boom', failure: 'timeout', resume: { answer: 'the recovered answer' } },
@@ -296,6 +319,22 @@ describe('Chat through the backend contract', () => {
 
     await runChat({ prompt: 'hello', provider: 'chatgpt', timeoutMs: 5_000 }, { backend });
     expect(requests[1].timeoutMs).toBe(5_000);
+  });
+
+  it('records the model of the config file in the session', async () => {
+    await writeFile(
+      path.join(tempHome, 'config.json'),
+      JSON.stringify({
+        defaultProvider: 'chatgpt',
+        headless: true,
+        profileMode: 'shared',
+        defaultModel: 'model-a',
+      }),
+    );
+    const backend = createFakeBackend();
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    const session = await getSession(result.sessionId);
+    expect(session.meta.model).toBe('model-a');
   });
 
   it('fails the session when the backend throws', async () => {
