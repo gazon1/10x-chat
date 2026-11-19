@@ -152,6 +152,13 @@ function invalidOutput(response: BackendResponse, requestId: string): BackendFai
       submission,
     };
   }
+  if (typeof response.truncated !== 'boolean') {
+    return {
+      kind: 'invalid_output',
+      message: 'The backend answered without the state of the answer.',
+      submission,
+    };
+  }
   if (response.requestId !== requestId) {
     return {
       kind: 'invalid_output',

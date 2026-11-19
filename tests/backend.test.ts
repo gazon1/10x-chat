@@ -192,6 +192,18 @@ describe('Fake backend', () => {
     expect(resumed.failure.submission).toBe('not_submitted');
   });
 
+  it('does not resume a cancelled request', async () => {
+    const backend = createFakeBackend([{ prompt: 'hello', answer: 'the answer' }]);
+    const running = backend.ask({ requestId: 'req-1', prompt: 'hello' });
+    await backend.cancel('req-1');
+    await running;
+
+    const resumed = await backend.resume({ requestId: 'req-1', prompt: 'hello' });
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.failure.kind).toBe('cancelled');
+  });
+
   it('recovers a failed request with a resume', async () => {
     const backend = createFakeBackend([
       { prompt: 'boom', failure: 'timeout', resume: { answer: 'the recovered answer' } },
@@ -412,6 +424,26 @@ describe('Chat through the backend contract', () => {
           ok: true,
           value: { requestId: 'req-1', text: undefined, truncated: false, submission: 'submitted' },
         }) as unknown as BackendOutcome<BackendResponse>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('invalid_output');
+  });
+
+  it('fails the run when the backend answers without the state of the answer', async () => {
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        const outcome = await base.ask(request);
+        if (!outcome.ok) return outcome;
+        return {
+          ok: true as const,
+          value: { ...outcome.value, truncated: 'false' as unknown as boolean },
+        };
+      },
     };
     const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
       (thrown: unknown) => thrown,

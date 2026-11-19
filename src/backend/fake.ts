@@ -143,20 +143,19 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
     // The yield opens the window in which a cancel reaches the request.
     await Promise.resolve();
     if (known.get(request.requestId)?.cancelled === true) {
+      const failure: BackendFailure = {
+        kind: 'cancelled',
+        message: 'The request was cancelled.',
+        submission: 'submitted',
+      };
       known.set(request.requestId, {
         request,
+        failure,
         submission: 'submitted',
         cancelled: true,
         running: false,
       });
-      return {
-        ok: false,
-        failure: {
-          kind: 'cancelled',
-          message: 'The request was cancelled.',
-          submission: 'submitted',
-        },
-      };
+      return { ok: false, failure };
     }
     if (rule?.failure) {
       const failure = failureFor(rule.failure, rule);
@@ -222,6 +221,17 @@ export function createFakeBackend(rules: FakeBackendRule[] = []): AiBackend {
       // A request that has already answered is not continued: the answer
       // that is recorded stays the answer of the request.
       if (entry.response) return { ok: true, value: entry.response };
+      // A cancelled request stays cancelled: it is not continued.
+      if (entry.cancelled) {
+        return {
+          ok: false,
+          failure: entry.failure ?? {
+            kind: 'cancelled',
+            message: 'The request was cancelled.',
+            submission: 'submitted',
+          },
+        };
+      }
       // A request that never reached the model cannot be continued either —
       // it has to be sent again.
       if (entry.submission === 'not_submitted') {
