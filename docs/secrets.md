@@ -14,7 +14,7 @@ The store has two backends:
 The name of a secret is what the config file refers to; the value lives only
 in the store.
 
-```
+```text
 ~/.10x-chat/
 ├── config.json      ← references only: { "providerKeys": { "chatgpt": "openai-key" } }
 └── secrets.json     ← the values (only when the file store is used)
@@ -37,7 +37,7 @@ printf %s "$KEY" | 10x-chat secrets set openai-key   # or from a pipe
 names only — there is no command that prints a value. The first line of
 `secrets list` names the backend that holds the values:
 
-```
+```text
 keyring: Secret Service (service 10x-chat-secrets)
 ```
 
@@ -55,7 +55,7 @@ name has to be allowed, so a trailing line terminator (`\n`, `\r`, `\r\n`)
 never slips through. The CLI checks the name **before** it asks for the value:
 a password that could not be stored is not typed in.
 
-```
+```text
 Invalid secret name "../escape": a name may contain only letters, numbers,
 dots, dashes and underscores
 ```
@@ -91,7 +91,7 @@ missing config file** falls back to the default (`auto`). A config file that
 cannot be read, cannot be parsed or does not hold a valid config is an
 **error**:
 
-```
+```text
 Invalid config file ~/.10x-chat/config.json: cannot be parsed — JSON5: invalid
 character 'j' at 1:7. The store of the secrets is not chosen while the config
 file is broken — repair it, then try again.
@@ -163,7 +163,7 @@ The refused migration changes nothing — the keyring keeps its value, the file
 keeps its content — and the command fails with a message that names the
 secret, never its value:
 
-```
+```text
 The secrets of the file store could not be migrated into the system keyring:
 the keyring already holds a different value for "openai-key". The file is kept
 and the keyring is untouched — remove the secret from the keyring or update
@@ -201,7 +201,7 @@ It can be written with the CLI:
 A reference to a secret that is not stored is an error — the run stops with a
 message that names the reference and the provider, never the value:
 
-```
+```text
 Invalid config file ~/.10x-chat/config.json: No secret named "openai-key"
 (config key "providerKeys.chatgpt"). Create it with: 10x-chat secrets set openai-key
 ```
@@ -291,14 +291,14 @@ there is nothing left to migrate.
 
 A broken store is an error, never an empty key:
 
-```
+```text
 Secrets file ~/.10x-chat/secrets.json is corrupt — it cannot be parsed (…).
 Repair or delete the file, then set the secret again.
 ```
 
 A file with a name that is not allowed is broken in the same way:
 
-```
+```text
 Secrets file ~/.10x-chat/secrets.json is corrupt — the secret name "bad name"
 is not allowed: a name may contain only letters, numbers, dots, dashes and
 underscores. Repair or delete the file, then set the secret again.

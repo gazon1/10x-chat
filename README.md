@@ -8,7 +8,7 @@
 
 Paste this into your [OpenClaw](https://openclaw.ai) chat to install as a skill:
 
-```
+```text
 https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-chat/SKILL.md
 ```
 
@@ -256,7 +256,6 @@ Send a prompt to an AI provider via browser automation.
 | `--profile <name>` | Use a named browser profile |
 | `--isolated-profile` | Use the per-provider browser profile |
 
-
 ### `delegate <provider>`
 
 Start a provider-specific JSONL delegate for external AI callers that need multi-step control instead of a single one-shot prompt. The delegate opens the provider once, keeps the tab alive, then reads JSON commands from stdin and writes JSON responses to stdout.
@@ -434,7 +433,7 @@ The skill's playbooks do not use it: a reviewer that receives a pasted diff cann
 
 ## Data Layout
 
-```
+```text
 ~/.10x-chat/
 ├── profiles/
 │   ├── default/             # Shared profile (default): storage-state.json
@@ -497,7 +496,7 @@ The provider UIs change without notice — Grok in particular is the most fragil
 
 Set `TEN_X_CHAT_BROWSER_DEBUG=1` and every browser operation writes its artifacts into `~/.10x-chat/debug/<timestamp>-<provider>-<operation>/`:
 
-```
+```text
 meta.json       # the operation, the URL and the duration
 events.json     # console messages, page errors, failed requests
 screenshot.png  # a screenshot of the page

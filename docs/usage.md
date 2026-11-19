@@ -9,7 +9,7 @@ secrets store is in [secrets.md](secrets.md).
 The proxy comes from the config file, from the environment, or from nowhere —
 in that order:
 
-```
+```text
 config file  >  environment  >  no proxy
 ```
 
@@ -56,7 +56,7 @@ The three states of the config file are different:
 Without a `proxy` section the environment decides. The first variable with a
 value wins:
 
-```
+```text
 HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy > ALL_PROXY > all_proxy
 ```
 
@@ -89,7 +89,7 @@ every run launches its own browser and always uses the current proxy.
 
 The model is chosen in this order:
 
-```
+```text
 --model  >  defaultModel of the config file  >  the default of the provider
 ```
 

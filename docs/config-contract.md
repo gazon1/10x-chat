@@ -8,7 +8,7 @@ not aspirational.
 
 For every setting the order is the same:
 
-```
+```text
 CLI flag  >  config file  >  built-in default
 ```
 
@@ -158,7 +158,7 @@ the session of another process is never stopped *by a switch* — that would tak
 the browser away from the running session. Such a run fails with an error
 instead:
 
-```
+```text
 The shared browser daemon is busy with another session (1 active page(s)) and
 cannot be switched to a different headless mode (headed → headless): stopping
 it would end that session. Wait for the other session to finish, then run the
@@ -177,7 +177,7 @@ not exist yet, but it belongs to another process. If the wait for it runs into
 its timeout (10 s), the switch is refused as well — a timeout is not an idle
 daemon:
 
-```
+```text
 The shared browser daemon could not be switched to a different headless mode
 (headed → headless): a session of another process is still being created and
 did not finish in time (1 pending creation(s)). Stopping the daemon would end
@@ -229,7 +229,7 @@ be broken otherwise.
 The proxy comes from the config file, from the environment, or from nowhere —
 in that order:
 
-```
+```text
 config file  >  environment  >  no proxy
 ```
 
@@ -299,7 +299,7 @@ No error message ever names a value. The whole contract of the store is in
 Without a `proxy` section in the config file the environment decides. The
 first variable with a value wins:
 
-```
+```text
 HTTPS_PROXY  >  https_proxy  >  HTTP_PROXY  >  http_proxy  >  ALL_PROXY  >  all_proxy
 ```
 
@@ -328,7 +328,7 @@ Chromium can only authenticate a SOCKS proxy through the URL of the
 process of the browser, where every local process of the machine can read it.
 The safe path rejects the combination instead of leaking the password:
 
-```
+```text
 SOCKS proxy authentication is not supported without exposing the credentials
 in the process table: …
 ```

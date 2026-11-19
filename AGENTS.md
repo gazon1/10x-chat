@@ -34,7 +34,7 @@
 
 ## Architecture
 
-```
+```text
 CLI (Commander)
   └── orchestrator.ts
         ├── bundle.ts          ← assemble prompt + files
@@ -54,6 +54,7 @@ CLI (Commander)
    works in a visible browser: set `requiresHeaded: true`
 
 Provider actions implement:
+
 - `isLoggedIn(page)` — detect auth state
 - `selectModel?(page, model)` — optional; switch model/mode via the provider's UI picker before sending
 - `submitPrompt(page, prompt)` — type and send
@@ -131,6 +132,7 @@ TEN_X_CHAT_E2E_PROVIDERS=1 bun run test:e2e   # live provider scenarios (needs a
 ```
 
 If biome reports fixable issues:
+
 ```bash
 bun run lint:fix                            # auto-fix lint + format
 ```
@@ -151,7 +153,6 @@ CI pipeline (GitHub Actions): checkout → install → typecheck → lint → **
 ## Browser runtime
 
 CloakBrowser (a patched Chromium) is the only supported engine — see `src/browser/engine.ts`. The Camoufox/Firefox migration was measured and rejected ([docs/refactor-3-8-camoufox.md](docs/refactor-3-8-camoufox.md), [docs/refactor-4-9-camoufox-production-readiness.md](docs/refactor-4-9-camoufox-production-readiness.md)).
-
 
 ## Config
 

@@ -48,7 +48,7 @@ Upstream requirements that hold for this repo: Node ≥ 22.15 (repo declares `>=
 
 ## 3. The spike
 
-```
+```text
 spike/
   camoufox/          isolated sandbox: own package.json, own node_modules
     spike.mjs        the checks

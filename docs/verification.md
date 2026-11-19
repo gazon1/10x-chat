@@ -75,7 +75,7 @@ would have to authenticate through the URL in its command line.
 
 `.github/workflows/ci.yml` — on every push and pull request:
 
-```
+```text
 checkout → bun install --frozen-lockfile → typecheck → lint → test → e2e (CLI flows) → build
 ```
 
