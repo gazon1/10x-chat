@@ -74,12 +74,17 @@ back truncated is `failed`, and the run is incomplete.
 
 The payload of an answer is looked for in the whole answer: a model fences it,
 wraps it in a sentence, or repeats the format of the answer before the answer
-itself. Fifty delimiters that carry no JSON at all are tolerated; when there
-are more, the payload of the answer may lie behind them, and the step of the
-reviewer or of the verifier is `failed` rather than "no findings".
+itself. The payload that carries more of the answer wins: a fenced example of
+an empty answer must not hide the findings that follow it. Fifty delimiters
+that carry no JSON at all are tolerated; when there are more, the payload of
+the answer may lie behind them, and the step of the reviewer or of the
+verifier is `failed` rather than "no findings".
 
 Two findings of two reviewers are one finding when they are at the same file
-and the same line and their titles overlap. The coverage of the shorter title
+and the same line and their titles overlap. The words of a title are the words
+of every alphabet: a title written in another script carries its meaning too,
+and a title that normalizes to nothing would give the same id to two different
+findings. The coverage of the shorter title
 and of the longer one both count, so a title that is swallowed by a much
 longer one is a different defect, not the same one written twice. Every title
 that was merged into a finding counts: the overlap of the titles is not

@@ -950,6 +950,17 @@ describe('the parsing of the answers', () => {
     expect(merged).toHaveLength(1);
   });
 
+  it('gives a different id to two findings with a title in another script', () => {
+    // A title written in another script carries its meaning: it must not
+    // normalize to nothing, or two findings of one place would share one id
+    // and one verdict would settle both of them.
+    const first = { ...FINDING, title: 'Непроверенный ввод достигает exec' };
+    const second = { ...FINDING, title: 'Пароль пишется в журнал' };
+
+    expect(findingId(first)).not.toBe(findingId(second));
+    expect(findingId(first)).toBe(findingId({ ...first }));
+  });
+
   it('does not take the example of the schema for the payload', () => {
     // The reviewer repeats the format of the answer before the answer itself.
     const answer = [
@@ -969,6 +980,22 @@ describe('the parsing of the answers', () => {
           },
         ],
       }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not let a fenced example hide the findings of the answer', () => {
+    // A fenced payload is usually the answer, but an empty one is an example
+    // of the format: the findings that follow it must survive.
+    const answer = [
+      'The format I use is:',
+      '```json',
+      JSON.stringify({ findings: [] }),
+      '```',
       'And here is what I found:',
       JSON.stringify({ findings: [FINDING] }),
     ].join('\n');

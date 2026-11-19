@@ -230,8 +230,9 @@ export function extractJson(text: string, key?: string): unknown {
  * The better of two candidates.
  *
  * The payload that lost the least wins: the entries that pass the schema are
- * the answer, the example of the schema is not. A fenced payload beats an
- * unfenced one, a payload with more entries beats one with less, and a later
+ * the answer, the example of the schema is not. A payload with more entries
+ * beats one with less — a fenced example of an empty answer must not hide the
+ * findings that follow it. A fenced payload beats an unfenced one, and a later
  * payload beats an earlier one — a model that repeats the format of the
  * answer puts the format first.
  */
@@ -242,11 +243,11 @@ function betterCandidate<T extends { invalid: string[] }>(
   if (a.parsed.invalid.length !== b.parsed.invalid.length) {
     return a.parsed.invalid.length < b.parsed.invalid.length ? a : b;
   }
-  if (a.candidate.fenced !== b.candidate.fenced) {
-    return a.candidate.fenced ? a : b;
-  }
   if (a.count !== b.count) {
     return a.count > b.count ? a : b;
+  }
+  if (a.candidate.fenced !== b.candidate.fenced) {
+    return a.candidate.fenced ? a : b;
   }
   return a.candidate.at >= b.candidate.at ? a : b;
 }
@@ -375,7 +376,10 @@ function tokensOf(title: string): Set<string> {
   return new Set(
     title
       .toLowerCase()
-      .split(/[^a-z0-9]+/)
+      // The letters and the numbers of every alphabet: a title written in
+      // another script carries its meaning too, and an empty title would give
+      // the same id to two different findings.
+      .split(/[^\p{L}\p{N}]+/u)
       .filter((word) => word !== '' && !stopwords.has(word)),
   );
 }
