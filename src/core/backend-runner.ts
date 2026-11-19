@@ -73,16 +73,22 @@ export async function runBackendChat(
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
   const session = await createSession(provider, options.prompt, model);
   await saveBundle(session.id, bundle);
-  await updateSession(session.id, { status: 'running' });
-
-  console.log(chalk.dim(`Session: ${session.id}`));
-  console.log(chalk.blue(`Backend: ${backend.name}`));
 
   // The images of the answer are saved by the backend itself: the downloader
   // of the browser path needs a page with the cookies. The directory is the
   // one of the session, as it is without --save-images.
   const saveDir = options.saveImages ?? path.join(getSessionDir(session.id), 'images');
-  await mkdir(saveDir, { recursive: true });
+  try {
+    await mkdir(saveDir, { recursive: true });
+  } catch (error) {
+    // The run never started — the session must not stay 'running'.
+    await updateSession(session.id, { status: 'failed' });
+    throw error;
+  }
+  await updateSession(session.id, { status: 'running' });
+
+  console.log(chalk.dim(`Session: ${session.id}`));
+  console.log(chalk.blue(`Backend: ${backend.name}`));
 
   const request: BackendRequest = {
     requestId: session.id,

@@ -17,7 +17,7 @@ import {
   resetBackends,
 } from '../src/backend/index.js';
 import { runChat } from '../src/core/orchestrator.js';
-import { getSession } from '../src/session/index.js';
+import { getSession, listSessions } from '../src/session/index.js';
 
 describe('Backend contract', () => {
   it('does not depend on the browser implementation', async () => {
@@ -473,6 +473,20 @@ describe('Chat through the backend contract', () => {
     const session = await getSession(requests[0].requestId);
     expect(session.responsePath).toBeDefined();
     await expect(readFile(session.responsePath as string, 'utf8')).resolves.toBe('half of it');
+  });
+
+  it('fails the session when the image directory cannot be created', async () => {
+    const blocker = path.join(tempHome, 'blocker');
+    await writeFile(blocker, 'not a directory');
+    const backend = createFakeBackend();
+    await expect(
+      runChat(
+        { prompt: 'hello', provider: 'chatgpt', saveImages: path.join(blocker, 'images') },
+        { backend },
+      ),
+    ).rejects.toThrow();
+    const sessions = await listSessions();
+    expect(sessions[0].status).toBe('failed');
   });
 
   it('fails the run when the backend answers with a malformed response', async () => {
