@@ -24,6 +24,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "bun run src/bin/cli.ts",
     "start": "bun run build && node dist/bin/cli.js",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --fix .",
