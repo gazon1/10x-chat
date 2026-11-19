@@ -1322,6 +1322,22 @@ describe('the context of a review', () => {
     expect(bundle).toContain('name: ci');
   });
 
+  it('does not read the file a symlink points at into the bundle', async () => {
+    // A symlink is not a file of the revision: the bundle must not follow it
+    // out of the repository and hand its content to the backend.
+    const outside = path.join(home, 'secret.txt');
+    await writeFile(outside, 'the key of the machine\n', 'utf-8');
+    await symlink(outside, path.join(repo, 'src', 'link.ts'));
+
+    const bundle = await buildBundle({
+      prompt: 'the brief',
+      files: bundlePatterns(['src/link.ts']),
+      cwd: repo,
+    });
+
+    expect(bundle).not.toContain('the key of the machine');
+  });
+
   it('escapes the names of the files as literal patterns', () => {
     // A name of a file is a name, not a pattern.
     expect(bundlePatterns(['src/[id].ts'])).toEqual(['./src/\\[id\\].ts']);

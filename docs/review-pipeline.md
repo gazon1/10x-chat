@@ -100,7 +100,8 @@ bundle. A convention file is taken from the commit under review, not from the
 disk: an untracked `AGENTS.md` of the checkout is nobody's convention, and it
 would steer the reviewers away from the change. The names of the changed files
 are escaped before they become glob patterns: a name of a file is a name, not a
-pattern.
+pattern. The bundle does not follow a symlink: the file behind it is not a file
+of the revision, and it must not reach the backend.
 
 ## The report
 
