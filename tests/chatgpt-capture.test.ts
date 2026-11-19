@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ContextWindowFullError } from '../src/core/failures.js';
 import { chatgptActions } from '../src/providers/chatgpt.js';
+
+interface Snapshot {
+  found: boolean;
+  bodies: { text: string; html: string }[];
+  errorText?: string;
+}
 
 function createCapturePage(opts: {
   turnCounts: number[];
-  snapshots: Array<{ found: boolean; text: string; html: string; errorText?: string }>;
+  snapshots: Snapshot[];
   /** Is the Stop button visible on the given capture poll? */
   stopVisible?: (poll: number) => boolean;
+  /** Is the banner of the exhausted context window visible? */
+  contextFull?: boolean;
 }) {
   const { turnCounts, snapshots } = opts;
   let turnCountIndex = 0;
@@ -42,9 +51,23 @@ function createCapturePage(opts: {
       return defaultLocator;
     }),
     evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
-      if (Array.isArray(arg)) {
+      // The banner of the exhausted context window is read together with the
+      // rest of the state of the page: the options of the check carry the
+      // words of the banner.
+      if (arg && typeof arg === 'object' && 'bannerPattern' in arg) {
+        return {
+          bannerPresent: opts.contextFull === true,
+          newChatButtonIndex: -1,
+          composerUsable: false,
+          summaryMarker: false,
+          oldConversationGone: true,
+        };
+      }
+      if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
         const snapshot = snapshots[Math.min(snapshotIndex++, snapshots.length - 1)];
-        return snapshot ? { ...snapshot, errorText: snapshot.errorText ?? '' } : undefined;
+        return snapshot
+          ? { found: snapshot.found, bodies: snapshot.bodies, errorText: snapshot.errorText ?? '' }
+          : { found: false, bodies: [], errorText: '' };
       }
       return [];
     }),
@@ -59,11 +82,11 @@ describe('ChatGPT Provider', () => {
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
         ],
       });
 
@@ -80,12 +103,12 @@ describe('ChatGPT Provider', () => {
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [
-          { found: true, text: 'Hel', html: '<p>Hel</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
-          { found: true, text: 'Hello', html: '<p>Hello</p>' },
+          { found: true, bodies: [{ text: 'Hel', html: '<p>Hel</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
+          { found: true, bodies: [{ text: 'Hello', html: '<p>Hello</p>' }] },
         ],
       });
 
@@ -100,12 +123,65 @@ describe('ChatGPT Provider', () => {
       expect(chunks).toContain('lo');
     });
 
+    it('joins an answer that the provider split into several messages', async () => {
+      const { page } = createCapturePage({
+        turnCounts: [0, 1],
+        snapshots: [
+          {
+            found: true,
+            bodies: [{ text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' }],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+          {
+            found: true,
+            bodies: [
+              { text: 'SEVERITY: MAJOR\nLOCATION: src/a.ts:1', html: '<p>MAJOR</p>' },
+              { text: 'SEVERITY: MINOR\nLOCATION: src/b.ts:2', html: '<p>MINOR</p>' },
+            ],
+          },
+        ],
+      });
+
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+      });
+
+      expect(response.text).toBe(
+        'SEVERITY: MAJOR\nLOCATION: src/a.ts:1\n\nSEVERITY: MINOR\nLOCATION: src/b.ts:2',
+      );
+      expect(response.markdown).toBe('<p>MAJOR</p>\n\n<p>MINOR</p>');
+    });
+
     it('does not end the capture on a stable activity label while generating', async () => {
-      const label = { found: true, text: 'Reviewed potential bugs', html: '<p>label</p>' };
+      const label = {
+        found: true,
+        bodies: [{ text: 'Reviewed potential bugs', html: '<p>label</p>' }],
+      };
       const answer = {
         found: true,
-        text: 'Verdict: APPROVE. No blocking findings.',
-        html: '<p>Verdict: APPROVE…</p>',
+        bodies: [
+          { text: 'Verdict: APPROVE. No blocking findings.', html: '<p>Verdict: APPROVE…</p>' },
+        ],
       };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
@@ -118,16 +194,20 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
       expect(response.truncated).toBe(false);
     });
 
     it('waits out a stable activity label even without the Stop button', async () => {
-      const label = { found: true, text: 'Reviewed potential bugs', html: '<p>label</p>' };
+      const label = {
+        found: true,
+        bodies: [{ text: 'Reviewed potential bugs', html: '<p>label</p>' }],
+      };
       const answer = {
         found: true,
-        text: 'Verdict: APPROVE. No blocking findings.',
-        html: '<p>Verdict: APPROVE…</p>',
+        bodies: [
+          { text: 'Verdict: APPROVE. No blocking findings.', html: '<p>Verdict: APPROVE…</p>' },
+        ],
       };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
@@ -139,7 +219,7 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
     });
 
     it('fails on a streaming error instead of waiting for the timeout', async () => {
@@ -148,8 +228,7 @@ describe('ChatGPT Provider', () => {
         snapshots: [
           {
             found: false,
-            text: '',
-            html: '',
+            bodies: [],
             errorText: 'Something went wrong while generating the response',
           },
         ],
@@ -167,8 +246,7 @@ describe('ChatGPT Provider', () => {
         snapshots: [
           {
             found: false,
-            text: '',
-            html: '',
+            bodies: [],
             errorText: 'Oops, the response could not be produced',
           },
         ],
@@ -180,8 +258,284 @@ describe('ChatGPT Provider', () => {
       ).rejects.toThrow(/reported an error while generating/);
     });
 
+    it('does not mistake a long answer about a streaming error for a failure', async () => {
+      const answer = {
+        found: true,
+        bodies: [
+          {
+            text: 'The capture reads the wrong node; a streaming error there loses half of the answer.',
+            html: '<p>The capture reads the wrong node…</p>',
+          },
+        ],
+      };
+      const { page } = createCapturePage({
+        turnCounts: [0, 1],
+        snapshots: [answer, answer, answer, answer, answer],
+        stopVisible: () => false,
+      });
+
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 30_000,
+      });
+
+      expect(response.text).toBe(answer.bodies[0].text);
+    });
+
+    it('does not stream the answer of the previous turn before the prompt is in the DOM', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
+      const oldAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of the previous turn', html: '<p>old</p>' }],
+      };
+      // The answer of the previous turn is still being rendered when the
+      // prompt is sent: it grows after the baseline was taken.
+      const growingOldAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of the previous', html: '<p>old</p>' }],
+      };
+      const newAnswer = {
+        found: true,
+        bodies: [{ text: 'Answer of this turn', html: '<p>new</p>' }],
+      };
+      // The DOM lags behind the submit: the prompt lands after two polls.
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            const landed = polls > 2;
+            return {
+              found: true,
+              bodies:
+                polls === 1
+                  ? growingOldAnswer.bodies
+                  : landed
+                    ? newAnswer.bodies
+                    : oldAnswer.bodies,
+              errorText: '',
+              lastUserText: landed ? prompt : 'the prompt of the chat before this run',
+              // The snapshot is scoped to the prompt of this run: the bodies
+              // are the answer of this turn.
+              scoped: landed,
+              userCount: landed ? 2 : 1,
+              turnCount: landed ? 2 : 1,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      // The answer of the previous turn is still in the DOM: it must not be
+      // taken for the answer of this run.
+      expect(chunks.join('')).not.toContain('previous turn');
+      expect(response.text).toBe('Answer of this turn');
+    });
+
+    it('does not take the message of the user for the answer', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
+      const answer = 'SEVERITY: MINOR\nLOCATION: src/a.ts:1\nPROBLEM: the answer of the turn.';
+      // The current UI renders the message of the user in a markdown root of
+      // its own: the fallback of the capture finds it before the answer.
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // The submit happens before the prompt is in the DOM. Then the
+            // message of the user is found first, and the answer comes later.
+            if (polls === 1) {
+              return {
+                found: false,
+                bodies: [],
+                errorText: '',
+                lastUserText: '',
+                scoped: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
+            const isTheMessageOfTheUser = polls === 2;
+            return {
+              found: true,
+              bodies: isTheMessageOfTheUser
+                ? [{ text: prompt, html: `<p>${prompt}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+              // The prompt of this run has landed: the snapshot is scoped to
+              // its turn.
+              scoped: true,
+              userCount: 2,
+              turnCount: 2,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).not.toContain('independent reviewer');
+      expect(response.text).toBe(answer);
+      expect(response.markdown).toBe('<p>answer</p>');
+    });
+
+    it('does not stream the label of the thinking UI', async () => {
+      const label = 'Reviewed synchronization bugs';
+      const answer = 'The answer of the turn.';
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn(() => defaultLocator),
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            const isTheLabel = polls <= 1;
+            return {
+              found: true,
+              bodies: isTheLabel
+                ? [{ text: label, html: `<p>${label}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: 'the prompt of this run',
+            };
+          }
+          return false;
+        }),
+      };
+
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).not.toContain('Reviewed synchronization bugs');
+      expect(response.text).toBe(answer);
+    });
+
+    it('does not stream the labels of the thinking UI next to the answer', async () => {
+      const label = 'Audited readiness checks';
+      const answer = 'The answer of the turn.';
+      let polls = 0;
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn(() => defaultLocator),
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // While the answer is still rendering, the fallback of the
+            // snapshot finds a label of the thinking UI.
+            const isTheLabel = polls <= 1;
+            return {
+              found: true,
+              bodies: isTheLabel
+                ? [{ text: label, html: `<p>${label}</p>` }]
+                : [{ text: answer, html: '<p>answer</p>' }],
+              errorText: '',
+              lastUserText: 'the prompt of this run',
+              viaFallback: isTheLabel,
+            };
+          }
+          return false;
+        }),
+      };
+
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(chunks.join('')).toBe(answer);
+      expect(response.text).toBe(answer);
+    });
+
     it('accepts a short answer that looks like an activity label after a grace period', async () => {
-      const answer = { found: true, text: 'Read the PR description.', html: '<p>Read…</p>' };
+      const answer = {
+        found: true,
+        bodies: [{ text: 'Read the PR description.', html: '<p>Read…</p>' }],
+      };
       const { page } = createCapturePage({
         turnCounts: [0, 1],
         snapshots: [answer],
@@ -192,8 +546,176 @@ describe('ChatGPT Provider', () => {
         timeoutMs: 30_000,
       });
 
-      expect(response.text).toBe(answer.text);
+      expect(response.text).toBe(answer.bodies[0].text);
       expect(response.truncated).toBe(false);
+    });
+
+    it('captures an answer that has the same text as the answer of the previous turn', async () => {
+      const prompt =
+        'You are an independent reviewer of a pull request. Report the findings in the format.';
+      // The answer of this turn is the same text as the answer of the previous
+      // turn: the difference is not visible in the text, only in the position
+      // of the body in the chat.
+      const answer = 'OK';
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            // The first snapshot is the baseline: the answer of the previous
+            // turn. The next ones hold the answer of this turn.
+            return {
+              found: true,
+              bodies: [{ text: answer, html: '<p>OK</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+              // The snapshot is scoped to the turn of the user: its body is
+              // the answer of this turn.
+              scoped: true,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+      });
+
+      expect(response.text).toBe(answer);
+    });
+
+    it('does not capture the answer of the previous turn for a short prompt', async () => {
+      // A short prompt has no long piece for the marker of the prompt: an
+      // empty marker would mean "the prompt has landed" for every prompt, and
+      // the answer of the previous turn of the reused chat would be taken for
+      // the answer of this run.
+      const prompt = 'Hi';
+      const defaultLocator = {
+        count: vi.fn(async () => 0),
+        first: () => defaultLocator,
+        last: () => defaultLocator,
+        isVisible: vi.fn(async () => false),
+      };
+      const composer = {
+        waitFor: vi.fn(async () => {}),
+        click: vi.fn(async () => {}),
+        fill: vi.fn(async () => {}),
+        evaluate: vi.fn(async () => false),
+        isVisible: vi.fn(async () => true),
+      };
+      let polls = 0;
+      const page = {
+        url: vi.fn(() => 'https://chatgpt.com'),
+        waitForTimeout: vi.fn(async () => {}),
+        locator: vi.fn((selector: string) => {
+          if (selector.includes('composer')) return { first: () => composer };
+          return defaultLocator;
+        }),
+        keyboard: {
+          insertText: vi.fn(async () => {}),
+          press: vi.fn(async () => {}),
+          type: vi.fn(async () => {}),
+        },
+        evaluate: vi.fn(async (_fn: unknown, arg?: unknown) => {
+          if (arg && typeof arg === 'object' && 'bodySelectors' in arg) {
+            polls++;
+            // The first snapshot is the baseline: the answer of the previous
+            // turn, still streaming. It grows after the baseline was taken.
+            if (polls === 1) {
+              return {
+                found: true,
+                bodies: [{ text: 'Answer', html: '<p>Answer</p>' }],
+                errorText: '',
+                lastUserText: 'the prompt of the chat before this run',
+                scoped: false,
+                promptMatched: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
+            // The prompt has not landed yet: the answer of the previous turn
+            // is still in the DOM.
+            if (polls === 2) {
+              return {
+                found: true,
+                bodies: [{ text: 'Answer of the previous turn', html: '<p>old</p>' }],
+                errorText: '',
+                lastUserText: 'the prompt of the chat before this run',
+                scoped: false,
+                promptMatched: false,
+                userCount: 1,
+                turnCount: 1,
+              };
+            }
+            // The prompt has landed: the answer of this turn is in the DOM.
+            return {
+              found: true,
+              bodies: [{ text: 'Answer of this turn', html: '<p>new</p>' }],
+              errorText: '',
+              lastUserText: prompt,
+              scoped: true,
+              promptMatched: true,
+              userCount: 2,
+              turnCount: 2,
+            };
+          }
+          // The send button of the page is clicked.
+          if (typeof arg === 'string') return true;
+          return false;
+        }),
+      };
+
+      await chatgptActions.submitPrompt(page as never, prompt);
+      const chunks: string[] = [];
+      const response = await chatgptActions.captureResponse(page as never, {
+        timeoutMs: 5_000,
+        onChunk: (chunk) => chunks.push(chunk),
+      });
+
+      // The answer of the previous turn must not be streamed as the answer of
+      // this run.
+      expect(chunks.join('')).not.toContain('previous turn');
+      expect(response.text).toBe('Answer of this turn');
+    });
+
+    it('fails with the context error when the banner appears during the answer', async () => {
+      // The answer of a chat whose context window ran out never comes: the
+      // capture has to say so instead of waiting for the timeout.
+      const { page } = createCapturePage({
+        turnCounts: [1],
+        snapshots: [{ found: true, bodies: [{ text: '', html: '' }] }],
+        contextFull: true,
+      });
+
+      await expect(
+        chatgptActions.captureResponse(page as never, { timeoutMs: 5_000 }),
+      ).rejects.toThrow(ContextWindowFullError);
     });
   });
 });

@@ -75,9 +75,7 @@ describe('config proxy commands', () => {
       throw new Error('exit');
     };
     try {
-      await expect(
-        run(['proxy', 'set', 'http://user:pass@proxy.example:3128']),
-      ).rejects.toThrow();
+      await expect(run(['proxy', 'set', 'http://user:pass@proxy.example:3128'])).rejects.toThrow();
       expect(code).toBe(1);
       const cfg = await readConfig().catch(() => ({}));
       expect(cfg.proxy).toBeUndefined();

@@ -42,7 +42,7 @@ Installing via npm resolved **2.6.8**, which reports 9 formatter errors in Markd
 
 With the lockfile-pinned version the same command is clean:
 
-```
+```bash
 npx -y @biomejs/biome@2.4.4 check .
 → Checked 99 files. No fixes applied. Found 3 infos. exit=0
 ```
@@ -97,6 +97,7 @@ Registry: `src/providers/registry.ts`; contract: `src/types.ts` (`ProviderConfig
 | dreamina | dreamina.capcut.com, `Seedance 2.0 Fast`, 10 min | video only; `dreaminaActions.submitPrompt/captureResponse` throw "not yet implemented" | 1 command |
 
 Notes:
+
 - `chat --all` fans out to chatgpt, gemini, claude, grok, perplexity (`CHAT_PROVIDERS`).
 - `chat --provider dreamina` passes validation and fails later at submit (stub).
 - Flow video launches with `provider: 'gemini'`; Dreamina launches with `provider: 'dreamina'`,
@@ -170,6 +171,7 @@ Runtime deps and their real use:
 18 files / 153 tests, all unit-level with mocked `Page` objects (no browser launched).
 
 Covered:
+
 - providers: chatgpt (capture + overlays), claude, grok, gemini (login + image gen), dreamina (login),
   dreamina-video (helpers/constants), flow (config, selectors, mode config, generation, submit,
   capture, upload), registry, model selection, shared submit helper
@@ -202,6 +204,7 @@ Keep: `playwright-core` (CloakBrowser peer), `playwright` (types + debug script)
 ## 9. Mandatory regression cases: Flow and Dreamina
 
 Flow (Veo) must keep:
+
 - config/URL/models/default `Omni Flash`/10 min timeout; exact selector strings
 - mode configuration: model pill (skip dropdown for default), Video tab, `16:9`/`9:16`, `1x`–`x4`, Escape
 - generation polling: percentage callbacks, early exit when videos appear, timeout
@@ -212,6 +215,7 @@ Flow (Veo) must keep:
 - CLI flags and result/download helpers (mp4/webm/base64)
 
 Dreamina (Seedance) must keep:
+
 - five models, default `Seedance 2.0 Fast`, aspects/resolutions, duration bounds 4–15 s,
   ref-mode labels
 - placeholder rejection: accept CDN `/video/` and `blob:`; reject the 780×780 spinner URL

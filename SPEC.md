@@ -78,7 +78,7 @@ Today an AI-coding agent (Codex, Claude Code, Cursor) is locked into a single mo
 
 ## 5 · Architecture
 
-```
+```text
 ┌─────────────────────────────────────┐
 │               CLI Layer             │  Commander-based
 │  login · chat · status · session ·  │  subcommands
@@ -185,6 +185,7 @@ interface Provider {
 ```
 
 **Flow:**
+
 1. Launch Playwright with `launchPersistentContext(profileDir)`.
 2. Navigate to provider URL.
 3. Show message: "Please login in the browser window. Press Enter when done."
@@ -214,6 +215,7 @@ interface Provider {
 ```
 
 **Flow:**
+
 1. Resolve provider(s) from flags or config default.
 2. Bundle prompt + files into markdown.
 3. For each provider (parallel if multi):
@@ -256,7 +258,7 @@ interface Provider {
 
 ## 8 · Data Layout
 
-```
+```text
 ~/.10x-chat/
 ├── config.json                    # User preferences (JSON5)
 ├── profiles/
@@ -299,12 +301,14 @@ interface Provider {
 ### 10.1 Playwright vs CDP (Chrome DevTools Protocol)
 
 Oracle uses raw CDP via `chrome-remote-interface` + `chrome-launcher`. This gives low-level control but requires:
+
 - Manual cookie sync from Chrome's cookie DB
 - Custom profile state management
 - Frame/target management
 - No built-in waiting/retry primitives
 
 **Playwright** provides all of this out of the box:
+
 - `launchPersistentContext()` — persists cookies, localStorage, sessions automatically
 - `page.waitForSelector()` — built-in smart waiting
 - `page.fill()` / `page.click()` — reliable DOM interaction
@@ -404,6 +408,7 @@ description: Chat with web AI agents (ChatGPT, Gemini, Claude) via browser autom
 ## 13 · Milestones
 
 ### v0.1 — MVP (Single Provider)
+
 - [ ] Project scaffold (TypeScript, pnpm, Vitest, Biome)
 - [ ] Browser manager with Playwright persistent context
 - [ ] Profile lock mechanism
@@ -414,6 +419,7 @@ description: Chat with web AI agents (ChatGPT, Gemini, Claude) via browser autom
 - [ ] `status` command
 
 ### v0.2 — Multi-Provider
+
 - [ ] Gemini provider
 - [ ] Claude provider
 - [ ] Provider registry
@@ -421,6 +427,7 @@ description: Chat with web AI agents (ChatGPT, Gemini, Claude) via browser autom
 - [ ] `config` command
 
 ### v0.3 — Agent Integration
+
 - [ ] SKILL.md + `skill install` command
 - [ ] `--copy` clipboard fallback
 - [ ] `--dry-run` preview
@@ -428,6 +435,7 @@ description: Chat with web AI agents (ChatGPT, Gemini, Claude) via browser autom
 - [ ] `session` command (replay/reattach)
 
 ### v0.4 — Polish
+
 - [ ] MCP server mode (`10x-chat mcp`)
 - [ ] Model selection per provider
 - [ ] Streaming response display

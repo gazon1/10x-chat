@@ -290,7 +290,6 @@ environ contains no password either. The unit tests for this are in
 > environment but passes the proxy explicitly — and it is a Camoufox-specific caveat, not a
 > property of the production runtime (production runs CloakBrowser).
 
-
 ### 4.2 Lifecycle matrix — 14 passed, 0 failed
 
 Both engines behave identically: persistent profile reuse (cookie **and** localStorage survive a

@@ -8,7 +8,7 @@
 
 Paste this into your [OpenClaw](https://openclaw.ai) chat to install as a skill:
 
-```
+```text
 https://raw.githubusercontent.com/gazon1/10x-chat/refs/heads/main/skills/10x-chat/SKILL.md
 ```
 
@@ -46,7 +46,7 @@ The published package contains the compiled CLI — no TypeScript build and no d
 10x-chat login chatgpt
 
 # 2. Send a prompt
-10x-chat chat -p "Explain this error" --provider chatgpt --file "src/**/*.ts"
+10x-chat chat -p "Explain this error" --provider chatgpt
 
 # 3. View session history
 10x-chat status
@@ -230,8 +230,8 @@ Opens a headed browser for you to authenticate. The session persists across runs
 Send a prompt to an AI provider via browser automation.
 
 ```bash
-10x-chat chat -p "Review this code for bugs" --provider chatgpt --file "src/**/*.ts"
-10x-chat chat -p "Debug this error" --file "logs/error.log"
+10x-chat chat -p "Review https://github.com/owner/repo/pull/42 (base <sha>, head <sha>)" --provider chatgpt
+10x-chat chat -p "Debug this error: <paste the output>" --provider chatgpt
 10x-chat chat -p "Explain this" --dry-run              # Preview bundle without sending
 10x-chat chat -p "Explain this" --copy                  # Copy bundle to clipboard
 10x-chat chat -p "Long task" --timeout 600000 --headed  # 10min timeout, visible browser
@@ -249,13 +249,12 @@ Send a prompt to an AI provider via browser automation.
 | `--dry-run` | Preview the bundle without sending |
 | `--headed` | Show browser window during chat |
 | `--headless` | Force headless, also for the providers that normally run headed |
-| `--timeout <ms>` | Response timeout in milliseconds (default: 300000) |
+| `--timeout <ms>` | Response timeout in milliseconds (default: the provider's — 1800000 for ChatGPT) |
 | `--transport <name>` | `browser` (default) or `api` (requires `--provider` with API support) — see [docs/transports.md](docs/transports.md) |
 | `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |
 | `--isolated-profile` | Use the per-provider browser profile |
-
 
 ### `delegate <provider>`
 
@@ -420,6 +419,24 @@ separate profile per provider.
 10x-chat migrate --keep               # Keep the old isolated profiles after migrating
 ```
 
+### `daemon`
+
+Inspect and control the shared browser daemon — the Chromium process that
+serves every `chat` run.
+
+```bash
+10x-chat daemon status      # PID, port, mode, version, open sessions
+10x-chat daemon stop         # Stop it (refuses while another session runs)
+10x-chat daemon stop --force # Stop it even with a running session
+10x-chat daemon restart      # Replace it with a new one (new code after an update)
+```
+
+The daemon runs the code of the package it was started from. After an update
+the running daemon is too old, so it is replaced automatically on the next
+command — and the install script stops an idle daemon right away. A daemon
+that still has the session of another process is never killed: the command
+tells you to wait instead.
+
 ## File Bundling
 
 The `--file` flag accepts globs. Files are assembled into a markdown bundle sent as the prompt:
@@ -430,9 +447,11 @@ The `--file` flag accepts globs. Files are assembled into a markdown bundle sent
 
 Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically excluded.
 
+The skill's playbooks do not use it: a reviewer that receives a pasted diff cannot see the surrounding code, the conventions or the CI run. They get the GitHub coordinates instead — repository URL, pull request URL, commit SHAs — and read the code themselves. Nothing is attached either: the pipeline commits and pushes the branch to `origin` before the review, because a reviewer can only read what is on GitHub.
+
 ## Data Layout
 
-```
+```text
 ~/.10x-chat/
 ├── profiles/
 │   ├── default/             # Shared profile (default): storage-state.json
@@ -459,6 +478,12 @@ Security-sensitive files (`.env*`, `*.pem`, `*.key`, etc.) are automatically exc
 ```
 
 This lets agents like Codex or Claude Code use 10x-chat to query other models for cross-validation, code review, or debugging help.
+
+The skill ships two playbooks next to `SKILL.md`: `workflows/pr-review.md` (independent role-specific reviewers, a finding schema, verification and a final verdict) and `workflows/helix-development.md` (gated checkpoints with acceptance criteria and evidence). Both end in the shared report format in `workflows/report-format.md`.
+
+The pipeline is: commit → push the branch → open the pull request → ask the reviewer, with the pull request number and URL in the prompt. The reviewer reads the repository on GitHub itself; no files are sent to the provider.
+
+The publication steps happen **only with the user's word** — a request to review something is not a request to publish it. The playbooks keep the read-only review and the publication apart, so an agent that follows them never pushes without permission.
 
 ## Supported Providers
 
@@ -489,7 +514,7 @@ The provider UIs change without notice — Grok in particular is the most fragil
 
 Set `TEN_X_CHAT_BROWSER_DEBUG=1` and every browser operation writes its artifacts into `~/.10x-chat/debug/<timestamp>-<provider>-<operation>/`:
 
-```
+```text
 meta.json       # the operation, the URL and the duration
 events.json     # console messages, page errors, failed requests
 screenshot.png  # a screenshot of the page

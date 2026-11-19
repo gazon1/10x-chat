@@ -45,11 +45,33 @@ export class SiteUnavailableError extends Error {
  * The provider failed while generating the answer (a streaming or network
  * error shown in the page). The answer never arrived, so the run may ask the
  * same question again.
+ *
+ * `partial` says that the provider had already produced a part of the answer
+ * when it failed: the task of the prompt may have run already, so the prompt
+ * must not be sent a second time.
  */
 export class ProviderGenerationError extends Error {
-  constructor(message: string) {
+  /** The provider had already produced a part of the answer when it failed. */
+  readonly partial: boolean;
+
+  constructor(message: string, options: { partial?: boolean } = {}) {
     super(message);
     this.name = 'ProviderGenerationError';
+    this.partial = options.partial === true;
+  }
+}
+
+/**
+ * The context window of the chat ran out.
+ *
+ * The answer of such a chat never comes: the provider has to continue the
+ * conversation in a new chat with a summary. The run does that instead of
+ * waiting for a timeout.
+ */
+export class ContextWindowFullError extends ProviderGenerationError {
+  constructor(message = 'The context window of the chat is full.') {
+    super(message);
+    this.name = 'ContextWindowFullError';
   }
 }
 

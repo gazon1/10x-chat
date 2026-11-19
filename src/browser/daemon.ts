@@ -1,17 +1,22 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Cookie, Download, FileChooser, Page } from 'playwright';
-import { resolveEffectiveProxy } from '../config.js';
+import { loadConfig, resolveEffectiveProxy } from '../config.js';
 import { getAppDir } from '../paths.js';
+import { getPackageVersion } from '../version.js';
 import { acquireProfileLock } from './lock.js';
+import { declaredBoundMs, requestedTimeoutMs, timeoutPlan } from './operation-timeout.js';
 import { isProcessAlive } from './process.js';
 import { fingerprintProxy } from './proxy.js';
 import { loadStorageState, saveStorageState } from './state.js';
 
 const DAEMON_FILE = 'browser-daemon.json';
+/** The output of the detached daemon: the timings of its calls. */
+const DAEMON_LOG_FILE = 'browser-daemon.log';
 const DAEMON_LOCK_DIR = path.join(getAppDir(), 'browser-daemon-lock');
 const STARTUP_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 3_000;
@@ -75,6 +80,8 @@ export interface DaemonState {
   headless: boolean;
   /** Fingerprint of the proxy the daemon was started with (no secrets). */
   proxy?: string;
+  /** The version of the package the daemon was started from. */
+  version?: string;
   createdAt: string;
 }
 
@@ -99,6 +106,15 @@ class BrowserDaemonHttpClient {
   async request(request: RpcRequest): Promise<RpcSuccess> {
     let response: Response;
     try {
+      // The bound of the client is derived from the bound of the call: it is
+      // above the bound of the server, so a hung call is answered by the
+      // server with an error and the invalidation of its session — the client
+      // has to be able to read that answer. The bound is still there: a daemon
+      // that never answers must not hang the run forever.
+      const plan = timeoutPlan(
+        requestedTimeoutMs(request.kind, request.method, request.args as unknown[] | undefined) ??
+          declaredBoundMs(request.kind, request.method),
+      );
       response = await fetch(`http://127.0.0.1:${this.state.port}/rpc`, {
         method: 'POST',
         headers: {
@@ -106,7 +122,7 @@ class BrowserDaemonHttpClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(plan.clientMs),
       });
     } catch (error) {
       throw new Error(`Browser daemon request failed: ${getErrorMessage(error)}`);
@@ -159,16 +175,44 @@ function getErrorMessage(error: unknown): string {
  * The headless mode is a property of the browser process: a daemon that runs
  * headed must not serve a headless request (the user would get a visible
  * window) and a headless daemon must not serve a headed request.
+ *
+ * The version is a property of the code: the daemon runs the code of the
+ * package it was started from, so a daemon of an older version must not serve
+ * a client of a newer one.
  */
 export function isDaemonCompatible(
   state: DaemonState,
   requestedHeadless: boolean,
   requestedProxy: string,
+  requestedVersion: string,
 ): boolean {
   if (state.headless !== requestedHeadless) return false;
   // The proxy is a property of the browser process: a daemon that runs with
   // another proxy cannot be reused.
-  return state.proxy === requestedProxy;
+  if (state.proxy !== requestedProxy) return false;
+  return state.version === requestedVersion;
+}
+
+/**
+ * Why the running daemon cannot serve the request.
+ *
+ * The reason is the first difference between the daemon and the request: it
+ * is what the user has to know when the daemon cannot be switched.
+ */
+export function describeDaemonMismatch(
+  state: DaemonState,
+  requestedHeadless: boolean,
+  requestedProxy: string,
+  requestedVersion: string,
+): string {
+  if (state.headless !== requestedHeadless) {
+    return (
+      `a different headless mode (${state.headless ? 'headless' : 'headed'} → ` +
+      `${requestedHeadless ? 'headless' : 'headed'})`
+    );
+  }
+  if (state.proxy !== requestedProxy) return 'a different proxy';
+  return `an older version (${state.version ?? 'unknown'} → ${requestedVersion})`;
 }
 
 function serializeValue(value: unknown): SerializedValue {
@@ -214,9 +258,14 @@ function deserializeHandle(
         handle.url ?? 'about:blank',
       );
     case 'filechooser':
-      return createRemoteFileChooserProxy(client, handle.id);
+      return createRemoteFileChooserProxy(client, handle.id, handle.pageId ?? '');
     case 'download':
-      return createRemoteDownloadProxy(client, handle.id, handle.suggestedFilename ?? '');
+      return createRemoteDownloadProxy(
+        client,
+        handle.id,
+        handle.pageId ?? '',
+        handle.suggestedFilename ?? '',
+      );
   }
 }
 
@@ -328,13 +377,19 @@ function createRemotePageProxy(
     goto: async (url: string, options?: Record<string, unknown>) =>
       invoke('goto', [url, options ?? {}]),
     waitForTimeout: async (timeout: number) => invoke('waitForTimeout', [timeout]),
-    waitForLoadState: async (state?: string) => invoke('waitForLoadState', [state ?? 'load']),
+    waitForLoadState: async (state?: string, options?: Record<string, unknown>) =>
+      invoke('waitForLoadState', [state ?? 'load', options ?? {}]),
     waitForURL: async (
       url: string | RegExp | WaitForUrlPredicate,
       options?: Record<string, unknown>,
     ) => invoke('waitForURL', [url, options ?? {}]),
     waitForEvent: async (event: string, options?: Record<string, unknown>) =>
       invoke('waitForEvent', [event, options ?? {}]),
+    waitForFunction: async (
+      pageFunction: unknown,
+      arg?: unknown,
+      options?: Record<string, unknown>,
+    ) => invoke('waitForFunction', [pageFunction, arg ?? null, options ?? {}]),
     evaluate: async (pageFunction: unknown, arg?: unknown) =>
       invoke('evaluate', [pageFunction, arg]),
     close: async () => invoke('close'),
@@ -371,6 +426,7 @@ function createRemoteKeyboardProxy(
       invoke('press', [key, options ?? {}]),
     type: async (text: string, options?: Record<string, unknown>) =>
       invoke('type', [text, options ?? {}]),
+    insertText: async (text: string) => invoke('insertText', [text]),
   } as Page['keyboard'];
 }
 
@@ -403,36 +459,47 @@ function createRemoteLocatorProxy(
     waitFor: async (options?: Record<string, unknown>) => invoke('waitFor', [options ?? {}]),
     isVisible: async (options?: Record<string, unknown>) => invoke('isVisible', [options ?? {}]),
     click: async (options?: Record<string, unknown>) => invoke('click', [options ?? {}]),
-    fill: async (value: string) => invoke('fill', [value]),
+    fill: async (value: string, options?: Record<string, unknown>) =>
+      invoke('fill', [value, options ?? {}]),
     count: async () => invoke('count'),
     textContent: async (options?: Record<string, unknown>) =>
       invoke('textContent', [options ?? {}]),
     innerHTML: async (options?: Record<string, unknown>) => invoke('innerHTML', [options ?? {}]),
-    setInputFiles: async (files: string | string[]) => invoke('setInputFiles', [files]),
+    setInputFiles: async (files: string | string[], options?: Record<string, unknown>) =>
+      invoke('setInputFiles', [files, options ?? {}]),
     evaluate: async (pageFunction: unknown, arg?: unknown) =>
       invoke('evaluate', [pageFunction, arg]),
   } as unknown as ReturnType<Page['locator']>;
 }
 
+/**
+ * The proxy of a file chooser.
+ *
+ * The page of the event is sent with the call: a timed-out event operation
+ * invalidates the page of the event instead of nothing.
+ */
 function createRemoteFileChooserProxy(
   client: BrowserDaemonHttpClient,
   eventId: string,
+  pageId: string,
 ): FileChooser {
   return {
     setFiles: async (files: string | string[]) => {
       await client.request({
         kind: 'event',
         method: 'setFiles',
-        target: { eventId },
+        target: { eventId, pageId },
         args: [serializeValue(files)],
       });
     },
   } as unknown as FileChooser;
 }
 
+/** The proxy of a download. The page of the event is sent with the call. */
 function createRemoteDownloadProxy(
   client: BrowserDaemonHttpClient,
   eventId: string,
+  pageId: string,
   suggestedFilename: string,
 ): Download {
   return {
@@ -441,7 +508,7 @@ function createRemoteDownloadProxy(
       await client.request({
         kind: 'event',
         method: 'saveAs',
-        target: { eventId },
+        target: { eventId, pageId },
         args: [serializeValue(filePath)],
       });
     },
@@ -485,6 +552,7 @@ async function readDaemonState(): Promise<DaemonState | null> {
       token: state.token,
       headless: Boolean(state.headless),
       proxy: typeof state.proxy === 'string' ? state.proxy : undefined,
+      version: typeof state.version === 'string' ? state.version : undefined,
       createdAt: typeof state.createdAt === 'string' ? state.createdAt : new Date().toISOString(),
     };
   } catch {
@@ -807,12 +875,16 @@ function getServerEntryPoint(): { command: string; args: string[] } {
   };
 }
 
-async function waitForDaemonReady(headless: boolean, proxy: string): Promise<DaemonState> {
+async function waitForDaemonReady(
+  headless: boolean,
+  proxy: string,
+  version: string,
+): Promise<DaemonState> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const state = await readDaemonState();
-    if (state && isDaemonCompatible(state, headless, proxy)) {
+    if (state && isDaemonCompatible(state, headless, proxy, version)) {
       const healthy = await pingDaemon(state);
       if (healthy) return state;
     }
@@ -824,17 +896,25 @@ async function waitForDaemonReady(headless: boolean, proxy: string): Promise<Dae
 
 async function startDaemon(headless: boolean, proxy: string): Promise<DaemonState> {
   const entry = getServerEntryPoint();
-  const child = spawn(entry.command, entry.args, {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      TEN_X_CHAT_BROWSER_HEADLESS: headless ? '1' : '0',
-      TEN_X_CHAT_BROWSER_STATE_FILE: getDaemonStatePathInternal(),
-    },
-  });
-  child.unref();
-  return waitForDaemonReady(headless, proxy);
+  // The daemon is detached: its output would be lost without a file. The log
+  // is the only place where a hung page operation is visible.
+  mkdirSync(getAppDir(), { recursive: true });
+  const logFd = openSync(path.join(getAppDir(), DAEMON_LOG_FILE), 'a');
+  try {
+    const child = spawn(entry.command, entry.args, {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: {
+        ...process.env,
+        TEN_X_CHAT_BROWSER_HEADLESS: headless ? '1' : '0',
+        TEN_X_CHAT_BROWSER_STATE_FILE: getDaemonStatePathInternal(),
+      },
+    });
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+  return waitForDaemonReady(headless, proxy, getPackageVersion());
 }
 
 /**
@@ -885,13 +965,27 @@ export function decideDaemonSwitch(result: DaemonSwitchResult, reason: string): 
   return { action: 'stop' };
 }
 
-async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
+/**
+ * The daemon that serves the request.
+ *
+ * A running daemon that fits the request is reused. A daemon that does not
+ * fit it may only be replaced when it has no session of another process any
+ * more — the barrier of the switch decides that.
+ */
+export async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
   // The daemon runs the browser with the effective proxy: the config file
   // first, the environment second. The fingerprint of it decides whether the
   // running daemon can serve the request.
   const proxy = fingerprintProxy(await resolveEffectiveProxy());
+  // The daemon runs the code of this package: a daemon of an older version
+  // must be replaced after an update.
+  const version = getPackageVersion();
   const existing = await readDaemonState();
-  if (existing && isDaemonCompatible(existing, headless, proxy) && (await pingDaemon(existing))) {
+  if (
+    existing &&
+    isDaemonCompatible(existing, headless, proxy, version) &&
+    (await pingDaemon(existing))
+  ) {
     return existing;
   }
 
@@ -901,20 +995,16 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
     if (current) {
       const health = await fetchDaemonHealth(current);
       const healthy = health !== undefined;
-      if (healthy && isDaemonCompatible(current, headless, proxy)) {
+      if (healthy && isDaemonCompatible(current, headless, proxy, version)) {
         return current;
       }
 
       if (healthy) {
         // The daemon does not fit the request: it runs in another headless
-        // mode or with another proxy. It may only be stopped when it has no
-        // session of another process any more — otherwise that session would
-        // lose its browser.
-        const reason =
-          current.headless !== headless
-            ? `a different headless mode (${current.headless ? 'headless' : 'headed'} → ` +
-              `${headless ? 'headless' : 'headed'})`
-            : 'a different proxy';
+        // mode, with another proxy or with the code of an older version. It
+        // may only be stopped when it has no session of another process any
+        // more — otherwise that session would lose its browser.
+        const reason = describeDaemonMismatch(current, headless, proxy, version);
 
         if (daemonIsBusy(health)) {
           throw daemonBusyError(reason, health);
@@ -927,7 +1017,11 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
         const decision = decideDaemonSwitch(await beginDaemonSwitch(current), reason);
 
         if (decision.action === 'restart') {
+          // The daemon does not answer: it is really gone. Its process may
+          // still be alive (a stale browser) — it is stopped, so it does not
+          // linger next to the new daemon.
           await clearDaemonState();
+          terminateDaemonProcess(current.pid);
           return startDaemon(headless, proxy);
         }
 
@@ -939,13 +1033,7 @@ async function ensureDaemonState(headless: boolean): Promise<DaemonState> {
 
         await new BrowserDaemonHttpClient(current).stop();
 
-        if (isProcessAlive(current.pid)) {
-          try {
-            process.kill(current.pid, 'SIGTERM');
-          } catch {
-            // already gone
-          }
-        }
+        terminateDaemonProcess(current.pid);
       }
 
       await clearDaemonState();
@@ -975,15 +1063,171 @@ export async function stopDaemon(): Promise<void> {
   const client = new BrowserDaemonHttpClient(state);
   await client.stop();
 
-  if (isProcessAlive(state.pid)) {
-    try {
-      process.kill(state.pid, 'SIGTERM');
-    } catch {
-      // already gone
-    }
-  }
+  terminateDaemonProcess(state.pid);
 
   await clearDaemonState();
+}
+
+/** Stop the daemon process, if it is still alive. */
+function terminateDaemonProcess(pid: number): void {
+  if (!isProcessAlive(pid)) return;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
+/** What the daemon is doing right now. */
+export interface DaemonStatus {
+  /** The daemon process is alive. */
+  running: boolean;
+  /** The daemon answers its health request. */
+  healthy: boolean;
+  pid?: number;
+  port?: number;
+  headless?: boolean;
+  /** The version of the package the daemon was started from. */
+  version?: string;
+  createdAt?: string;
+  /** The daemon has the session of another process. */
+  busy: boolean;
+  activeContexts: number;
+  activePages: number;
+  pendingCreations: number;
+  /** The version of the package of this client. */
+  clientVersion: string;
+  /** The running daemon runs the code of this package. */
+  upToDate: boolean;
+}
+
+/**
+ * The state of the shared browser daemon.
+ *
+ * The daemon is compared with the client: a daemon of an older version must
+ * be replaced, otherwise it serves the code of the package it was started
+ * from.
+ */
+export async function daemonStatus(): Promise<DaemonStatus> {
+  const clientVersion = getPackageVersion();
+  const state = await readDaemonState();
+  if (!state) {
+    return {
+      running: false,
+      healthy: false,
+      busy: false,
+      activeContexts: 0,
+      activePages: 0,
+      pendingCreations: 0,
+      clientVersion,
+      upToDate: false,
+    };
+  }
+
+  const health = await fetchDaemonHealth(state);
+  return {
+    running: true,
+    healthy: health !== undefined,
+    pid: state.pid,
+    port: state.port,
+    headless: state.headless,
+    version: state.version,
+    createdAt: state.createdAt,
+    busy: daemonIsBusy(health),
+    activeContexts: health?.activeContexts ?? 0,
+    activePages: health?.activePages ?? 0,
+    pendingCreations: health?.pendingCreations ?? 0,
+    clientVersion,
+    upToDate: state.version === clientVersion,
+  };
+}
+
+/** What a stop of the daemon did. */
+export type DaemonStopOutcome = 'stopped' | 'not-running' | 'busy' | 'refused';
+
+/**
+ * Stop the daemon, but not the session of another process.
+ *
+ * A daemon that still has the session of another process must not be stopped:
+ * that session would lose its browser. The caller decides what to do with a
+ * busy daemon.
+ *
+ * The stop goes through the barrier of the switch: the daemon stops accepting
+ * new sessions and waits for the session creations that are already running.
+ * Without it a session of another process could start between the check of the
+ * load and the stop — and it would lose its browser.
+ */
+export async function requestDaemonStop(
+  options: { force?: boolean } = {},
+): Promise<DaemonStopOutcome> {
+  const state = await readDaemonState();
+  if (!state) return 'not-running';
+
+  if (options.force) {
+    // The caller asks for it explicitly: the daemon is stopped without the
+    // barrier, and the session of another process ends with it.
+    await stopDaemon();
+    return 'stopped';
+  }
+
+  const result = await beginDaemonSwitch(state);
+
+  if (result.outcome === 'unavailable') {
+    // The daemon does not answer at all: it is really gone.
+    await clearDaemonState();
+    return 'not-running';
+  }
+
+  if (result.outcome === 'failed') {
+    // The daemon answered, but not with the result of the switch: it does not
+    // know the endpoint, refused the request, or answered something
+    // unreadable. It may still serve the session of another process, so it is
+    // left running — the caller has to ask again with `--force`.
+    await abortDaemonSwitch(state);
+    return 'refused';
+  }
+
+  if (!daemonMayBeStopped(result.health)) {
+    // The daemon has the session of another process, or a session of another
+    // process is still being created: it keeps running and serves sessions
+    // again.
+    await abortDaemonSwitch(state);
+    return 'busy';
+  }
+
+  await stopDaemon();
+  return 'stopped';
+}
+
+/**
+ * Replace the daemon with a new one.
+ *
+ * The new daemon runs the code of this package — that is the point of the
+ * restart after an update.
+ */
+export async function restartDaemon(
+  options: { force?: boolean; headless?: boolean } = {},
+): Promise<DaemonStatus> {
+  const outcome = await requestDaemonStop(options);
+  if (outcome === 'busy') {
+    throw new Error(
+      'The shared browser daemon has the session of another process and cannot be stopped: ' +
+        'stopping it would end that session. Wait for the other session to finish, ' +
+        'then run the command again (or pass --force).',
+    );
+  }
+
+  if (outcome === 'refused') {
+    throw new Error(
+      'The shared browser daemon could not be stopped: it did not confirm that it is idle, ' +
+        'and it may still serve the session of another process. It was left running. ' +
+        'Run the command again (or pass --force).',
+    );
+  }
+
+  const headless = options.headless ?? (await loadConfig()).headless;
+  await ensureDaemonState(headless);
+  return daemonStatus();
 }
 
 export async function launchSharedBrowserSession(

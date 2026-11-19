@@ -73,7 +73,9 @@ async function printEffective(config: AppConfig): Promise<void> {
   if (refs.length > 0) {
     console.log('  providerKeys:');
     for (const [provider, secret] of refs.sort(([a], [b]) => a.localeCompare(b))) {
-      const state = has(secret) ? chalk.green('configured') : chalk.red(`missing secret "${secret}"`);
+      const state = has(secret)
+        ? chalk.green('configured')
+        : chalk.red(`missing secret "${secret}"`);
       const transports = getApiTransport(provider) ? 'browser, api' : 'browser';
       console.log(`    ${provider}: secret=${secret} [${state}] transports=${transports}`);
     }
@@ -81,7 +83,9 @@ async function printEffective(config: AppConfig): Promise<void> {
     console.log('  providerKeys: (none)');
   }
 
-  console.log(`  credentialStorage: config=${config.credentialStorage ?? 'auto'} actual=${await store.location()}`);
+  console.log(
+    `  credentialStorage: config=${config.credentialStorage ?? 'auto'} actual=${await store.location()}`,
+  );
 }
 
 export function createConfigCommand(): Command {
@@ -250,7 +254,9 @@ export function createConfigCommand(): Command {
           break;
         case 'proxysecret':
           console.error(
-            chalk.red('The key "proxy-secret" is gone: clear the proxy with "10x-chat config proxy clear".'),
+            chalk.red(
+              'The key "proxy-secret" is gone: clear the proxy with "10x-chat config proxy clear".',
+            ),
           );
           process.exit(1);
           break;
@@ -273,7 +279,11 @@ export function createConfigCommand(): Command {
     .argument('<server>', 'Proxy URL without credentials, e.g. http://proxy.example:3128')
     .option('--bypass <hosts>', 'Comma-separated hosts that bypass the proxy')
     .action(async (server: string, options: { bypass?: string }) => {
-      if (server.includes('@') || splitProxyCredentials(server).username || splitProxyCredentials(server).password) {
+      if (
+        server.includes('@') ||
+        splitProxyCredentials(server).username ||
+        splitProxyCredentials(server).password
+      ) {
         console.error(
           chalk.red(
             'The proxy URL must not contain credentials. Store them with: 10x-chat secrets set proxy.username && 10x-chat secrets set proxy.password',
@@ -282,8 +292,13 @@ export function createConfigCommand(): Command {
         process.exit(1);
       }
       const config = await loadConfig({ checkSecrets: false });
-      const bypass = options.bypass !== undefined ? parseBypass(options.bypass) : config.proxy?.bypass;
-      config.proxy = { enabled: true, server: server.trim(), ...(bypass?.length ? { bypass } : {}) };
+      const bypass =
+        options.bypass !== undefined ? parseBypass(options.bypass) : config.proxy?.bypass;
+      config.proxy = {
+        enabled: true,
+        server: server.trim(),
+        ...(bypass?.length ? { bypass } : {}),
+      };
       await saveConfig(config);
       console.log(chalk.green(`✓ Proxy enabled: ${config.proxy.server}`));
       console.log(

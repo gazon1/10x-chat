@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import { conversationIdFromUrl } from '../core/conversations.js';
 import {
   AntibotChallengeError,
+  ContextWindowFullError,
   isChallengeVisible,
   ProviderGenerationError,
 } from '../core/failures.js';
@@ -15,7 +16,31 @@ import { clickSendButton, submitPromptToComposer } from './submit.js';
 
 const chatgptSubmitBaseline = new WeakMap<
   Page,
-  { turnCount: number; latestText: string; errorText: string; url: string }
+  {
+    turnCount: number;
+    /**
+     * The number of the messages of the user when the prompt was sent: a
+     * message that appears later is the prompt of this run.
+     */
+    userCount: number;
+    /** The flat text of the last message of the user when the prompt was sent. */
+    lastUserText: string;
+    /**
+     * The pieces of the prompt that must be in the DOM when it has landed.
+     * The chat collapses its history, so the number of the messages of the
+     * user is not a reliable sign that the prompt is there.
+     */
+    markers: string[];
+    /** The prompt of this run: the message of the user must not be taken
+     * for the answer. */
+    promptText: string;
+    /** The text of every assistant message of the chat before the prompt. */
+    bodies: string[];
+    /** The joined text of the assistant messages before the prompt. */
+    latestText: string;
+    errorText: string;
+    url: string;
+  }
 >();
 const chatgptPendingFiles = new WeakMap<Page, string[]>();
 
@@ -53,6 +78,69 @@ const ASSISTANT_CONTENT_FALLBACK_SELECTORS = [
   '.markdown',
 ] as const;
 
+/**
+ * The strict selectors of an assistant message body.
+ *
+ * A single answer of ChatGPT can be split into several messages (a long
+ * review is streamed as two), and one message can hold several nested body
+ * elements. Every message must be captured — the last one alone is only the
+ * tail of the answer.
+ */
+const ASSISTANT_BODY_SELECTORS = [
+  '[data-markdown-text-style="assistant-message"]',
+  '[data-response-body]',
+  '[data-dil-response]',
+] as const;
+
+/** The container of one message of the current UI. */
+const MESSAGE_CONTAINER_SELECTORS = [
+  '[data-conversation-role="assistant"]',
+  '[data-message-author-role="assistant"]',
+  '[data-message-id]',
+  'article[data-testid^="conversation-turn-"]',
+  'div.agent-turn',
+] as const;
+
+/** The message of the user. */
+const USER_MESSAGE_SELECTORS = '[data-message-author-role="user"], [data-conversation-role="user"]';
+
+/** One answer body of the assistant (one message of ChatGPT). */
+interface AssistantBody {
+  text: string;
+  html: string;
+}
+
+/** The state of the assistant messages of the page. */
+interface AssistantSnapshot {
+  found: boolean;
+  /** The bodies of the assistant messages, in the order of the document. */
+  bodies: AssistantBody[];
+  errorText: string;
+  /** The text of the last message of the user. */
+  lastUserText: string;
+  /**
+   * The bodies come from the fallback of the snapshot: the last visible match
+   * of the page, not the body of the message of the assistant. While the
+   * answer is still rendering it is a label of the thinking UI.
+   */
+  viaFallback: boolean;
+  /**
+   * The bodies belong to the turn of the prompt of this run: the message of
+   * the user that holds the prompt has landed, and the answer follows it.
+   *
+   * Then they are the answer of this run, even when their text is the same
+   * as the text of the answer of the previous turn: the difference is not
+   * visible in the text.
+   */
+  scoped: boolean;
+  /** The message of the user that holds the prompt of this run. */
+  promptMatched: boolean;
+  /** The number of the messages of the user in the chat. */
+  userCount: number;
+  /** The number of the turns of the assistant in the chat. */
+  turnCount: number;
+}
+
 export const CHATGPT_CONFIG: ProviderConfig = {
   name: 'chatgpt',
   displayName: 'ChatGPT',
@@ -73,7 +161,9 @@ export const CHATGPT_CONFIG: ProviderConfig = {
     'o3',
   ],
   defaultModel: 'Pro',
-  defaultTimeoutMs: 5 * 60 * 1000,
+  // Pro and Thinking need minutes, not seconds: a full PR review takes
+  // ~11 min, and the old 5 min cut the answer off mid-stream.
+  defaultTimeoutMs: 30 * 60 * 1000,
   botProtected: true,
 };
 
@@ -151,6 +241,35 @@ async function getAssistantTurnCount(page: Page): Promise<number> {
 }
 
 /**
+ * The pieces of the prompt that must be in the DOM when it has landed.
+ *
+ * The chat collapses its history ("Show more"), so the number of the messages
+ * of the user is not a reliable sign. The text of the message of the user is:
+ * the tail of the prompt is in the DOM even when the message is collapsed.
+ *
+ * The list is never empty for a prompt that has text: an empty list would
+ * mean "the prompt has landed" for every prompt, and the answer of the
+ * previous turn would be taken for the answer of this run.
+ */
+function promptMarkers(prompt: string): string[] {
+  const flat = prompt.replace(/\s+/g, '').toLowerCase();
+  if (!flat) return [];
+  const markers: string[] = [];
+  const tail = flat.slice(-60);
+  if (tail.length >= 20) markers.push(tail);
+  const middle = flat.slice(Math.floor(flat.length / 2), Math.floor(flat.length / 2) + 60);
+  if (middle.length >= 20) markers.push(middle);
+  // A short prompt has no long piece: its whole text is the marker.
+  if (markers.length === 0) markers.push(flat);
+  return markers;
+}
+
+/** The text without its whitespace and in lower case. */
+function flatText(value: string): string {
+  return value.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
  * The labels ChatGPT renders in the assistant node while it works ("Thinking",
  * "Reviewed potential bugs"). They can stay unchanged for longer than the
  * stability window, so a stable label must never be taken for the answer.
@@ -162,9 +281,14 @@ const ACTIVITY_TEXT =
 const GENERATION_ERROR_TEXT =
   /\b(?:streaming error|error (?:in|while) (?:the )?(?:message )?(?:stream|response)|there was an error (?:generating|while generating)|failed to generate (?:a )?response|network error|connection (?:lost|failed)|something (?:went|seems to have gone) wrong)\b/i;
 
-/** An unknown error message still starts with a failure word. */
+/**
+ * An unknown error message still starts with a failure word.
+ *
+ * The answer itself can talk about a failure — a review of the streaming code
+ * does — so only an answer that *starts* like a failure is a failure.
+ */
 const GENERATION_ERROR_START =
-  /^\s*(?:error|failed|failure|unable|couldn'?t|can'?t|network|connection|oops|something)\b/i;
+  /^\s*(?:sorry|oops|uh|error|failed|failure|unable|couldn'?t|can'?t|network|connection|something|there\s+(?:was|is)\s+an?\s+error|streaming\s+error)\b/i;
 
 /**
  * How many polls a short activity-like text may stay stable before it is taken
@@ -172,6 +296,14 @@ const GENERATION_ERROR_START =
  * answer ("Read the PR description.") must not wait for the whole timeout.
  */
 const ACTIVITY_GRACE_POLLS = 20;
+
+/**
+ * How many polls pass between two checks of the context window.
+ *
+ * The banner is read from the page: a check on every poll would cost an
+ * evaluation per second for nothing.
+ */
+const CONTEXT_CHECK_POLLS = 5;
 
 /**
  * The error the page reports instead of the answer, if any.
@@ -186,18 +318,61 @@ function generationErrorOf(
   const errorText = snapshot.errorText !== baseline.errorText ? snapshot.errorText.trim() : '';
   const text = snapshot.text !== baseline.latestText ? snapshot.text.trim() : '';
 
-  const known = GENERATION_ERROR_TEXT.exec(`${errorText} ${text}`);
-  if (known) return known[0];
-  if (errorText) return errorText.slice(0, 200);
-  if (text.length <= 200 && GENERATION_ERROR_START.test(text)) return text;
+  if (errorText) {
+    const known = GENERATION_ERROR_TEXT.exec(errorText);
+    if (known) return known[0];
+    return errorText.slice(0, 200);
+  }
+
+  // The answer itself can talk about a streaming error — a review of the
+  // streaming code does — so only an answer that starts like a failure is
+  // taken for one.
+  if (text.length > 0 && text.length <= 200) {
+    const known = GENERATION_ERROR_TEXT.exec(text);
+    if (known && GENERATION_ERROR_START.test(text)) return known[0];
+    if (GENERATION_ERROR_START.test(text)) return text;
+  }
   return undefined;
 }
 
+/**
+ * The assistant messages of the page.
+ *
+ * The messages are grouped by the container they belong to: one answer can be
+ * split into several messages, and one message can hold several nested body
+ * elements (the markdown root, the response body, the dil renderer). The
+ * longest text of a group is the answer of that message.
+ *
+ * The snapshot is scoped to the prompt of this run: the bodies are the ones
+ * that follow the message of the user that holds the prompt. The caller needs
+ * to know that the prompt has landed — until then the answer of the previous
+ * turn is still in the DOM.
+ */
 async function getLatestAssistantSnapshot(
   page: Page,
-): Promise<{ found: boolean; text: string; html: string; errorText: string }> {
+  opts: {
+    asked?: string;
+    markers?: string[];
+    baselineUserCount?: number;
+    baselineLastUserText?: string;
+  } = {},
+): Promise<AssistantSnapshot> {
+  const asked = flatText(opts.asked ?? '');
+  const markers = opts.markers ?? [];
+  const baselineUserCount = opts.baselineUserCount ?? 0;
+  const baselineLastUserText = flatText(opts.baselineLastUserText ?? '');
   return page.evaluate(
-    (selectors: readonly string[]) => {
+    ({
+      bodySelectors,
+      fallbackSelectors,
+      messageSelectors,
+      userSelectors,
+      turnSelectors,
+      asked,
+      markers,
+      baselineUserCount,
+      baselineLastUserText,
+    }) => {
       const errorText = Array.from(
         document.querySelectorAll('[role="alert"], [data-testid*="error"]'),
       )
@@ -207,35 +382,300 @@ async function getLatestAssistantSnapshot(
         .trim()
         .slice(0, 400);
 
-      const isVisible = (element: Element | null): element is HTMLElement => {
-        if (!(element instanceof HTMLElement)) return false;
-        if (element.hidden) return false;
+      const isVisible = (element: Element): boolean => {
         const style = window.getComputedStyle(element);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
         const rect = element.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       };
 
-      for (const selector of selectors) {
-        const matches = Array.from(document.querySelectorAll(selector));
-        if (matches.length === 0) continue;
+      const textOf = (element: Element): string =>
+        ((element as HTMLElement).innerText || element.textContent || '').trim();
 
-        const visibleMatches = matches.filter(isVisible);
-        const last = (visibleMatches.length > 0 ? visibleMatches : matches).at(-1);
-        if (!(last instanceof Element)) continue;
+      const flatOf = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
 
-        const text =
-          last instanceof HTMLElement
-            ? (last.innerText || last.textContent || '').trim()
-            : (last.textContent || '').trim();
-        const html = 'innerHTML' in last ? (last as HTMLElement).innerHTML || '' : '';
-        return { found: true, text, html, errorText };
+      // The text of a message of the user: the label of the message ("You
+      // said:") is not a part of the prompt.
+      const userTextOf = (element: Element): string => {
+        const own = textOf(element);
+        const parent = element.parentElement ? textOf(element.parentElement) : '';
+        return flatOf(parent.length > own.length ? parent : own);
+      };
+
+      /**
+       * Whether the message of the user holds the prompt of this run.
+       *
+       * The match is positive: a short prompt must be the whole message, and
+       * a long one is recognized by a piece of it — the chat shows the tail
+       * of the message even when the history is collapsed.
+       */
+      const holdsPrompt = (element: Element): boolean => {
+        if (!asked) return false;
+        const text = userTextOf(element);
+        if (!text) return false;
+        if (asked.length < 20) {
+          return text.replace(/^yousaid:/, '') === asked;
+        }
+        return markers.some((marker) => text.includes(marker));
+      };
+
+      const groups = new Map<Element, { text: string; html: string; element: Element }>();
+
+      // The messages of the user: the answer of this run is what follows the
+      // one that holds the prompt.
+      const userTurns = Array.from(document.querySelectorAll(userSelectors));
+      const lastUserTurn = userTurns.length > 0 ? userTurns[userTurns.length - 1] : null;
+      // The text of the last message of the user.
+      const lastUserText = lastUserTurn
+        ? (
+            ((lastUserTurn.parentElement as HTMLElement)?.innerText ??
+              lastUserTurn.textContent ??
+              '') as string
+          ).slice(-800)
+        : '';
+
+      // The message of the user that holds the prompt of this run: the last
+      // one that holds it — the same prompt can be in the chat twice.
+      let promptTurn: Element | null = null;
+      for (const turn of userTurns) {
+        if (holdsPrompt(turn)) promptTurn = turn;
+      }
+      // The prompt has landed: a new message of the user appeared, and it is
+      // the one that holds the prompt. The text of the message is the sign:
+      // the chat collapses its history, so the number of the messages of the
+      // user is not a reliable one.
+      const newUserTurn =
+        userTurns.length > baselineUserCount || flatOf(lastUserText) !== baselineLastUserText;
+      const landed = asked
+        ? newUserTurn && promptTurn !== null && promptTurn === lastUserTurn
+        : lastUserTurn !== null;
+      // The bodies of the answer of this run are the ones after the prompt.
+      const anchor = landed && promptTurn ? promptTurn : lastUserTurn;
+
+      // The turns of the assistant in the chat: a new one means that the
+      // assistant has answered.
+      const turnElements = new Set<Element>();
+      for (const selector of turnSelectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          if (element.closest(userSelectors)) continue;
+          turnElements.add(element);
+        }
+      }
+      const turnRoots = new Set<Element>();
+      for (const element of turnElements) {
+        let node = element.parentElement;
+        let root = element;
+        while (node) {
+          if (turnElements.has(node)) root = node;
+          node = node.parentElement;
+        }
+        turnRoots.add(root);
+      }
+      const turnCount = turnRoots.size;
+
+      // Every body element of the page, no matter which selector found it.
+      const matched = new Set<Element>();
+      for (const selector of bodySelectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          matched.add(element);
+        }
       }
 
-      return { found: false, text: '', html: '', errorText };
+      // The body of one message is nested in several elements that carry the
+      // same text (`data-dil-response` > `assistant-message` > `response-body`).
+      // The current UI has no container of its own, so without this the message
+      // would be counted once per element and the answer would repeat.
+      const outermostMatched = (element: Element): Element => {
+        let node = element.parentElement;
+        let outermost: Element | null = null;
+        while (node) {
+          if (matched.has(node)) outermost = node;
+          node = node.parentElement;
+        }
+        return outermost ?? element;
+      };
+
+      for (const element of matched) {
+        if (element.closest(userSelectors)) continue;
+        const text = textOf(element);
+        if (!text) continue;
+        const container = element.closest(messageSelectors.join(',')) ?? outermostMatched(element);
+        const known = groups.get(container);
+        if (!known || text.length > known.text.length) {
+          groups.set(container, { text, html: element.innerHTML || '', element });
+        }
+      }
+
+      const sorted = Array.from(groups.values()).sort((a, b) =>
+        a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+      );
+
+      // The renderer of a message can nest the body of the message in several
+      // elements, and it can render the same message twice while it streams.
+      // The text of such a body is contained in the text of the bigger one —
+      // keep the biggest one, or the answer repeats.
+      const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+      const withoutDuplicates = (
+        list: { text: string; html: string }[],
+      ): { text: string; html: string }[] =>
+        list.filter((body, index) => {
+          const text = normalize(body.text);
+          if (!text) return false;
+          return !list.some(
+            (other, otherIndex) =>
+              otherIndex !== index &&
+              normalize(other.text).length > text.length &&
+              normalize(other.text).includes(text),
+          );
+        });
+
+      // Only the messages after the prompt belong to the answer of this run.
+      const afterAnchor = anchor
+        ? sorted.filter(
+            (group) =>
+              anchor.compareDocumentPosition(group.element) & Node.DOCUMENT_POSITION_FOLLOWING,
+          )
+        : sorted;
+      const bodies = withoutDuplicates(afterAnchor.map(({ text, html }) => ({ text, html })));
+
+      if (bodies.length > 0) {
+        // The bodies were taken from the messages after the prompt of this
+        // run: they are the answer of this turn.
+        return {
+          found: true,
+          bodies,
+          errorText,
+          lastUserText,
+          viaFallback: false,
+          scoped: landed,
+          promptMatched: promptTurn !== null,
+          userCount: userTurns.length,
+          turnCount,
+        };
+      }
+
+      // Fallback for the other UI variants: the last visible match.
+      for (const selector of fallbackSelectors) {
+        const matches = Array.from(document.querySelectorAll(selector));
+        if (matches.length === 0) continue;
+        // The answer of this turn is after the prompt. If there is one, the
+        // fallback is scoped to it — the answer of the previous turn must not
+        // be taken for the answer of this run.
+        const afterPrompt = anchor
+          ? matches.filter(
+              (element) =>
+                anchor.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING,
+            )
+          : [];
+        const scoped = landed && afterPrompt.length > 0;
+        const candidates = afterPrompt.length > 0 ? afterPrompt : matches;
+        const visibleMatches = candidates.filter(isVisible);
+        const last = (visibleMatches.length > 0 ? visibleMatches : candidates).at(-1);
+        if (!(last instanceof Element)) continue;
+        return {
+          found: true,
+          bodies: [
+            {
+              text: textOf(last),
+              html: 'innerHTML' in last ? last.innerHTML || '' : '',
+            },
+          ],
+          errorText,
+          lastUserText,
+          viaFallback: true,
+          scoped,
+          promptMatched: promptTurn !== null,
+          userCount: userTurns.length,
+          turnCount,
+        };
+      }
+
+      return {
+        found: false,
+        bodies: [],
+        errorText,
+        lastUserText,
+        viaFallback: true,
+        scoped: false,
+        promptMatched: promptTurn !== null,
+        userCount: userTurns.length,
+        turnCount,
+      };
     },
-    [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
+    {
+      bodySelectors: [...ASSISTANT_BODY_SELECTORS],
+      fallbackSelectors: [...ASSISTANT_CONTENT_FALLBACK_SELECTORS],
+      messageSelectors: [...MESSAGE_CONTAINER_SELECTORS],
+      userSelectors: USER_MESSAGE_SELECTORS,
+      turnSelectors: [...ASSISTANT_TURN_COUNT_SELECTORS],
+      asked,
+      markers,
+      baselineUserCount,
+      baselineLastUserText,
+    },
   );
+}
+
+/** The length of the common beginning of two texts. */
+function commonPrefixLength(left: string, right: string): number {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) index++;
+  return index;
+}
+
+/**
+ * The message of the user is rendered in the same elements as the answer:
+ * the current UI puts the text of the prompt into a markdown root of its
+ * own. A body that is a part of the prompt is the message of the user, not
+ * the answer of the assistant.
+ */
+function isPromptEcho(text: string, prompt: string): boolean {
+  const flat = (value: string): string => value.replace(/\s+/g, '').toLowerCase();
+  const body = flat(text);
+  const asked = flat(prompt);
+  if (body.length < 40 || !asked) return false;
+  return asked.includes(body);
+}
+
+/**
+ * The assistant messages that are new since the baseline.
+ *
+ * The old messages of a reused chat stay in the DOM: the answer of this run
+ * is everything after them. The transcript can also be re-rendered, which
+ * loses the old messages — then the last old message that is still there
+ * marks the start of the new ones.
+ *
+ * A scoped snapshot holds the messages of the turn of the user only, so it
+ * needs no comparison with the baseline: the answer of this run can have the
+ * same text as the answer of the previous turn, and a comparison by text
+ * would drop it.
+ */
+function newAssistantBodies(
+  baseline: string[],
+  current: AssistantBody[],
+  scoped = false,
+): AssistantBody[] {
+  if (scoped) return current;
+  if (baseline.length === 0) return current;
+  const normalize = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
+  let start = 0;
+  while (
+    start < baseline.length &&
+    start < current.length &&
+    normalize(baseline[start]) === normalize(current[start].text)
+  ) {
+    start++;
+  }
+  if (start > 0) return current.slice(start);
+
+  for (let index = baseline.length - 1; index >= 0; index--) {
+    const found = current.findIndex((body) => normalize(body.text) === normalize(baseline[index]));
+    if (found >= 0) return current.slice(found + 1);
+  }
+
+  return current;
 }
 
 async function getVisibleModelPickerState(page: Page): Promise<{ found: boolean; text: string }> {
@@ -455,7 +895,435 @@ async function dismissOverlays(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Is the context window of the chat exhausted?
+ *
+ * The app shows a banner with a "Continue in a new chat" button that
+ * continues the conversation in a new chat with an automatic summary.
+ */
+async function detectContextFull(page: Page): Promise<boolean> {
+  const state = await page.evaluate(readContinuationDomState, continuationDomOptions());
+  return state.bannerPresent;
+}
+
+/**
+ * Click the button of the banner of the exhausted context window.
+ *
+ * The button is the one the banner check has found — its index among the
+ * buttons of the page. The button of the sidebar is not a candidate: the
+ * banner box holds the words of the banner and does not hold the
+ * conversation, the sidebar button finds those words only in the body of the
+ * app, many levels up.
+ */
+async function clickContextFullNewChat(page: Page, index: number): Promise<boolean> {
+  return page.evaluate((position: number) => {
+    const button = document.querySelectorAll('button')[position] as HTMLElement | undefined;
+    if (!button) return false;
+    button.click();
+    return true;
+  }, index);
+}
+
+/**
+ * The words of the banner of the exhausted context window.
+ */
+const CONTEXT_FULL_PATTERN = 'context window full';
+
+/**
+ * The label of the button that continues the chat in a new one.
+ *
+ * The shipped app names it "Continue in a new chat" (the string
+ * "chatgptConversations.contextContinuation.continue" of the product); the
+ * earlier UI had a plain "New chat" button in the banner.
+ */
+const NEW_CHAT_LABEL_PATTERN = '^(?:continue in a new chat|new chat)$';
+
+/**
+ * The label of the button of the shipped continuation.
+ *
+ * It is the strong sign of the exhausted window: the app shows this button
+ * only when the chat can go on in a new one.
+ */
+const CONTINUATION_LABEL_PATTERN = '^continue in a new chat$';
+
+/**
+ * The longest text a box without a conversation may have to be the banner.
+ *
+ * The words of the banner are in the body of the app as well — the summary of
+ * a continuation can mention the exhausted window itself. When the app has
+ * no container of the conversation, only a short box can be the banner: the
+ * text around it is the whole app.
+ */
+const BANNER_MAX_TEXT = 400;
+
+/**
+ * The words the app uses when it continues an exhausted conversation in a new
+ * chat: "Continued from …", a summary of the old chat, and so on.
+ */
+const CONTINUATION_MARKER_PATTERN =
+  'continued from|previous conversation|earlier conversation|summary|контекст|продолж';
+
+/**
+ * The container of the conversation.
+ *
+ * The marker of the continuation is read from it: the navigation of the app
+ * holds the titles of the old conversations, and one of them can carry the
+ * word "summary" — a chat that was never continued would look like one.
+ */
+const CONTINUATION_SCOPE_SELECTOR = 'main, #thread, [role="main"]';
+
+/** The navigation of the app: the sidebar with the list of the conversations. */
+const NAVIGATION_SELECTOR = 'nav, aside, [role="navigation"], [data-testid*="sidebar" i]';
+
+/**
+ * Does the text hold a sign that the native continuation has happened?
+ */
+export function hasContinuationMarker(text: string): boolean {
+  return new RegExp(CONTINUATION_MARKER_PATTERN, 'i').test(text);
+}
+
+/**
+ * Does the URL point to a conversation other than the one before the click?
+ *
+ * The id in the URL is the only proof of the identity of the conversation: the
+ * number of the turns can change because the UI re-rendered or because the
+ * summary was inserted into the old chat. A URL without an id proves nothing
+ * — the landing page can still show the old conversation.
+ */
+export function conversationIdChanged(
+  beforeId: string | undefined,
+  afterId: string | undefined,
+): boolean {
+  return afterId !== undefined && afterId !== beforeId;
+}
+
+/**
+ * Was the conversation replaced by another one?
+ *
+ * The summary of the old chat is the sign of the native continuation. Without
+ * it the structural sign is used: the new chat shows fewer turns than the
+ * exhausted one and has at least one turn of its own — that is not the old
+ * conversation.
+ */
+export function conversationReplaced(
+  beforeTurns: number,
+  afterTurns: number,
+  hasSummaryMarker: boolean,
+): boolean {
+  if (hasSummaryMarker) return true;
+  return afterTurns > 0 && afterTurns < beforeTurns;
+}
+
+/**
+ * The signals of a finished transition into the new chat.
+ */
+export interface ContinuationSignals {
+  /** The banner of the exhausted context window is gone. */
+  bannerGone: boolean;
+  /** The composer of the new chat is visible and can be typed into. */
+  composerUsable: boolean;
+  /** The URL points to a conversation other than the one before the click. */
+  conversationChanged: boolean;
+  /** The new chat shows the continuation of the exhausted one. */
+  continuationSignal: boolean;
+  /** The exhausted conversation is no longer on the screen. */
+  oldConversationGone: boolean;
+}
+
+/**
+ * Is the continuation ready to be used?
+ *
+ * Every signal is required: the orchestrator sends the prompt of the run into
+ * the chat that the transition leaves behind, and a guess would write it into
+ * the exhausted conversation.
+ */
+export function continuationReady(signals: ContinuationSignals): boolean {
+  return (
+    signals.bannerGone &&
+    signals.composerUsable &&
+    signals.conversationChanged &&
+    signals.continuationSignal &&
+    signals.oldConversationGone
+  );
+}
+
+/** The state of the page that the continuation is judged by. */
+export interface ContinuationDomState {
+  /** The banner of the exhausted context window is on the screen. */
+  bannerPresent: boolean;
+  /**
+   * The index of the "New chat" button of the banner among the buttons of the
+   * page, or -1 when there is no banner.
+   */
+  newChatButtonIndex: number;
+  /** The composer of the new chat is visible and can be typed into. */
+  composerUsable: boolean;
+  /** The conversation shows the continuation of the exhausted one. */
+  summaryMarker: boolean;
+  /** The exhausted conversation is no longer on the screen. */
+  oldConversationGone: boolean;
+}
+
+/**
+ * The selectors of the continuation check.
+ *
+ * The scope is the conversation itself, the navigation is the sidebar with the
+ * list of the conversations: a title there can carry the word "summary" and
+ * make the marker look present in a chat that was never continued.
+ */
+export interface ContinuationDomOptions {
+  /** The pattern of the marker of the continuation. */
+  markerPattern: string;
+  /** The selector of the container of the conversation. */
+  scopeSelector: string;
+  /** The selector of the navigation of the app. */
+  navigationSelector: string;
+  /** The pattern of the words of the banner of the exhausted window. */
+  bannerPattern: string;
+  /** The pattern of the label of the button of the banner. */
+  newChatLabel: string;
+  /** The pattern of the label of the button of the shipped continuation. */
+  continuationLabel: string;
+  /** The longest text a box without a conversation may have to be the banner. */
+  bannerMaxText: number;
+}
+
+/** The options of the check of the continuation. */
+function continuationDomOptions(): ContinuationDomOptions {
+  return {
+    markerPattern: CONTINUATION_MARKER_PATTERN,
+    scopeSelector: CONTINUATION_SCOPE_SELECTOR,
+    navigationSelector: NAVIGATION_SELECTOR,
+    bannerPattern: CONTEXT_FULL_PATTERN,
+    newChatLabel: NEW_CHAT_LABEL_PATTERN,
+    continuationLabel: CONTINUATION_LABEL_PATTERN,
+    bannerMaxText: BANNER_MAX_TEXT,
+  };
+}
+
+/**
+ * Read the state of the page for the continuation.
+ *
+ * The marker of the continuation is searched in the conversation and nowhere
+ * else: the navigation holds the titles of the old conversations, and one of
+ * them can carry the word "summary".
+ *
+ * The banner of the exhausted window is found by its own structure and not by
+ * the words of the page: the summary of a continuation can mention the
+ * exhausted window, and the body of the app then carries the words of the
+ * banner while the banner is long gone. The banner is the box that holds the
+ * words and the "New chat" button and does not hold the conversation.
+ *
+ * The shipped app names the button of the banner "Continue in a new chat" and
+ * words the banner differently in every version of the product. The label of
+ * the button is therefore the stable sign: a button with that label that
+ * holds a title next to it is the banner, even when the words of the banner
+ * are unknown.
+ *
+ * The document is an argument so that the check can be run against a fake one
+ * in the test; in the browser it is the document of the page.
+ *
+ * The function is serialized into the page by `page.evaluate`: it may not
+ * reference anything of the module — a helper, a constant — because the page
+ * does not have them. A test runs the function the same way the page runs it.
+ */
+export function readContinuationDomState(
+  options: ContinuationDomOptions,
+  doc: Document = document,
+): ContinuationDomState {
+  // The whole check lives in this one function: it is serialized into the page
+  // by `page.evaluate`, and a helper of the module is not there — the free
+  // reference of a helper would throw a ReferenceError in the page and the
+  // continuation would never be detected. The function may only use its
+  // arguments and what it defines itself.
+  //
+  // The banner of the exhausted window: the box that holds the words of the
+  // banner and the visible "New chat" button and does not hold the
+  // conversation. The button of the sidebar is not the banner: it finds the
+  // words of the banner only in the body of the app, and the body holds the
+  // conversation.
+  const conversation = doc.querySelector(options.scopeSelector);
+  const buttons = Array.from(doc.querySelectorAll('button'));
+  const bannerWords = new RegExp(options.bannerPattern, 'i');
+  const newChatLabel = new RegExp(options.newChatLabel, 'i');
+  const continuationLabel = new RegExp(options.continuationLabel, 'i');
+  let bannerPresent = false;
+  let bannerButtonIndex = -1;
+  let bannerDepth = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < buttons.length; index++) {
+    const button = buttons[index];
+    const text = (button.innerText || button.getAttribute('aria-label') || '').trim();
+    if (!newChatLabel.test(text)) continue;
+    // The button of the navigation starts a chat in the sidebar: it is never
+    // the banner of the exhausted window.
+    if (button.closest(options.navigationSelector)) continue;
+    const rect = button.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    // The shipped app names the button of the banner "Continue in a new
+    // chat": the words of the banner are not the same in every version of
+    // the app, the label of the button is the stable sign.
+    const continuationButton = continuationLabel.test(text);
+
+    let depth = 0;
+    let node: HTMLElement | null = button.parentElement;
+    while (node && node !== doc.body && node !== doc.documentElement) {
+      depth++;
+      const box = node.innerText || node.textContent || '';
+      const holdsConversation = conversation ? node.contains(conversation) : false;
+      const short = box.length <= options.bannerMaxText;
+      if (!holdsConversation && short) {
+        const words = bannerWords.test(box);
+        // The box of the banner holds a title next to the button: a box with
+        // the button alone is a wrapper of the button, not the banner.
+        const withTitle = box.length > text.length + 4;
+        if (words || (continuationButton && withTitle)) {
+          if (depth < bannerDepth) {
+            bannerDepth = depth;
+            bannerPresent = true;
+            bannerButtonIndex = index;
+          }
+          break;
+        }
+      }
+      node = node.parentElement;
+    }
+  }
+
+  const composerUsable = Array.from(
+    doc.querySelectorAll('div.ProseMirror[contenteditable="true"], textarea'),
+  ).some((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (element.closest('[aria-disabled="true"], [disabled]')) return false;
+    const editable =
+      element.tagName === 'TEXTAREA' || element.getAttribute('contenteditable') === 'true';
+    if (!editable) return false;
+    // The composer must not be covered: the overlay of the banner of the
+    // exhausted window stays in the DOM for a while.
+    const center = doc.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return center === element || element.contains(center);
+  });
+
+  const stale = Array.from(doc.querySelectorAll('[data-10x-exhausted="1"]')).some((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+
+  // The text of the conversation: the container of the chat when the app has
+  // one, the rest of the page without the navigation otherwise. The tree is
+  // walked with a stack instead of a recursive helper: a named function inside
+  // this body would not exist in the page either.
+  const scope = doc.querySelector(options.scopeSelector) ?? doc.body;
+  const parts: string[] = [];
+  const stack: Node[] = scope ? [scope] : [];
+  while (stack.length > 0) {
+    const node = stack.pop() as Node;
+    if (node.nodeType === 3) {
+      parts.push(node.textContent || '');
+      continue;
+    }
+    if (node.nodeType === 1 && (node as Element).closest(options.navigationSelector)) continue;
+    const children = Array.from(node.childNodes);
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index]);
+    }
+  }
+
+  return {
+    bannerPresent,
+    newChatButtonIndex: bannerButtonIndex,
+    composerUsable,
+    summaryMarker: new RegExp(options.markerPattern, 'i').test(parts.join(' ')),
+    oldConversationGone: !stale,
+  };
+}
+
+/**
+ * Mark the turns of the exhausted conversation.
+ *
+ * They are the content of the old chat: when the app has really moved into
+ * the new chat, they are gone from the screen.
+ */
+async function markExhaustedConversation(page: Page): Promise<void> {
+  await page.evaluate((selectors: readonly string[]) => {
+    for (const node of Array.from(document.querySelectorAll('[data-10x-exhausted="1"]'))) {
+      node.removeAttribute('data-10x-exhausted');
+    }
+    for (const selector of selectors) {
+      for (const node of Array.from(document.querySelectorAll(selector))) {
+        node.setAttribute('data-10x-exhausted', '1');
+      }
+    }
+  }, ASSISTANT_TURN_COUNT_SELECTORS);
+}
+
+/**
+ * Continue the conversation in a new chat with an automatic summary.
+ *
+ * This is the native mechanism of the app for an exhausted context window:
+ * the new chat starts with "Continued from <old chat>" and a summary of it,
+ * so the work goes on instead of dying at the context limit.
+ */
+async function startSummaryChat(page: Page): Promise<boolean> {
+  // The identity of the chat before the click: the continuation must land in
+  // a different conversation. The banner disappears before the app has
+  // rendered the new chat, so the banner alone proves nothing.
+  const beforeId = conversationIdFromUrl('chatgpt', page.url());
+  const beforeTurns = await getAssistantTurnCount(page);
+  await markExhaustedConversation(page);
+
+  // The button of the banner is found by the same check that judges the state
+  // of the page: the banner is a box with the words of the banner and the
+  // "New chat" button, and it does not hold the conversation.
+  const before = await page.evaluate(readContinuationDomState, continuationDomOptions());
+  if (before.newChatButtonIndex < 0) return false;
+
+  const clicked = await clickContextFullNewChat(page, before.newChatButtonIndex);
+  if (!clicked) return false;
+
+  // Wait until the transition has really happened: the banner is gone, the
+  // composer of the new chat is usable, the URL names another conversation,
+  // the new chat holds the continuation of the old one and the exhausted
+  // conversation is no longer on the screen.
+  let ready = false;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await page.waitForTimeout(500);
+    const dom: ContinuationDomState = await page.evaluate(
+      readContinuationDomState,
+      continuationDomOptions(),
+    );
+
+    const afterId = conversationIdFromUrl('chatgpt', page.url());
+    const afterTurns = await getAssistantTurnCount(page);
+
+    const signals: ContinuationSignals = {
+      bannerGone: !dom.bannerPresent,
+      composerUsable: dom.composerUsable,
+      conversationChanged: conversationIdChanged(beforeId, afterId),
+      continuationSignal: conversationReplaced(beforeTurns, afterTurns, dom.summaryMarker),
+      oldConversationGone: dom.oldConversationGone,
+    };
+    if (!continuationReady(signals)) continue;
+
+    ready = true;
+    break;
+  }
+
+  // The transition did not happen: the caller must not treat the exhausted
+  // chat as a fresh one.
+  return ready;
+}
+
 export const chatgptActions: ProviderActions = {
+  async contextWindowFull(page: Page): Promise<boolean> {
+    return detectContextFull(page);
+  },
+
+  async continueInNewChat(page: Page): Promise<boolean> {
+    return startSummaryChat(page);
+  },
+
   async newChat(page: Page): Promise<void> {
     const debug = process.env.TEN_X_CHAT_DEBUG_NEWCHAT === '1';
     const log = (...args: unknown[]): void => {
@@ -655,10 +1523,23 @@ export const chatgptActions: ProviderActions = {
     await dismissOverlays(page);
     const snapshot = await getLatestAssistantSnapshot(page);
     chatgptSubmitBaseline.set(page, {
-      turnCount: await getAssistantTurnCount(page),
+      turnCount: snapshot.turnCount,
+      // The messages of the user before the prompt: a message that appears
+      // later is the prompt of this run.
+      userCount: snapshot.userCount,
+      lastUserText: flatText(snapshot.lastUserText),
+      // The pieces of the prompt that must be in the DOM when it has landed.
+      markers: promptMarkers(prompt),
+      // The message of the user is rendered in the same elements as the
+      // answer: the capture must not take it for the answer.
+      promptText: prompt,
       // An existing conversation already has an assistant response. Without
       // this baseline the capture would treat the old answer as the new one.
-      latestText: snapshot.text,
+      bodies: snapshot.bodies.map((body) => body.text),
+      latestText: snapshot.bodies
+        .map((body) => body.text)
+        .join('\n\n')
+        .trim(),
       // An error banner can outlive the run that showed it; only a new one
       // belongs to this answer.
       errorText: snapshot.errorText,
@@ -681,6 +1562,7 @@ export const chatgptActions: ProviderActions = {
       await page
         .waitForFunction(
           () => !/uploading|processing file|preparing file/i.test(document.body?.innerText || ''),
+          undefined,
           { timeout: 120_000 },
         )
         .catch(() => {});
@@ -716,39 +1598,102 @@ export const chatgptActions: ProviderActions = {
     };
     const startTime = Date.now();
     const baseline = chatgptSubmitBaseline.get(page) ?? {
-      turnCount: await getAssistantTurnCount(page),
+      turnCount: 0,
+      userCount: 0,
+      lastUserText: '',
+      // Without a prompt in this process there is no baseline: the gate of
+      // the prompt stays off.
+      markers: [] as string[],
+      promptText: '',
+      bodies: [] as string[],
       latestText: '',
       errorText: '',
       url: page.url(),
     };
 
     // ponytail: direct text polling beats ChatGPT's constantly shifting turn DOM.
-    let lastText = baseline.latestText;
+    // The text of the last answer of this run: it starts empty, because a
+    // scoped snapshot is the answer of this turn even when its text is the
+    // text of the answer of the previous turn.
+    let lastText = '';
+    let lastScoped = false;
     let emittedText = '';
     let stableCount = 0;
     let activityPolls = 0;
     let truncated = true;
+    let polls = 0;
     while (Date.now() - startTime < timeoutMs) {
-      const snapshot = await getLatestAssistantSnapshot(page);
-      const text = snapshot.text;
+      polls++;
+      // The context window can run out while the answer is generated: the
+      // banner appears and the answer never comes. The run continues the
+      // conversation in a new chat instead of waiting for the timeout.
+      if (polls % CONTEXT_CHECK_POLLS === 0) {
+        const full = await detectContextFull(page).catch(() => false);
+        if (full === true) throw new ContextWindowFullError();
+      }
+      const snapshot = await getLatestAssistantSnapshot(page, {
+        asked: baseline.promptText,
+        markers: baseline.markers,
+        baselineUserCount: baseline.userCount,
+        baselineLastUserText: baseline.lastUserText,
+      });
+      // The prompt of this run is not in the DOM yet: the answer of the
+      // previous turn is still there, and it is not the answer of this run.
+      // The gate is positive: an empty marker never means that the prompt
+      // has landed.
+      const scoped = snapshot.scoped === true;
+      // A new turn of the assistant: it has answered the prompt.
+      const turnAdvanced = snapshot.turnCount > baseline.turnCount;
+      if (baseline.promptText && !scoped && !turnAdvanced) {
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      const bodies = newAssistantBodies(baseline.bodies, snapshot.bodies, scoped).filter(
+        (body) => !isPromptEcho(body.text, baseline.promptText),
+      );
+      const text = bodies
+        .map((body) => body.text)
+        .join('\n\n')
+        .trim();
 
-      // The previous turn's answer is the last node until the new one appears;
-      // only an error that is new since the prompt belongs to this run.
-      const generationError = generationErrorOf(snapshot, baseline);
+      // The previous turn's answer is still in the DOM; only an error that is
+      // new since the prompt belongs to this run.
+      const generationError = generationErrorOf({ text, errorText: snapshot.errorText }, baseline);
       if (generationError) {
+        // An error banner interrupts the answer: the text of this turn may be
+        // a part of the answer, and the task of the prompt may have run
+        // already. The run must not send the prompt a second time then.
+        const banner =
+          snapshot.errorText.trim() !== '' && snapshot.errorText !== baseline.errorText;
         throw new ProviderGenerationError(
           `ChatGPT reported an error while generating the answer: ${generationError}`,
+          { partial: banner && text.length > 0 },
         );
       }
 
       const streaming = await isGenerating();
       const activity = ACTIVITY_TEXT.test(text);
 
-      if (text && text !== baseline.latestText) {
-        if (text !== emittedText) {
-          onChunk?.(
-            emittedText && text.startsWith(emittedText) ? text.slice(emittedText.length) : text,
-          );
+      // A scoped snapshot holds the answer of this turn: it is new even when
+      // it has the same text as the answer of the previous turn. An unscoped
+      // one may still show the answer of the previous turn.
+      const fresh =
+        bodies.length > 0 && text.length > 0 && (scoped || text !== baseline.latestText);
+      if (fresh) {
+        if (text !== emittedText && !activity && !snapshot.viaFallback) {
+          // The renderer re-creates the message while it streams, so the text
+          // can change from the beginning. Emit only what was not emitted yet:
+          // the answer must not repeat itself in the stream.
+          //
+          // A label of the thinking UI ("Reviewed the diff") is not the answer:
+          // it is not emitted, and it stays the base of the next delta, so the
+          // answer that follows it is emitted whole.
+          //
+          // The fallback of the snapshot is the last visible match of the
+          // page: while the answer is still rendering it is a label of the
+          // thinking UI, and the renderer rewrites it. It is not streamed.
+          const common = commonPrefixLength(emittedText, text);
+          if (text.length > common) onChunk?.(text.slice(common));
           emittedText = text;
         }
 
@@ -776,20 +1721,39 @@ export const chatgptActions: ProviderActions = {
           activityPolls = 0;
         }
         lastText = text;
+        lastScoped = scoped;
       }
 
       await page.waitForTimeout(1000);
     }
 
-    if (!lastText || lastText === baseline.latestText) {
+    // A scoped answer is the answer of this turn, even when it has the same
+    // text as the answer of the previous turn.
+    if (!lastText || (!lastScoped && lastText === baseline.latestText)) {
       throw new Error('Timed out waiting for ChatGPT assistant response');
     }
 
     // Extract the final HTML content using page.evaluate instead of locator.textContent/innerHTML.
     // ChatGPT's current UI exposes the nodes, but daemon-proxied locator text extraction can still
     // time out on them even after they are present in the DOM.
-    const finalSnapshot = await getLatestAssistantSnapshot(page);
-    const markdown = finalSnapshot.html;
+    const finalSnapshot = await getLatestAssistantSnapshot(page, {
+      asked: baseline.promptText,
+      markers: baseline.markers,
+      baselineUserCount: baseline.userCount,
+      baselineLastUserText: baseline.lastUserText,
+    });
+    const finalBodies = newAssistantBodies(
+      baseline.bodies,
+      finalSnapshot.bodies,
+      finalSnapshot.scoped === true,
+    ).filter((body) => !isPromptEcho(body.text, baseline.promptText));
+    const markdown =
+      finalBodies.length > 0
+        ? finalBodies.map((body) => body.html).join('\n\n')
+        : finalSnapshot.bodies
+            .filter((body) => !isPromptEcho(body.text, baseline.promptText))
+            .map((body) => body.html)
+            .join('\n\n');
 
     // Extract generated images (DALL-E / GPT-Image)
     // ChatGPT uses alt="Generated image: <description>" and src containing

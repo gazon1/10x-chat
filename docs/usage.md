@@ -9,7 +9,7 @@ secrets store is in [secrets.md](secrets.md).
 The proxy comes from the config file, from the environment, or from nowhere —
 in that order:
 
-```
+```text
 config file  >  environment  >  no proxy
 ```
 
@@ -56,7 +56,7 @@ The three states of the config file are different:
 Without a `proxy` section the environment decides. The first variable with a
 value wins:
 
-```
+```text
 HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy > ALL_PROXY > all_proxy
 ```
 
@@ -89,7 +89,7 @@ every run launches its own browser and always uses the current proxy.
 
 The model is chosen in this order:
 
-```
+```text
 --model  >  defaultModel of the config file  >  the default of the provider
 ```
 
@@ -140,6 +140,19 @@ the Wayland session. A convenient alias:
 alias gpt='10x-chat chat --provider chatgpt --headless --timeout 180000'
 ```
 
+## Timeouts, retries and cut-off answers
+
+The prompt is sent **once**. What the run does afterwards depends on what the
+provider does — a prompt that may have run already is never sent a second
+time:
+
+| Situation | What the run does |
+|---|---|
+| The answer was cut off by the timeout | The same turn is captured again (a grace window of 5 minutes). The prompt is **not** sent again. If the answer is still incomplete, the cut-off answer is returned and marked as truncated. |
+| The provider reported an error and produced nothing | The question is asked once more — nothing was executed yet. |
+| The provider reported an error after a part of the answer | The run fails with the error of the provider. The task of the prompt may have run already, so the prompt is not sent again. |
+| The context window of the chat ran out | The conversation is continued in a new chat with a summary and the question is asked there. |
+
 ## Conversation reuse
 
 A browser chat stores the provider conversation of the current git repository
@@ -175,6 +188,15 @@ cd ~/src/my-project          # branch: feature/login
   a new one. A redirect to a login page is left to the login check — the
   conversation is kept for after `10x-chat login`.
 - `--new-chat` forces a fresh conversation and replaces the stored entry.
+- **An exhausted context window does not end the work.** When the provider reports
+  that the context window of the conversation is full (ChatGPT shows a banner
+  with a "Continue in a new chat" button), the run continues in a **new chat with
+  an automatic summary** of the old one — the native mechanism of the app, not a
+  paraphrase. The new chat becomes the stored conversation of the repository and
+  the branch, so the next run appends to it, until its own context window runs
+  out too. The check happens before the prompt and again before every retry, so
+  a context that runs out while the answer is being generated also lands in the
+  new chat.
 - `chat --all` keeps one conversation per provider for the same repository and
   branch (browser transport only).
 - The API transport has no conversation (`--transport api` is a single HTTP

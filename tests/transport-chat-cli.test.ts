@@ -18,10 +18,9 @@ afterEach(() => {
 
 describe('chat transport validation (CLI)', () => {
   it('explains supported provider/transport when a provider has no API transport', async () => {
-    const res = await runCli(
-      ['chat', '-p', 'hi', '--provider', 'chatgpt', '--transport', 'api'],
-      { TEN_X_CHAT_HOME: home },
-    );
+    const res = await runCli(['chat', '-p', 'hi', '--provider', 'chatgpt', '--transport', 'api'], {
+      TEN_X_CHAT_HOME: home,
+    });
     expect(res.code).toBe(1);
     expect(res.output).toMatch(/no API transport/i);
     expect(res.output).toMatch(/--transport browser/);

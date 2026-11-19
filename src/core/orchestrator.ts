@@ -5,7 +5,7 @@ import { resolveHeadlessMode } from '../browser/mode.js';
 import { loadConfig } from '../config.js';
 import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
-import type { ChatOptions, GeneratedImage, ProviderName } from '../types.js';
+import type { CapturedResponse, ChatOptions, GeneratedImage, ProviderName } from '../types.js';
 import { type ApiChatDeps, resolveTransport, runApiChat } from './api-orchestrator.js';
 import { buildBundle } from './bundle.js';
 import {
@@ -15,10 +15,11 @@ import {
   isConversationGone,
   resolveConversationContext,
   type StoredConversation,
-  saveStoredConversation,
+  storeCurrentConversation,
 } from './conversations.js';
 import type { FailureKind } from './failures.js';
 import {
+  ContextWindowFullError,
   checkProviderSession,
   failureKind,
   ProviderGenerationError,
@@ -28,6 +29,31 @@ import { resolveAttachPaths } from './files.js';
 import { downloadImages } from './images.js';
 import { chatModel } from './model.js';
 import { chatTimeoutMs, isResponseTimeout } from './timeout.js';
+
+/**
+ * How many times a run continues the conversation in a new chat.
+ *
+ * Every continuation is a new chat with a summary: too many of them mean the
+ * work does not fit into any context window.
+ */
+const MAX_CONTINUATIONS = 3;
+
+/**
+ * The extra window for the recovery of a cut-off answer.
+ *
+ * The capture of the answer was cut off by its timeout. The same turn is
+ * captured again with this window: the prompt is not sent a second time,
+ * because it may have run already.
+ */
+const RECOVERY_GRACE_MS = 5 * 60_000;
+
+/** The length of the common prefix of two strings. */
+function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < max && left[index] === right[index]) index++;
+  return index;
+}
 
 /** Providers supported by chat --all (excludes special-purpose providers). */
 const CHAT_PROVIDERS: ProviderName[] = [
@@ -98,6 +124,9 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
 
   const conversationContext = await resolveConversationContext();
   let storedConversation: StoredConversation | undefined;
+  // The files of the request: they are attached again when the conversation
+  // continues in a new chat.
+  let attachPaths: string[] | undefined;
   if (options.newChat) {
     // A new chat replaces the stored one, even if this run fails.
     await clearStoredConversation(conversationContext, providerName).catch(() => {});
@@ -177,6 +206,97 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
     return true;
   };
 
+  /** Is the context window of the current conversation exhausted? */
+  const contextWindowFull = async (): Promise<boolean> => {
+    if (!provider.actions.contextWindowFull) return false;
+    return provider.actions.contextWindowFull(browser.page).catch(() => false);
+  };
+
+  /**
+   * How many times this run has continued the conversation in a new chat.
+   *
+   * The counter belongs to the whole run: every path that continues the chat
+   * counts, so the limit cannot be bypassed by a different path.
+   */
+  let continuations = 0;
+
+  /**
+   * The error of a run that continued the conversation too often.
+   *
+   * The same error on every path: the limit of the continuations is a
+   * property of the run, not of the path that hit it.
+   */
+  const continuationLimitError = (): ProviderGenerationError =>
+    new ProviderGenerationError(
+      `The context window of the chat is full and the chat was already continued in a new one ${MAX_CONTINUATIONS} time(s).`,
+    );
+
+  /**
+   * Continue the conversation in a new chat with an automatic summary.
+   *
+   * The new chat replaces the stored one: it is the working chat of this
+   * repository and branch from now on, until its own context window runs out
+   * too. The previous conversation stays until the new one has a permanent
+   * URL — a run that fails in between must not lose the conversation.
+   */
+  const continueInNewChat = async (): Promise<boolean> => {
+    if (!provider.actions.continueInNewChat) return false;
+    // The limit is the same on every path: a chat that runs out again and
+    // again does not fit into any context window.
+    if (continuations >= MAX_CONTINUATIONS) {
+      throw continuationLimitError();
+    }
+    console.log(
+      chalk.dim(
+        'The context window of the chat is full — continuing in a new chat with a summary.',
+      ),
+    );
+    const started = await provider.actions.continueInNewChat(browser.page).catch(() => false);
+    if (!started) return false;
+    continuations++;
+
+    usingStoredConversation = false;
+    storedConversation = undefined;
+    // The new chat is fresh: it must not be replaced by a blank one.
+    freshRequired = false;
+
+    // The files of the request belong to the old chat: they are attached
+    // again in the new one, so the answer is not produced without them.
+    if (attachPaths && provider.actions.attachFiles) {
+      console.log(chalk.dim(`Attaching ${attachPaths.length} file(s) to the new chat...`));
+      try {
+        await provider.actions.attachFiles(browser.page, attachPaths);
+      } catch (error) {
+        // A failed attachment is not a warning: the prompt would be sent
+        // without the files of the request, and the answer would be wrong
+        // without anyone noticing.
+        throw new ProviderGenerationError(
+          `The files could not be attached to the new chat: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    // The new chat replaces the stored one: it is the working chat of this
+    // repository and branch from now on, until its own context window runs out
+    // too. The previous conversation stays until the new one has a permanent
+    // URL — a run that fails in between must not lose the conversation.
+    const stored = await storeCurrentConversation(
+      conversationContext,
+      providerName,
+      browser.page.url(),
+    ).catch(() => false);
+    if (!stored) {
+      console.log(
+        chalk.dim(
+          'The new chat has no permanent URL yet — the previous conversation stays until it has one.',
+        ),
+      );
+    }
+    return true;
+  };
+
   const sessionCheck = () =>
     checkProviderSession({
       page: browser.page,
@@ -213,6 +333,21 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       await sessionCheck();
     }
 
+    // A chat whose context window is exhausted cannot answer anymore. The
+    // provider continues it in a new chat with an automatic summary, so the
+    // work goes on instead of dying at the context limit.
+    if (await contextWindowFull()) {
+      const continued = await continueInNewChat();
+      // The exhausted chat cannot answer: sending the prompt to it anyway
+      // fails with a timeout and no answer at all.
+      if (!continued) {
+        throw new ProviderGenerationError(
+          'The context window of the chat is full and the chat could not be continued in a new one.',
+        );
+      }
+      await sessionCheck();
+    }
+
     const modelName = chatModel(options.model, config.defaultModel, provider.config.defaultModel);
     if (modelName && provider.actions.selectModel) {
       stage = 'select-model';
@@ -231,6 +366,7 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       } else {
         const resolvedPaths = await resolveAttachPaths(options.attach);
         if (resolvedPaths.length > 0) {
+          attachPaths = resolvedPaths;
           console.log(chalk.dim(`Attaching ${resolvedPaths.length} file(s)...`));
           await provider.actions.attachFiles(browser.page, resolvedPaths);
         }
@@ -247,55 +383,149 @@ export async function runChat(options: ChatOptions, deps: ApiChatDeps = {}): Pro
       await ensureFreshConversation();
     }
 
+    // The answer is streamed to the terminal while it is generated. A
+    // recovered answer is streamed again from its beginning: only the new
+    // tail is printed, so the text does not appear twice.
+    let printedText = '';
+    const printChunk = (chunk: string) => {
+      printedText += chunk;
+      process.stdout.write(chalk.dim(chunk));
+    };
+    const printRecoveredChunk = (chunk: string) => {
+      const fresh = chunk.slice(commonPrefixLength(printedText, chunk));
+      if (!fresh) return;
+      printedText += fresh;
+      process.stdout.write(chalk.dim(fresh));
+    };
+
     const submitAndCapture = async () => {
       stage = 'submit-prompt';
       console.log(chalk.dim('Submitting prompt...'));
       await provider.actions.submitPrompt(browser.page, bundle);
 
+      // The chat gets its permanent URL when the first message is sent.
+      // Store it right away: a run that fails while waiting for the answer
+      // must not lose the conversation.
+      await storeCurrentConversation(conversationContext, providerName, browser.page.url()).catch(
+        () => false,
+      );
+
       stage = 'capture-response';
       console.log(chalk.dim('Waiting for response...'));
       return provider.actions.captureResponse(browser.page, {
         timeoutMs,
-        onChunk: (chunk) => process.stdout.write(chalk.dim(chunk)),
+        onChunk: printChunk,
       });
     };
 
-    // One retry: the answer was cut off by the timeout, or the provider showed
-    // a streaming/network error instead of the answer. Ask the same question
-    // again in the same conversation. With attachments there is nothing to
-    // attach the second time, so a partial answer is all the run can return.
+    /**
+     * The recovery of a cut-off answer.
+     *
+     * The same turn is captured again — the provider keeps the baseline of the
+     * turn, so the capture finds the answer that is still coming. The prompt is
+     * not sent again: it may have run already.
+     */
+    const recoverResponse = async () => {
+      stage = 'capture-response';
+      console.log(chalk.dim('The response was cut off — waiting for it to finish...'));
+      return provider.actions.captureResponse(browser.page, {
+        timeoutMs: Math.min(timeoutMs, RECOVERY_GRACE_MS),
+        onChunk: printRecoveredChunk,
+      });
+    };
+
+    // The prompt is sent once. A cut-off answer is recovered from the same
+    // turn, and an error of the provider is asked again only when nothing was
+    // produced: a prompt that may have run already is not sent twice.
     const hasAttachments = Boolean(options.attach && options.attach.length > 0);
     const askWithRetry = async () => {
       let retried = false;
+      // The context window ran out while the answer was generated: the next
+      // iteration continues the conversation in a new chat and asks again.
+      let pendingContinuation = false;
       for (;;) {
-        try {
-          const captured = await submitAndCapture();
-          if (!captured.truncated || retried || hasAttachments) return captured;
-          console.log(chalk.dim('The response was cut off — asking again.'));
-        } catch (error) {
-          if (retried || hasAttachments || !(error instanceof ProviderGenerationError)) throw error;
-          console.log(chalk.dim('The provider reported an error while generating — asking again.'));
+        // The context window can run out during the run: continue in a new
+        // chat with a summary and ask there.
+        if (pendingContinuation || (await contextWindowFull())) {
+          pendingContinuation = false;
+          const continued = await continueInNewChat();
+          // The exhausted chat cannot answer: the run fails with a clear
+          // reason instead of a timeout without an answer.
+          if (!continued) {
+            throw new ProviderGenerationError(
+              'The context window of the chat is full and the chat could not be continued in a new one.',
+            );
+          }
+          await sessionCheck();
+          if (modelName && provider.actions.selectModel) {
+            await provider.actions.selectModel(browser.page, modelName);
+          }
         }
-        retried = true;
+        let captured: CapturedResponse;
+        try {
+          captured = await submitAndCapture();
+        } catch (error) {
+          // The context window ran out while the answer was generated: the
+          // next iteration continues the conversation in a new chat and asks
+          // again. The files of the request are attached to the new chat.
+          if (error instanceof ContextWindowFullError) {
+            if (continuations >= MAX_CONTINUATIONS) throw continuationLimitError();
+            console.log(chalk.dim('The context window ran out — continuing in a new chat.'));
+            pendingContinuation = true;
+            continue;
+          }
+          // A new attempt: the prompt is sent again. It is only safe when the
+          // provider produced nothing — a partial answer means that the task
+          // of the prompt may have run already.
+          if (
+            retried ||
+            hasAttachments ||
+            !(error instanceof ProviderGenerationError) ||
+            error.partial
+          ) {
+            throw error;
+          }
+          retried = true;
+          console.log(
+            chalk.dim(
+              'The provider reported an error while generating — asking again (the prompt is sent a second time).',
+            ),
+          );
+          continue;
+        }
+        if (!captured.truncated) return captured;
+
+        // The answer was cut off: the same turn is captured again instead of
+        // a new prompt — the prompt must not be executed a second time.
+        try {
+          const recovered = await recoverResponse();
+          return recovered.truncated ? captured : recovered;
+        } catch (error) {
+          if (error instanceof ContextWindowFullError) {
+            if (continuations >= MAX_CONTINUATIONS) throw continuationLimitError();
+            console.log(chalk.dim('The context window ran out — continuing in a new chat.'));
+            pendingContinuation = true;
+            continue;
+          }
+          // The provider failed while the answer was recovered: the cut-off
+          // answer is returned, the prompt is not sent again.
+          return captured;
+        }
       }
     };
     const captured = await askWithRetry();
 
     const durationMs = Date.now() - startTime;
     const conversationId = conversationIdFromUrl(providerName, browser.page.url());
-    if (conversationId) {
-      await saveStoredConversation(conversationContext, providerName, {
-        url: browser.page.url(),
-        id: conversationId,
-        updatedAt: new Date().toISOString(),
-      }).catch((error) => {
+    await storeCurrentConversation(conversationContext, providerName, browser.page.url()).catch(
+      (error) => {
         console.warn(
           chalk.dim(
             `Could not save the conversation: ${error instanceof Error ? error.message : String(error)}`,
           ),
         );
-      });
-    }
+      },
+    );
 
     stage = 'save-response';
     await saveResponse(session.id, captured.text);

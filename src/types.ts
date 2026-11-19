@@ -72,6 +72,21 @@ export interface ProviderActions {
    */
   newChat?(page: Page): Promise<void>;
 
+  /**
+   * Is the context window of the current conversation exhausted?
+   *
+   * The provider then refuses to answer in that conversation.
+   */
+  contextWindowFull?(page: Page): Promise<boolean>;
+
+  /**
+   * Continue the current conversation in a new chat.
+   *
+   * The new chat starts with a summary of the old one, so the work goes on
+   * instead of dying at the context limit.
+   */
+  continueInNewChat?(page: Page): Promise<boolean>;
+
   /** Submit a prompt (type into composer, click send). */
   submitPrompt(page: Page, prompt: string): Promise<void>;
 
