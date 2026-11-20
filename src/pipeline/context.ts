@@ -148,6 +148,12 @@ export interface PullRequestMetadata {
  * compare, and a comparison of nothing looks like a change with no files.
  */
 export function parsePullRequestMetadata(payload: unknown): PullRequestMetadata {
+  // The answer of `gh` is data of another program: it may be anything at all.
+  // A value that is not an object carries no commits, and it is refused the
+  // same way a value without commits is.
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('it has no base or head commit');
+  }
   const value = payload as Record<string, unknown>;
   const baseRef = typeof value.baseRefName === 'string' ? value.baseRefName : '';
   const headRef = typeof value.headRefName === 'string' ? value.headRefName : '';

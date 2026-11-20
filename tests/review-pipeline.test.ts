@@ -3623,3 +3623,97 @@ describe('the list of the callers of a finding', () => {
     expect(verification).toContain('is cut');
   });
 });
+
+describe('the boundaries of the rules', () => {
+  it('merges two titles that overlap by three fifths and keeps two that do not', () => {
+    // The overlap of the titles decides whether two findings of one place are
+    // one defect: three fifths of the words are enough, two fifths are not.
+    const finding = (title: string) => ({
+      ...FINDING,
+      title,
+      id: findingId({ ...FINDING, title }),
+      verification: 'unverified' as const,
+      reportedBy: ['correctness' as const],
+      evidence: [],
+    });
+    const threeFifths = dedupeFindings([
+      finding('alpha beta gamma delta epsilon'),
+      finding('alpha beta gamma zeta eta'),
+    ]);
+    const twoFifths = dedupeFindings([
+      finding('alpha beta gamma delta epsilon'),
+      finding('alpha beta zeta eta theta'),
+    ]);
+
+    expect(threeFifths).toHaveLength(1);
+    expect(twoFifths).toHaveLength(2);
+  });
+
+  it('refuses the metadata of a pull request that is not an object', () => {
+    for (const payload of [null, 'a string', 42, ['a', 'list']]) {
+      expect(() => parsePullRequestMetadata(payload)).toThrow(/base or head commit/);
+    }
+  });
+
+  it('takes the payload that comes last when two payloads carry the same findings', () => {
+    // The example of the format precedes the answer: the payload of the same
+    // size that comes last is the answer.
+    const example = answerWith([FINDING]);
+    const answer = answerWith([{ ...FINDING, title: 'The answer of the reviewer' }]);
+    const parsed = parseReviewerFindings([example, answer].join('\n'), 'correctness');
+
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe('The answer of the reviewer');
+  });
+
+  it('reads the severity of a finding in any case and the evidence as it comes', () => {
+    const parsed = parseReviewerFindings(
+      answerWith([{ ...FINDING, severity: 'blocking', evidence: 'one line of evidence' }]),
+      'correctness',
+    );
+    const empty = parseReviewerFindings(
+      answerWith([{ ...FINDING, evidence: '   ' }]),
+      'correctness',
+    );
+
+    expect(parsed.findings[0].severity).toBe('BLOCKING');
+    expect(parsed.findings[0].evidence).toEqual(['one line of evidence']);
+    expect(empty.findings[0].evidence).toEqual([]);
+  });
+
+  it('tells the state of a finding from the state of the step of the verification', async () => {
+    // The verification answers for one of two findings: the finding it
+    // answered for is settled, the other one is not, and the step of the
+    // verification is not complete.
+    const second = { ...FINDING, title: 'The other defect of the same place', line: 3 };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING, second]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'confirmed',
+              evidence: 'the code shows it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const settled = run.findings.find((finding) => finding.title === FINDING.title);
+    const unsettled = run.findings.find((finding) => finding.title === second.title);
+    expect(settled?.verification).toBe('confirmed');
+    expect(unsettled?.verification).toBe('unverified');
+    expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('failed');
+  });
+});
