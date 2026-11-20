@@ -53,10 +53,6 @@ export async function runBackendChat(
   if (options.attach && options.attach.length > 0 && !backend.capabilities.attachments) {
     throw new Error(`The backend '${backend.name}' does not support attachments.`);
   }
-  const model = options.model ?? config.defaultModel;
-  if (model && !backend.capabilities.modelSelection) {
-    throw new Error(`The backend '${backend.name}' does not support model selection.`);
-  }
   // The browser flags would be ignored by a backend run — a flag that does
   // nothing is a lie about what the run does.
   if (options.headed || options.headless || options.profile || options.isolatedProfile) {
@@ -80,6 +76,13 @@ export async function runBackendChat(
 
   const attachments =
     options.attach && options.attach.length > 0 ? await resolveAttachPaths(options.attach) : [];
+
+  if (options.model && !backend.capabilities.modelSelection) {
+    throw new Error(`The backend '${backend.name}' does not support model selection.`);
+  }
+  // An inherited default model must not be forced onto a backend that has no
+  // model selection — only an explicit --model is rejected above.
+  const model = backend.capabilities.modelSelection ? (options.model ?? config.defaultModel) : undefined;
 
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 

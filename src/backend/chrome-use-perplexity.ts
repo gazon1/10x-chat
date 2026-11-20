@@ -140,16 +140,18 @@ function dataRecord(data: unknown): Record<string, unknown> | undefined {
   return isRecord(data) ? data : undefined;
 }
 
+type FailureOutcome = Extract<BackendOutcome<never>, { ok: false }>;
+
 function failure(
   kind: BackendFailure['kind'],
   submission: BackendSubmission,
   message: string,
   partialText?: string,
-): BackendOutcome<never> {
+): FailureOutcome {
   return { ok: false, failure: { kind, submission, message, ...(partialText ? { partialText } : {}) } };
 }
 
-function unavailable(message: string, submission: BackendSubmission = 'not_submitted'): BackendOutcome<never> {
+function unavailable(message: string, submission: BackendSubmission = 'not_submitted'): FailureOutcome {
   return failure('unavailable', submission, message);
 }
 
@@ -163,7 +165,7 @@ function classifyCommandError(
   detail: string,
   submitted: boolean,
   timedOut: boolean,
-): BackendOutcome<never> {
+): FailureOutcome {
   if (timedOut) {
     return failure(
       submitted ? 'timeout' : 'unknown_submission',
@@ -242,7 +244,7 @@ export function createChromeUsePerplexityBackend(
     input?: string,
   ): Promise<
     | { ok: true; json?: ChromeJson; result: ProcessResult }
-    | { ok: false; outcome: BackendOutcome<never> }
+    | { ok: false; outcome: FailureOutcome }
   > => {
     // Respect the caller/request budget: never run a command longer than the
     // remaining deadline (a floor above it would violate timeoutMs).
@@ -296,7 +298,7 @@ export function createChromeUsePerplexityBackend(
     const deadline = request.timeoutMs ? nowMs() + request.timeoutMs : undefined;
     const remaining = (): number | undefined =>
       deadline === undefined ? undefined : Math.max(0, deadline - nowMs());
-    const ensureTime = (submitted: boolean): BackendOutcome<never> | undefined => {
+    const ensureTime = (submitted: boolean): FailureOutcome | undefined => {
       const left = remaining();
       if (left !== undefined && left <= 0) {
         if (submitted) {
@@ -319,7 +321,9 @@ export function createChromeUsePerplexityBackend(
 
     const cleanup = async (): Promise<void> => {
       try {
-        await run(['--session', session, 'done', '--json'], 10_000);
+        const left = remaining();
+        const budget = left === undefined ? 5_000 : Math.min(Math.max(left, 1), 5_000);
+        await run(['--session', session, 'done', '--json'], budget);
       } catch {
         // best effort
       }
