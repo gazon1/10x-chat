@@ -3252,6 +3252,50 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings).toHaveLength(1);
   });
 
+  it('does not take an empty list of the prose for the payload of the findings', () => {
+    // The empty list of the prose carries nothing, and it comes last: it must
+    // not displace the payload of the answer, or the finding of the reviewer
+    // would be lost and the change would be approved without it.
+    const answer = [
+      JSON.stringify({ findings: [FINDING], decisions: [] }),
+      'The files I looked at: []',
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not take an empty list of the prose for the payload of the decisions', () => {
+    // The same for the decisions of the architecture pass: an empty pair of
+    // brackets in the prose is not the answer that says there are none.
+    const answer = [
+      JSON.stringify({ findings: [], decisions: [DECISION] }),
+      'The decisions I saw: []',
+    ].join('\n');
+    const parsed = parseReviewerDecisions(answer);
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.decisions).toHaveLength(1);
+    expect(parsed.decisions[0].decision).toBe(DECISION.decision);
+  });
+
+  it('keeps a payload under the key that carries no findings', () => {
+    // The payload under the key is the answer that says there are none, and
+    // the empty list of the prose does not replace it.
+    const answer = [JSON.stringify({ findings: [], decisions: [] }), 'Nothing else: []'].join('\n');
+    const parsed = parseReviewerFindings(answer, 'architecture');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toEqual([]);
+  });
+
+  it('takes an empty bare list as the answer when nothing else answers', () => {
+    // A reviewer that answered with a bare list and nothing else: the empty
+    // list is the whole answer of that reviewer.
+    const parsed = parseReviewerFindings('[]', 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toEqual([]);
+  });
+
   it('reads the verdicts of a verification', () => {
     const parsed = parseVerdicts(
       JSON.stringify({

@@ -842,14 +842,29 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * payload of the answer is found by its position and not by the shape it has:
  * an answer without the decisions is the answer, and it must not be replaced
  * by the example of the format that precedes it.
+ *
+ * An empty bare list is the one exception: it carries nothing, and a list of
+ * the prose — an empty pair of brackets in a sentence — says nothing about
+ * the review. It is displaced by every other payload of the answer, and it
+ * answers only when nothing else does. A payload under the key is never
+ * displaced by it, not even when it carries no findings: the prompt asks for
+ * that payload, and it is the answer that says there is none.
  */
 function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined {
+  const eligible = candidates.filter((candidate) => carriesTheShapeOfAnAnswer(candidate.value));
+  const pool = eligible.every((candidate) => isEmptyBareList(candidate.value))
+    ? eligible
+    : eligible.filter((candidate) => !isEmptyBareList(candidate.value));
   let answer: JsonCandidate | undefined;
-  for (const candidate of candidates) {
-    if (!carriesTheShapeOfAnAnswer(candidate.value)) continue;
+  for (const candidate of pool) {
     if (!answer || candidate.at > answer.at) answer = candidate;
   }
   return answer;
+}
+
+/** Whether a payload is a bare list that carries nothing. */
+function isEmptyBareList(value: unknown): boolean {
+  return Array.isArray(value) && value.length === 0;
 }
 
 /** Whether a payload carries the shape of an answer of a reviewer. */
