@@ -2719,6 +2719,31 @@ describe('the implicit decisions of a review', () => {
     expect(run.verdict).toBe('REQUEST CHANGES');
   });
 
+  it('fails the architecture pass when the answer carries nothing but an example', async () => {
+    // The model showed the format of its answer and answered nothing: the
+    // example is not the answer, and the audit of the decisions did not run.
+    // The example must not pass as the answer of the architecture pass, or the
+    // review approves a change whose decisions were never audited.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: ['For example:', JSON.stringify({ findings: [], decisions: [] })].join('\n'),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+
   it('fails the architecture pass when the answer omits the findings', async () => {
     // The architecture pass answers two questions: an answer that carries the
     // decisions and no findings has answered one of them. The findings of that
@@ -3335,13 +3360,24 @@ describe('the parsing of the answers', () => {
     const answer = [
       'And here is what I found:',
       JSON.stringify({ findings: [FINDING] }),
-      'The format I use is:',
+      'For example:',
       JSON.stringify({ findings: [{ ...FINDING, title: 'an entry of the example' }] }),
     ].join('\n');
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.invalid).toEqual([]);
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes no answer from an answer that carries nothing but an example', () => {
+    // The reviewer showed the format and answered nothing: the example is not
+    // the answer, and the step of the reviewer fails instead of reporting the
+    // entries of the example as the findings of the review.
+    const answer = ['For example:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of findings');
   });
 
   it('takes an answer that a preamble introduces for the answer', () => {

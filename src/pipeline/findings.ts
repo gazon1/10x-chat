@@ -846,11 +846,14 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * Whether the prose introduces a payload as an example of the format.
  *
  * A model that shows the format of its answer writes a word before the
- * payload — "the format I use is", "for example", "a sample answer". Such a
- * payload carries the entries of the example, not the entries the reviewer
- * found, and it must never pass as the answer: the review would report
- * findings that nobody made, or the audit of the decisions would pass on an
- * answer that never answered.
+ * payload — "for example", "a sample answer", "e.g.". Such a payload carries
+ * the entries of the example, not the entries the reviewer found, and it must
+ * never pass as the answer: the review would report findings that nobody
+ * made, or the audit of the decisions would pass on an answer that never
+ * answered.
+ *
+ * A preamble that only names the format — "the format I use is" — introduces
+ * no example: the payload that follows it may be the answer itself.
  *
  * The word is read in the lines right before the payload. The word of a
  * sentence that comes later says nothing about the payload that precedes it.
@@ -862,7 +865,7 @@ function introducesAsExample(text: string, at: number): boolean {
 }
 
 /** The words that introduce an example of the format of an answer. */
-const EXAMPLE_WORDS = /\b(example|examples|sample|schema|format)\b|e\.g\./i;
+const EXAMPLE_WORDS = /\b(example|examples|sample)\b|e\.g\./i;
 
 /**
  * The payload of the answer — the last payload of the text.
@@ -876,7 +879,8 @@ const EXAMPLE_WORDS = /\b(example|examples|sample|schema|format)\b|e\.g\./i;
  * A payload that the prose introduces as an example is not the answer, and it
  * never passes as one — not even when it is the only payload of the answer:
  * the answer of a reviewer is the payload of the top level, and the example
- * of the format is not it.
+ * of the format is not it. An answer that carries nothing but an example is
+ * no answer at all, and the step of the reviewer fails.
  *
  * An empty bare list is the second exception: it carries nothing, and a list
  * of the prose — an empty pair of brackets in a sentence — says nothing about
@@ -887,12 +891,11 @@ const EXAMPLE_WORDS = /\b(example|examples|sample|schema|format)\b|e\.g\./i;
  */
 function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined {
   const eligible = candidates.filter((candidate) => carriesTheShapeOfAnAnswer(candidate.value));
-  // An example is not an answer. When every payload of the answer is an
-  // example, there is no other answer to read, and the last of them is read
-  // as one: an answer that carries nothing but a preamble is a rare answer,
-  // and failing it would fail a reviewer that did answer.
-  const answers = eligible.filter((candidate) => !candidate.example);
-  const base = answers.length > 0 ? answers : eligible;
+  // An example is not an answer. An answer that carries nothing but an
+  // example has not answered, and the step of the reviewer fails: an example
+  // that passes as the answer would pass the audit of a reviewer that never
+  // ran it.
+  const base = eligible.filter((candidate) => !candidate.example);
   const pool = base.every((candidate) => isEmptyBareList(candidate.value))
     ? base
     : base.filter((candidate) => !isEmptyBareList(candidate.value));

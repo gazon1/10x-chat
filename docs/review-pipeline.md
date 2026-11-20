@@ -154,10 +154,13 @@ The payload of an answer is looked for in the whole answer: a model fences it,
 wraps it in a sentence, or repeats the format of the answer before the answer
 itself. The place of the payload decides which one is the answer, and the
 number of the entries does not: the answer comes last. A payload that the
-prose introduces as an example — "the format I use is", "for example", "a
-sample answer" — is not the answer and never passes as one, not even when it
-is the last payload of the text: it carries the entries of the example and not
-the entries the reviewer found. The schema of an entry does not decide
+prose introduces as an example — "for example", "a sample answer", "e.g." —
+is not the answer and never passes as one, not even when it is the last
+payload of the text: it carries the entries of the example and not the
+entries the reviewer found. An answer that carries nothing but an example has
+not answered, and the step of the reviewer fails. A preamble that only names
+the format — "the format I use is" — introduces no example: the payload that
+follows it may be the answer itself. The schema of an entry does not decide
 between two payloads either: a payload whose entries pass the schema is
 not the answer when a later payload carries the answer itself, and the
 malformed entries of that payload fail the step instead of being dropped
