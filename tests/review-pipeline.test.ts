@@ -303,6 +303,138 @@ describe('the review pipeline', () => {
     expect(run.decisions).toHaveLength(0);
   });
 
+  it('does not ask a role for an empty array instead of the decisions', async () => {
+    // The answer is an object with two lists: a reviewer that finds no defect
+    // still reports the decisions of the change. An instruction to return an
+    // empty array would let it answer with a bare list, and the audit would be
+    // lost without a word.
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain('return an empty array');
+      expect(prompt).toContain(
+        'return "findings": [] and still report every consequential decision',
+      );
+    }
+  });
+
+  it('keeps the decisions of a reviewer that found no defect', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWithDecisions([DECISION]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].reportedBy).toEqual(['correctness']);
+    expect(run.findings).toHaveLength(0);
+  });
+
+  it('fails the step when the property of the decisions is not a list', async () => {
+    // The property is there and it is not a list: the answer does not report no
+    // decision, it reports a broken one.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: JSON.stringify({ findings: [], decisions: 'none' }),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('the property is not an array');
+    expect(run.decisions).toHaveLength(0);
+  });
+
+  it('does not report the example of the format as a decision', async () => {
+    // The example of the schema carries the union of the kinds, and it is not
+    // a kind: the echo of the example fails the step instead of becoming a
+    // decision of the change.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: JSON.stringify({
+          findings: [],
+          decisions: [
+            {
+              decision: 'what was decided',
+              kind: 'behavior_change|intended|implicit|assumption',
+              previous: 'the previous behavior or the alternative that was available',
+              rationale: 'the evidence and the rationale',
+              consequence: 'what changes because of it',
+              risk: 'the failure scenario or the unresolved risk',
+              needsHuman: false,
+            },
+          ],
+        }),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(0);
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('kind missing or unknown');
+  });
+
+  it('accepts a kind that the reviewer wrote in the words of the report', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([{ ...DECISION, kind: 'unverified assumption' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].kind).toBe('assumption');
+  });
+
   it('sends the page of the change instead of the diff', async () => {
     // A reviewer that can open GitHub reads the whole change in its context:
     // the brief carries the page, and the diff is never pasted into it.

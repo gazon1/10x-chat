@@ -200,14 +200,23 @@ function decisionsSection(run: ReviewRun): string[] {
   const decisions = [...(run.decisions ?? [])].sort(
     (a, b) => Number(b.needsHuman) - Number(a.needsHuman),
   );
+  // The audit belongs to every role: a role that did not finish leaves the
+  // audit unfinished, whatever the other roles reported.
+  const unfinished = run.steps.filter(
+    (candidate) => candidate.id.startsWith('review-') && candidate.status !== 'passed',
+  );
   if (decisions.length === 0) {
-    const architecture = run.steps.find((candidate) => candidate.id === 'review-architecture');
     lines.push(
-      architecture && architecture.status !== 'passed'
-        ? `- The audit is incomplete — the architecture pass did not finish (${architecture.status}).`
+      unfinished.length > 0
+        ? `- The audit is incomplete — ${unfinished.map((step) => `${step.id} (${step.status})`).join(', ')}.`
         : '- None reported — the reviewers named no decision of consequence (a trivial change may skip the audit).',
     );
     return lines;
+  }
+  if (unfinished.length > 0) {
+    lines.push(
+      `- The audit is incomplete — ${unfinished.map((step) => `${step.id} (${step.status})`).join(', ')}.`,
+    );
   }
   decisions.forEach((decision, index) => {
     lines.push('');

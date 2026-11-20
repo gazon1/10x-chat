@@ -694,10 +694,36 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
   return { findings, invalid };
 }
 
-/** The kind of a decision — an unknown kind is an implicit one. */
-function decisionKindOf(value: unknown): DecisionKind {
-  const text = textOf(value)?.toLowerCase();
-  return DECISION_KINDS.find((kind) => kind === text) ?? 'implicit';
+/**
+ * The words a reviewer may use for a kind of decision.
+ *
+ * The kind of a decision is required, like the severity of a finding: a
+ * decision that carries an unknown kind is malformed, and the step of the role
+ * fails. A reviewer that writes the kind in the words of the report — "an
+ * implicit decision" — still says a kind.
+ */
+const DECISION_KIND_WORDS: Record<string, DecisionKind> = {
+  behaviorchange: 'behavior_change',
+  intended: 'intended',
+  intendeddecision: 'intended',
+  implicit: 'implicit',
+  implicitdecision: 'implicit',
+  assumption: 'assumption',
+  unverifiedassumption: 'assumption',
+};
+
+/**
+ * The kind of a decision — an unknown kind is no kind.
+ *
+ * The example of the format carries the union of the kinds, and it is not a
+ * kind: an answer that echoes the example of the schema fails the step of the
+ * role instead of reporting the example as a decision of the change.
+ */
+function decisionKindOf(value: unknown): DecisionKind | undefined {
+  const text = textOf(value)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  return text ? DECISION_KIND_WORDS[text] : undefined;
 }
 
 /**
@@ -716,7 +742,9 @@ export function decisionId(decision: string): string {
  *
  * The decisions are optional: an answer that carries none reports no implicit
  * decision, and that is not a malformed answer. An entry that does not pass
- * the schema is invalid — it is reported, never silently dropped.
+ * the schema is invalid — it is reported, never silently dropped. A property
+ * of the decisions that is there and is not a list is malformed too: the
+ * answer does not report no decision, it reports a broken one.
  *
  * Only a payload that carries the key of the decisions is read: a bare list of
  * findings is not a list of decisions.
@@ -724,9 +752,19 @@ export function decisionId(decision: string): string {
 export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDecisions {
   const { candidates } = jsonCandidates(text);
   const choices: CandidateChoice<ParsedDecisions>[] = [];
+  const malformed: string[] = [];
   for (const candidate of candidates) {
-    const entries = keyedEntries(candidate.value, 'decisions');
-    if (entries === undefined) continue;
+    const value = candidate.value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (!('decisions' in record)) continue;
+    const entries = record.decisions;
+    if (!Array.isArray(entries)) {
+      // The property is there and it is not a list: the answer is malformed,
+      // not an answer without decisions.
+      malformed.push('decisions: the property is not an array');
+      continue;
+    }
     choices.push({
       candidate,
       parsed: parseDecisionEntries(entries, role),
@@ -734,9 +772,9 @@ export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDe
       keyed: true,
     });
   }
-  if (choices.length === 0) return { decisions: [], invalid: [] };
+  if (choices.length === 0) return { decisions: [], invalid: malformed };
   const best = choices.reduce(betterCandidate);
-  return best.parsed;
+  return { decisions: best.parsed.decisions, invalid: best.parsed.invalid };
 }
 
 /** The decisions of one payload of an answer. */
@@ -755,6 +793,10 @@ function parseDecisionEntries(entries: unknown[], role: ReviewRole): ParsedDecis
       return;
     }
     const kind = decisionKindOf(value.kind);
+    if (!kind) {
+      invalid.push(`decisions[${index}]: kind missing or unknown`);
+      return;
+    }
     const previous = textOf(value.previous);
     const rationale = textOf(value.rationale);
     const consequence = textOf(value.consequence);

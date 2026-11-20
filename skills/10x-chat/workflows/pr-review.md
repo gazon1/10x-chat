@@ -298,7 +298,7 @@ IMPACT: <the concrete failure scenario — inputs/state -> wrong result>
 EVIDENCE: <the code, the trace, or the reproduction that shows it>
 FIX: <the minimal correction>
 
-Then report the implicit decisions of the change — what the implementation decided that the requirements never asked for, what it changes and what can fail. One block per decision:
+Then report the implicit decisions of the change — what the implementation decided that the requirements never asked for, what it changes and what can fail. One block per decision. Report them even when you found no defect — a change can decide something consequential and be free of defects:
 
 DECISION: <what was decided>
 KIND: behavior change | intended decision | implicit decision | unverified assumption
@@ -334,7 +334,7 @@ IMPACT: <the concrete failure scenario — inputs/state -> wrong result>
 EVIDENCE: <the code, the trace, or the reproduction that shows it>
 FIX: <the minimal correction>
 
-Then report the implicit decisions of the change — what the implementation decided that the requirements never asked for, what it changes and what can fail. One block per decision:
+Then report the implicit decisions of the change — what the implementation decided that the requirements never asked for, what it changes and what can fail. One block per decision. Report them even when you found no defect — a change can decide something consequential and be free of defects:
 
 DECISION: <what was decided>
 KIND: behavior change | intended decision | implicit decision | unverified assumption

@@ -96,6 +96,18 @@ const DECISION_SCHEMA = `{ "decision": "what was decided", "kind": "behavior_cha
 const ANSWER_SCHEMA = `{ "findings": [ ${FINDING_SCHEMA} ], "decisions": [ ${DECISION_SCHEMA} ] }`;
 
 /**
+ * The closing rule of every role.
+ *
+ * The answer is an object with two lists, not a bare list: a reviewer that
+ * finds no defect still reports the decisions of the change. An instruction
+ * that says "return an empty array" would let the reviewer answer with a bare
+ * list, and the audit would be lost without a word — the parser reads a bare
+ * list as a list of findings and the decisions as none.
+ */
+const ANSWER_RULE =
+  'If you find nothing blocking, return "findings": [] and still report every consequential decision of the change — return "decisions": [] only when the change decides nothing of consequence. Do not invent problems to fill the schema. Do not rewrite the code.';
+
+/**
  * The audit of the implicit decisions — the same for every role.
  *
  * The requirements of a change never say everything, and a change that looks
@@ -137,7 +149,7 @@ Look only for real defects: logic that is wrong, callers that break, data loss, 
 Answer with JSON only, without prose around it:
 ${ANSWER_SCHEMA}
 
-If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+${ANSWER_RULE}`,
   architecture: `# Role: architecture
 
 You are an independent reviewer of a change. Your role: architecture, maintainability, compatibility and scope discipline.
@@ -147,7 +159,7 @@ Judge the change against the conventions of the repository and against the code 
 Answer with JSON only, without prose around it:
 ${ANSWER_SCHEMA}
 
-If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+${ANSWER_RULE}`,
   tests: `# Role: tests
 
 You are an independent reviewer of a change. Your role: tests and verification.
@@ -157,7 +169,7 @@ Is the behaviour covered, are the assertions meaningful, would the test fail wit
 Answer with JSON only, without prose around it:
 ${ANSWER_SCHEMA}
 
-If the change is covered, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+${ANSWER_RULE}`,
 };
 
 /**

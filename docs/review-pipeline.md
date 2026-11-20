@@ -132,8 +132,9 @@ A decision carries a kind — `behavior_change`, `intended`, `implicit` or
 `assumption` — the decision itself, the previous behavior or the alternative
 that was available, the evidence and the rationale, the consequence, the
 failure scenario or the unresolved risk, and whether a human has to confirm it.
-An unknown kind is an implicit one: a decision nobody could classify is a
-decision that needs a human.
+The kind is required, like the severity of a finding: a decision that carries
+an unknown kind is malformed and fails the step of its role. A reviewer that
+writes the kind in the words of the report still says a kind.
 
 **The decisions are optional.** An answer that carries none reports no
 implicit decision, and that is not a malformed answer. An entry that does not
