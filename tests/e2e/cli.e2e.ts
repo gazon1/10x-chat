@@ -273,6 +273,30 @@ describe('cli flows', () => {
       expect(playbook).toMatch(/What did you decide that I did not tell you to decide\?/);
       expect(playbook).toMatch(/refactor existing code|refactoring existing code/i);
       expect(format).toMatch(/## Implicit decisions and trade-offs/);
+
+      // The contract of the section: the columns a decision row carries and the
+      // kinds of decision the report distinguishes.
+      const header = format.match(/^\| Kind \|.*$/m)?.[0] ?? '';
+      for (const column of [
+        'Kind',
+        'Decision',
+        'Previous behavior or alternative',
+        'Evidence and rationale',
+        'Consequence',
+        'Failure scenario or unresolved risk',
+        'Human confirmation',
+      ]) {
+        expect(header).toContain(column);
+      }
+      for (const kind of [
+        'Confirmed behavioral change',
+        'Intended decision',
+        'Implicit decision',
+        'Unverified assumption',
+      ]) {
+        expect(format).toContain(kind);
+      }
+      expect(format).toMatch(/A decision is not a finding/);
     });
   });
 });
