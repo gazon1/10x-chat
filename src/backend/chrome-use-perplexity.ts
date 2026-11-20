@@ -40,6 +40,14 @@ const COMPOSER = 'div[role="textbox"][contenteditable="true"]';
 const SUBMIT = 'button[aria-label="Submit"]';
 const CMD_TIMEOUT_FLOOR_MS = 5_000;
 
+/**
+ * The marker of a command that never ran.
+ *
+ * A chrome-use that could not be started created no session, so there is
+ * nothing to tear down; a command that ran may have created one.
+ */
+const NOT_STARTED = 'could not be started';
+
 interface ChromeJson {
   success?: boolean;
   data?: unknown;
@@ -222,11 +230,11 @@ export function createChromeUsePerplexityBackend(
             outcome: failure(
               'unknown_submission',
               'unknown',
-              `chrome-use could not be started (prompt may have been submitted): ${detail}`,
+              `chrome-use ${NOT_STARTED} (prompt may have been submitted): ${detail}`,
             ),
           };
         }
-        return { ok: false, outcome: unavailable(`chrome-use could not be started: ${detail}`) };
+        return { ok: false, outcome: unavailable(`chrome-use ${NOT_STARTED}: ${detail}`) };
       }
       if (submitAttempt && !submitted) {
         return {
@@ -360,9 +368,9 @@ export function createChromeUsePerplexityBackend(
 
     let submitted = false;
     let partialText = '';
-    // The session is only closed when it was really opened: a request whose
-    // deadline expired before the first command must not touch the browser at
-    // all, not even with the teardown of a session that never existed.
+    // The session is only closed when it can exist: a request whose deadline
+    // expired before the first command must not touch the browser at all, and a
+    // chrome-use that could not start created no session to tear down.
     let sessionStarted = false;
 
     const cleanup = async (): Promise<void> => {
@@ -380,12 +388,15 @@ export function createChromeUsePerplexityBackend(
       let t = ensureTime(false);
       if (t) return t;
 
-      sessionStarted = true;
       const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
       if (!opened.ok) {
+        // A chrome-use that never ran created no session: there is nothing to
+        // tear down. A command that ran may have created one.
+        sessionStarted = !opened.outcome.failure.message.includes(NOT_STARTED);
         known.set(request.requestId, { submission: opened.outcome.failure.submission });
         return opened.outcome;
       }
+      sessionStarted = true;
 
       await cmd(
         session,

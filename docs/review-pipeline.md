@@ -181,7 +181,9 @@ Two rules keep the baseline honest:
 - **An older run does not overwrite a newer one.** The snapshot carries the
   moment the Issue was observed, and the write happens under the lock of the
   directory: a run that observed the Issue earlier than the stored snapshot
-  keeps the newer one.
+  keeps the newer one. Two observations of the same millisecond cannot be
+  ordered, and the stored snapshot is kept then — a tie never lets an
+  observation that may be the older one overwrite the newer requirements.
 
 The Issue is read again after the reviewers ran (`check-requirements`). An
 Issue that changed in the meantime makes the run incomplete: a review of

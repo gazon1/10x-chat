@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
 import { collectReviewContext } from '../src/pipeline/context.js';
 import { findingId } from '../src/pipeline/findings.js';
-import { hashRequirements, parseIssue } from '../src/pipeline/requirements.js';
+import { advanceBaseline, hashRequirements, parseIssue } from '../src/pipeline/requirements.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { IssueRequirements, ReviewContext } from '../src/pipeline/types.js';
 
@@ -75,6 +75,8 @@ async function fakeGh(options: {
   issue?: { number: number; url?: string; title: string; body: string };
   issueExit?: number;
   issueRaw?: string;
+  /** The read of the Issue that fails and every read after it. */
+  issueFailFromCall?: number;
 }): Promise<{ log: string; issueFile: string }> {
   const bin = path.join(home, 'bin');
   await mkdir(bin, { recursive: true });
@@ -109,7 +111,11 @@ async function fakeGh(options: {
   const issueAnswer =
     options.issueExit !== undefined
       ? `printf 'no such issue' >&2\nexit ${options.issueExit}`
-      : `cat "${issueFile}"`;
+      : options.issueFailFromCall !== undefined
+        ? // The reads are counted: the read of the number fails and every
+          // read after it fails too.
+          `n=$(cat "${log}.count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${log}.count"; if [ $n -ge ${options.issueFailFromCall} ]; then printf 'no such issue' >&2; exit 1; fi; cat "${issueFile}"`
+        : `cat "${issueFile}"`;
   const file = path.join(bin, 'gh');
   await writeFile(
     file,
@@ -452,6 +458,103 @@ describe('the requirements of a review', () => {
     expect(run.verdict).toBe('APPROVE');
     const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
     expect(baseline.hash).toBe(newer);
+  });
+
+  it('keeps the stored baseline when two observations share the millisecond', async () => {
+    await fakeGh({});
+    const stored = hashRequirements(ISSUE_TITLE, `${ISSUE_BODY} Stored.`);
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await writeFile(
+      baselineFile(),
+      JSON.stringify({
+        version: 1,
+        repository: 'owner/name',
+        number: 7,
+        url: 'https://github.com/owner/name/issues/7',
+        title: ISSUE_TITLE,
+        body: `${ISSUE_BODY} Stored.`,
+        hash: stored,
+        observedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'utf-8',
+    );
+
+    // The same millisecond: the two observations cannot be ordered, and the
+    // stored one is kept — an observation that may be the older one never
+    // overwrites the requirements of the newer one.
+    const result = await advanceBaseline(
+      requirementsOf({ observedAt: '2026-01-01T00:00:00.000Z' }),
+    );
+
+    expect(result.advanced).toBe(false);
+    expect(result.detail).toContain('same millisecond');
+    const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+    expect(baseline.hash).toBe(stored);
+  });
+
+  it('keeps the newer baseline when two reviews advance it at the same time', async () => {
+    await fakeGh({});
+    const newer = hashRequirements(ISSUE_TITLE, `${ISSUE_BODY} Newer.`);
+
+    await Promise.all([
+      advanceBaseline(requirementsOf({ observedAt: '2026-01-01T00:00:00.000Z' })),
+      advanceBaseline(
+        requirementsOf({
+          observedAt: '2026-06-01T00:00:00.000Z',
+          title: ISSUE_TITLE,
+          body: `${ISSUE_BODY} Newer.`,
+          hash: newer,
+        }),
+      ),
+    ]);
+
+    // The newer observation wins, whichever of the two runs writes first.
+    const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+    expect(baseline.hash).toBe(newer);
+  });
+
+  it('fails the collection when the stored baseline cannot be read', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await writeFile(baselineFile(), '{not a json', 'utf-8');
+
+    await expect(collectReviewContext({ cwd: repo, pr: 42, issue: 7 })).rejects.toThrow(
+      /cannot be read/,
+    );
+    // The corrupt file is not silently replaced by a fresh baseline.
+    expect(await readFile(baselineFile(), 'utf-8')).toBe('{not a json');
+  });
+
+  it('fails the collection when the stored baseline has another format', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await writeFile(
+      baselineFile(),
+      JSON.stringify({ version: 99, repository: 'owner/name', number: 7, hash: 'abc' }),
+      'utf-8',
+    );
+
+    await expect(collectReviewContext({ cwd: repo, pr: 42, issue: 7 })).rejects.toThrow(
+      /another format/,
+    );
+  });
+
+  it('makes the run incomplete when the issue cannot be read again', async () => {
+    await fakeGh({ issueFailFromCall: 1 });
+
+    const run = await runReviewPipeline({
+      backend: quietBackend(),
+      target: { cwd: repo, pr: 42, issue: 7 },
+      collect: async () => contextOf(requirementsOf()),
+    });
+
+    const check = run.steps.find((step) => step.id === 'check-requirements');
+    expect(check?.status).toBe('failed');
+    expect(check?.detail).toContain('could not be read again');
+    // A review that cannot confirm the version of the requirements is never an
+    // approval, and the baseline of the issue stays where it was.
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    await expect(readFile(baselineFile(), 'utf-8')).rejects.toThrow();
   });
 
   it('leaves a review without an issue exactly as it was', async () => {

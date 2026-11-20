@@ -270,8 +270,12 @@ export async function checkFreshness(
  * Advance the baseline of an Issue — after a review that finished.
  *
  * The snapshot is written under the lock of the directory, and a snapshot
- * that was observed later than this one is kept: a run that is older must not
- * overwrite the requirements of a newer one.
+ * that was observed earlier than this one is kept: a run that is older must
+ * not overwrite the requirements of a newer one.
+ *
+ * Two observations of the same millisecond cannot be ordered, and the stored
+ * one is kept then: a tie must never let an observation that may be the older
+ * one overwrite the requirements of the newer one.
  */
 export async function advanceBaseline(
   requirements: IssueRequirements,
@@ -279,19 +283,18 @@ export async function advanceBaseline(
   const dir = getRequirementsDir();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') await chmod(dir, 0o700);
-  // shortcut: the lock of the project is Linux only — the comparison of the
-  // observations is the guard on the other platforms, the lock closes the
-  // window between the comparison and the write.
-  const lock =
-    process.platform === 'linux'
-      ? await acquireLock(dir, LOCK_NAME, { timeoutMs: LOCK_TIMEOUT_MS })
-      : undefined;
+  // The lock of the project is the lock of every store of the project: it is
+  // an abstract unix socket, and the project runs on Linux only.
+  const lock = await acquireLock(dir, LOCK_NAME, { timeoutMs: LOCK_TIMEOUT_MS });
   try {
     const stored = await readBaseline(requirements.repository, requirements.number);
-    if (stored && stored.observedAt > requirements.observedAt) {
+    if (stored && stored.observedAt >= requirements.observedAt) {
       return {
         advanced: false,
-        detail: `another review advanced the baseline of the issue #${requirements.number} — the newer version was kept`,
+        detail:
+          stored.observedAt > requirements.observedAt
+            ? `another review advanced the baseline of the issue #${requirements.number} — the newer version was kept`
+            : `the baseline of the issue #${requirements.number} was observed in the same millisecond — the stored version was kept`,
       };
     }
     const file = snapshotPath(requirements.repository, requirements.number);
