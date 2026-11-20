@@ -912,8 +912,13 @@ function isEmptyBareList(value: unknown): boolean {
 
 /** Whether a payload carries the shape of an answer of a reviewer. */
 function carriesTheShapeOfAnAnswer(value: unknown): boolean {
-  // A bare list is the answer of a reviewer that answered without the key.
-  if (Array.isArray(value)) return true;
+  // A bare list is the answer of a reviewer that answered without the key —
+  // but only a list of entries: a list of strings is a list of the prose
+  // ("the files I looked at"), and a list of payloads is a container of
+  // payloads. Neither carries the answer, and neither may replace it.
+  if (Array.isArray(value)) {
+    return value.length === 0 || value.every((entry) => !!entry && typeof entry === 'object');
+  }
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   // The presence of the key marks the payload of the answer, not its value:

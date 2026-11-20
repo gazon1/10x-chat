@@ -3297,9 +3297,10 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
-  it('does not take a list of the prose for a payload of findings', () => {
+  it('does not take a list of the prose for the answer', () => {
     // A list of strings in the prose is no answer of findings: it must not
-    // fail the step of a reviewer that answered with the format.
+    // fail the step of a reviewer that answered with the format, and it must
+    // not replace the answer when it comes after it.
     const answer = [
       'The files I looked at: ["src/app.ts", "src/other.ts"]',
       JSON.stringify({ findings: [FINDING] }),
@@ -3307,6 +3308,19 @@ describe('the parsing of the answers', () => {
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.invalid).toEqual([]);
     expect(parsed.findings).toHaveLength(1);
+  });
+
+  it('does not take a list of the prose that follows the answer for the answer', () => {
+    // The list of the prose comes last: the position alone would read it as
+    // the answer, and the findings of the reviewer would be lost.
+    const answer = [
+      JSON.stringify({ findings: [FINDING], decisions: [] }),
+      'The files I looked at: ["src/app.ts", "src/other.ts"]',
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
   it('does not take an empty list of the prose for the payload of the findings', () => {

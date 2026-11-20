@@ -170,8 +170,11 @@ them hides the other, so a bare list that carries the findings is never lost
 behind an empty payload. An empty bare list is the one exception: it carries
 nothing, a pair of brackets in a sentence says nothing about the review, and
 it answers only when no other payload does. A bare list of strings is a list
-of the prose and a bare list of payloads is a container of payloads — neither
-is an answer of findings. Two payloads that carry the same value are two
+of the prose — "the files I looked at" — and a bare list of payloads is a
+container of payloads: neither carries the answer of a reviewer, and neither
+may replace it, not even when it comes last. A bare list of entries is the
+answer of a reviewer that answered without the key. Two payloads that carry
+the same value are two
 payloads: an example that repeats the answer of the reviewer does not erase
 it, and the answer comes last. Fifty
 delimiters that carry no JSON at all are tolerated; when there are more, the
