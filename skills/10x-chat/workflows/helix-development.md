@@ -8,7 +8,7 @@ Use it when the user asks for a change to be built in a repository — feature, 
 
 - The prompt carries the **GitHub coordinates** — repository URL, branch, commit SHA — plus the checkpoint's goal and acceptance criteria. Nothing else.
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded).
-- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 5), when the user asked for that publication. **A pull request is not required** — a pushed branch without a PR is reviewed by its base and head SHA, exactly as in the PR-review playbook. If the checkpoint cannot be pushed at all, the independent review does not run: the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
+- The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 6), when the user asked for that publication. **A pull request is not required** — a pushed branch without a PR is reviewed by its base and head SHA, exactly as in the PR-review playbook. If the checkpoint cannot be pushed at all, the independent review does not run: the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
 
 ## 1. Understand before touching
 
@@ -18,9 +18,50 @@ Use it when the user asks for a change to be built in a repository — feature, 
 - Learn the **verification conventions**: the exact commands the repository documents for tests, lint, types and build — and how they are run in CI (working directory, flags, environment).
 - Restate the task in your own words, with the acceptance criteria the user implies. If the task is ambiguous in a way that changes the design, ask now — a wrong assumption here costs a whole checkpoint.
 
-## 2. Split the work into ordered checkpoints
+## 2. Assess the approach before you plan
 
-A checkpoint is small enough to review in one pass and to revert in one step. Reuse the project context (and its invariants, contracts and verification conventions) when planning checkpoints and when scoping their acceptance criteria; include only the relevant, status-marked context for the work at hand.
+Before splitting the work, decide **how** the task should be solved. Consider these options in order and stop at the first that solves it:
+
+1. **Reuse** an existing abstraction or implementation in the target repository.
+2. **Use the standard library** and built-in platform capabilities of the language or runtime.
+3. **Reuse an existing project dependency** already in the manifest.
+4. **Evaluate an external library or maintained tool** — only if the first three do not solve the problem.
+5. **Implement custom functionality** only when the previous options do not adequately solve it.
+
+Answer three questions and write the answers down:
+
+- **Refactor first?** Is there existing code that should be simplified or refactored before adding functionality? Can duplication or an incorrect abstraction be removed instead of adding another layer? Is the refactoring necessary for the task, or merely aesthetic?
+- **Reuse instead of implementing?** Does an existing dependency already solve the problem? Is there a stable, maintained library or tool that covers most of the requirements? Would adopting it be simpler and safer than maintaining a custom implementation?
+- **Evaluate the real cost** (for a proposed external solution): maintenance activity and release history; compatibility with the project's language/runtime versions; license; security and known limitations; documentation and API stability; integration and migration cost; whether it introduces more complexity than it removes. **Do not recommend a dependency merely because it exists.**
+
+Record exactly one decision:
+
+| Decision | When |
+|---|---|
+| `REFACTOR FIRST` | Existing code is simplified or a wrong abstraction is removed, and the task rides on that. |
+| `REUSE EXISTING SOLUTION` | An existing abstraction, standard-library capability or dependency covers the task. |
+| `IMPLEMENT DIRECTLY` | Nothing above solves the problem; custom code is the smallest correct answer. |
+| `NO CHANGE NEEDED` | The task requires no change — say so plainly and stop. |
+
+The decision belongs to the plan and is written before the first checkpoint:
+
+```markdown
+### Approach
+- Decision: <REFACTOR FIRST | REUSE EXISTING SOLUTION | IMPLEMENT DIRECTLY | NO CHANGE NEEDED>
+- Approach: <one sentence>
+- Considered: <existing code, dependencies, libraries or tools>
+- Rejected: <alternative> — <why>
+- Preliminary refactoring: <none, or what it is>
+- Effect on scope and maintenance: <one sentence>
+```
+
+If no suitable alternative exists, state that explicitly rather than inventing one.
+
+A preliminary refactoring named in the Approach block is part of the plan — its own checkpoint when it is separable from the rest — and not the speculative refactoring that step 4 forbids.
+
+## 3. Split the work into ordered checkpoints
+
+A checkpoint is small enough to review in one pass and to revert in one step. Reuse the project context (and its invariants, contracts and verification conventions) when planning checkpoints and when scoping their acceptance criteria; include only the relevant, status-marked context for the work at hand. The plan carries the **Approach** block of step 2 — the decision and the rejected alternatives stay visible in it, and the checkpoints implement that decision rather than a different one.
 
 Each checkpoint states five things:
 
@@ -47,14 +88,14 @@ Template:
 
 Order the checkpoints by dependency, not by convenience. A checkpoint that leaves the repository in a broken state is not a checkpoint — each one ends green (or is explicitly gated as a WIP with a human decision).
 
-## 3. Implement only the current checkpoint
+## 4. Implement only the current checkpoint
 
 - Stay inside the declared scope. No speculative refactoring, no unrelated cleanup, no "while I was here" changes.
 - Follow the conventions of the surrounding code, not the conventions of another project you know better.
 - Write the code the checkpoint asks for; keep the diff reviewable.
 - If the checkpoint turns out to need a much larger change, stop, split it further, and record the new checkpoint list.
 
-## 4. Run the repository's own checks
+## 5. Run the repository's own checks
 
 Run the checks that cover the change, using the repository's documented tooling — its test command, its linter, its type checker, its build. Use the repository's environment (its package manager, its container, its config).
 
@@ -69,7 +110,7 @@ Record for each check: the exact command, the exit code, and the relevant output
 
 A check that is `FAILED` or `UNAVAILABLE` stays visible in the report. It is never rewritten into a pass, and "probably fine" is not a result.
 
-## 5. Commit, push and — only on request — open the pull request
+## 6. Commit, push and — only on request — open the pull request
 
 A review needs a target the reviewer can open, so the checkpoint goes to `origin` first — commit it and push the branch. **Publication needs the user's word**: the read-only check and the publication are two separate procedures, and the commands of the second one run only after the user said yes.
 
@@ -133,9 +174,9 @@ gh pr create --base <base> --head <branch> --title "<title>" --body "<what this 
 
 Without that answer nothing is created — and the review still runs as target **B**.
 
-Pushing the branch and opening the pull request are part of the pipeline, when the user asked for them. Merging, tagging a release or deploying is never (step 9).
+Pushing the branch and opening the pull request are part of the pipeline, when the user asked for them. Merging, tagging a release or deploying is never (step 10).
 
-## 6. Independent adversarial review of the checkpoint
+## 7. Independent adversarial review of the checkpoint
 
 Ask 10x-chat for an adversarial review of *this checkpoint*, in a fresh conversation (`--new-chat`), pointing it at the repository. Give the reviewer the same relevant project context as defined in [project-context.md](project-context.md) (reused brief or temporary summary), with claims marked `CONFIRMED`/`INFERRED`/`UNKNOWN` or unverified/stale and sourced where possible — and no other reviewer's findings or conversation history:
 
@@ -163,13 +204,13 @@ Acceptance criteria:
 If you find nothing blocking, say so. Do not invent problems, and do not rewrite the code."
 ```
 
-Fill every placeholder with the coordinates of the target of step 5: for target **A** the pull request coordinates, for target **B** the base and head SHA and the compare URL. **A pull request is never a precondition** — the review of a pushed branch runs exactly the same way.
+Fill every placeholder with the coordinates of the target of step 6: for target **A** the pull request coordinates, for target **B** the base and head SHA and the compare URL. **A pull request is never a precondition** — the review of a pushed branch runs exactly the same way.
 
 Use a second provider for the same checkpoint when the change is risky — two independent adversarial reviews catch more than one twice. `chat --all` sends the *same* prompt to every provider, so it works here as a second opinion on one role, but not as role-specific reviews.
 
 **A full context window is not a failed review.** When the conversation runs out of context (ChatGPT shows a banner with a "Continue in a new chat" button), 10x-chat continues in a new chat with an automatic summary of the old one and asks there — the same conversation, a fresh window. The new chat stays bound to the same repository and branch, so the following checkpoint appends to it. Treat the answer as the answer of that reviewer; never restart a role because the chat was continued.
 
-## 7. Resolve the findings
+## 8. Resolve the findings
 
 Fix every `BLOCKING` finding. Fix or explicitly resolve every `MAJOR` one. `MINOR` and `INFO` are recorded, not silently dropped.
 
@@ -181,7 +222,7 @@ Each finding ends in one of three states:
 
 Never resolve a finding by editing the report instead of the code.
 
-## 8. Gate and proceed
+## 9. Gate and proceed
 
 Proceed to the next checkpoint only when:
 
@@ -193,11 +234,11 @@ If a gate fails, stop and report. Do not push the problem into the next checkpoi
 
 **Project context updates (only when material).** If an accepted change materially changes architecture, contracts, or constraints, the brief may be updated only with an explicit decision by the repository owner or coding agent: revalidate affected claims, record sources/status, and never rewrite ADRs, specifications, README/source files, or the brief automatically. Do not update it for ordinary implementation details.
 
-## 9. Never merge or release autonomously
+## 10. Never merge or release autonomously
 
-Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 5) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the independent review is `UNAVAILABLE`. **A pull request is never required**: a pushed branch without one is reviewed by its base and head SHA. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
+Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 6) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the independent review is `UNAVAILABLE`. **A pull request is never required**: a pushed branch without one is reviewed by its base and head SHA. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
 
-## 10. Integration review and completion report
+## 11. Integration review and completion report
 
 After the last checkpoint, run one review over the *combined* change — at the pushed head SHA, since the interaction between checkpoints is where integration bugs live — and finish with the completion report in [report-format.md](report-format.md):
 
@@ -211,6 +252,7 @@ After the last checkpoint, run one review over the *combined* change — at the 
 ## Checklist
 
 - [ ] Repository instructions, architecture and verification conventions read; project context reused or temporarily summarized per [project-context.md](project-context.md) (with freshness/conflict checks as applicable).
+- [ ] Approach assessed **before** the checkpoints: existing code, standard library and platform capabilities, project dependencies and external solutions considered; one decision recorded (`REFACTOR FIRST` / `REUSE EXISTING SOLUTION` / `IMPLEMENT DIRECTLY` / `NO CHANGE NEEDED`) with the alternatives and why they were rejected.
 - [ ] Ordered checkpoints with goal, scope, acceptance criteria, verification, non-goals, planned against the relevant project context.
 - [ ] Only the current checkpoint implemented; no speculative refactoring.
 - [ ] Repository's own checks run, each recorded as PASSED / FAILED / SKIPPED / UNAVAILABLE with its command and output.
