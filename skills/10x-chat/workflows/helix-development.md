@@ -246,6 +246,7 @@ After the last checkpoint, run one review over the *combined* change — at the 
 - the acceptance criteria and their status;
 - the checks that ran, with their exact commands and results;
 - the findings, their resolution and who accepted what;
+- the decisions the implementation took that the plan did not state, and the trade-offs they carry;
 - the checks and scenarios that were **not** verified, and why;
 - the remaining risks and the follow-ups that were deliberately deferred.
 

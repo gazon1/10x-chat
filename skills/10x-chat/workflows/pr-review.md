@@ -4,7 +4,7 @@ Use it when the user asks for a review of a pull request, a branch, a patch, or 
 
 **Division of labour.** The coding agent (you) inspects the target repository, reads its conventions, runs its checks and adjudicates the findings. 10x-chat supplies independent reviewers and the protocol that turns their answers into a verdict. 10x-chat never builds, tests, or modifies the target repository.
 
-**The same protocol in code.** `10x-chat review` runs this playbook end to end: it collects the context, asks the isolated roles, verifies every finding against the source and writes the report of [report-format.md](report-format.md) — the repository doc `docs/review-pipeline.md` describes it. The steps below describe the **manual** path, where you run the reviewers yourself; the pipeline instead does the same on its own — it gives them the page of the change on GitHub (the pull request or the comparison of the commits, never the diff) and reads the code of the checkout itself for the verification. Use the pipeline for a review of a git checkout that is on `origin`, the steps below when the target is not on GitHub. Never run both for the same change: one verdict, one report.
+**The same protocol in code.** `10x-chat review` runs this playbook end to end: it collects the context, asks the isolated roles, verifies every finding against the source and writes the report of [report-format.md](report-format.md) — the repository doc `docs/review-pipeline.md` describes it. The steps below describe the **manual** path, where you run the reviewers yourself; the pipeline instead does the same on its own — it gives them the page of the change on GitHub (the pull request or the comparison of the commits, never the diff) and reads the code of the checkout itself for the verification. Use the pipeline for a review of a git checkout that is on `origin`, the steps below when the target is not on GitHub. Never run both for the same change: one verdict, one report. The implicit-decisions audit of step 2 belongs to the manual path for now: the pipeline asks its reviewers for findings only, and its report carries no decisions section.
 
 **The reviewers read the repository on GitHub themselves — no files are sent at all.** A reviewer that receives a pasted diff sees a snapshot of a few files; a reviewer that receives the repository URL, the coordinates of the change and the commit SHAs reads the whole change in its real context: the surrounding code, the conventions, the CI run. So:
 
@@ -128,6 +128,7 @@ When the change is not on GitHub, the review does not fail — it changes shape:
 - **You are the reviewer.** You read the diff or the patch yourself, in the same two roles as the remote passes: **role A — correctness, regressions, security, edge cases**, and **role B — architecture, maintainability, compatibility, scope discipline**. Run the passes one after the other, without letting the first answer narrow the second one.
 - **The schema does not change.** Every finding carries `SEVERITY`, `LOCATION`, `PROBLEM`, `IMPACT`, `EVIDENCE`, `FIX` — exactly as in step 3.
 - **The verdict does not change.** `APPROVE` or `REQUEST CHANGES`, decided against the same rules.
+- **The audit does not change.** The local pass runs the same implicit-decisions audit (step 2) against the base and the head, and the report carries the same section.
 - **The report says it was a local analysis.** In the `Target` field write what was reviewed (for example `branch feature/x (local analysis — no independent check on GitHub)`); in the `Reviewers` table mark the roles as `local analysis`; and list the missing independent check under *Not verified*. Never present a local analysis as an independent review.
 
 ### Publication — only after the user's word
@@ -195,7 +196,7 @@ For the local path (targets **C** and **D**) there is no brief — there is no r
 Each reviewer runs in a **fresh conversation** (`--new-chat`) and gets a **role-specific prompt**. Two roles are the minimum:
 
 - **Role A — correctness, regressions, security, edge cases.** Does it do what it claims, in every branch? What breaks for existing callers? Injection, authz, secrets, unsafe input, races, error handling, boundary values, nullability, resource leaks.
-- **Role B — architecture, maintainability, compatibility, scope discipline.** Does it fit the codebase's shape and conventions? Is it the smallest change that solves the task? Public API/format/schema changes, backwards compatibility, dead code, duplication, unnecessary abstraction, missing or pointless tests.
+- **Role B — architecture, maintainability, compatibility, scope discipline.** Does it fit the codebase's shape and conventions? Is it the smallest change that solves the task? Public API/format/schema changes, backwards compatibility, dead code, duplication, unnecessary abstraction, missing or pointless tests. And the decisions the change made without being asked: which guarantees changed, what can fail, and whether a refactoring or an existing solution would have been simpler.
 
 A third role (**Role C — tests and verification**) is worth it when the change carries real logic: is the behaviour covered, are the assertions meaningful, would the test fail without the fix?
 
@@ -245,6 +246,7 @@ Read the code yourself on GitHub — do not guess and do not ask for the files:
 
 If the target has no pull request, review the compare URL and the commit page https://github.com/<owner>/<name>/commit/<head-sha> instead.
 Open every changed file at the head SHA and the code around it. Judge the change against the conventions of the repository (read AGENTS.md and CONTRIBUTING.md at the head SHA) and against the surrounding code: does it fit the codebase's shape, is it the smallest change that solves the task, does it break public APIs, formats or schemas, does it leave dead code or needless abstraction, are the tests meaningful?
+Read the compare page as well, not only the head: a decision that changes a guarantee is visible only against the base revision.
 Report every finding in this exact format, one block per finding:
 
 SEVERITY: BLOCKING | MAJOR | MINOR | INFO
@@ -254,7 +256,24 @@ IMPACT: <the concrete failure scenario — inputs/state -> wrong result>
 EVIDENCE: <the code, the trace, or the reproduction that shows it>
 FIX: <the minimal correction>
 
-If you find nothing blocking, say so explicitly. Do not invent problems, and do not rewrite the code."
+Then answer the question the requirements did not ask: what did you decide that I did not tell you to decide? Name the consequential decisions the change made without an explicit requirement, the behavior of the base revision that they change, the alternative that was available, the assumption each of them rests on, and what can fail when the change fails partially. A trade-off is not a defect — report it as a decision, never as a finding.
+
+After the findings, report every material decision in this exact format, one block per decision:
+
+DECISION: <what the implementation decided>
+PREVIOUS: <the behavior of the base revision, or the alternative that was available>
+EVIDENCE: <the code, the test or the document that supports it>
+CONSEQUENCE: <the guarantee or the contract that changes>
+RISK: <the failure scenario, or the risk that stays open>
+CONFIRMATION: <yes — a human must confirm it | no>
+
+And state the approach once: could this have been solved more simply by refactoring existing code or by reusing an existing solution? Check the existing code of the repository, the standard library and the platform, the dependencies the project already uses, and a maintained external solution — and name the one you picked.
+
+APPROACH: <refactor existing code | reuse an existing solution | use a maintained external solution | implement directly>
+CONSIDERED: <the existing code, the platform capabilities, the dependencies and the external solutions you checked>
+REJECTED: <the alternative — why it was rejected>
+
+If you find nothing blocking, say so explicitly. Do not invent problems, do not invent decisions, and do not rewrite the code."
 ```
 
 **Both commands carry the same coordinates and the same relevant project context.** A placeholder that points at the other role is not a command: copied literally it sends a reviewer into the chat without the target, and the second pass becomes a review of nothing. Fill every placeholder of both commands with the coordinates of step 1 and the same relevant context claims/statuses from [project-context.md](project-context.md) when used — the two reviewers differ in their role and their instructions, not in what they read and not in the project context they receive. Keep their first passes independent.
@@ -270,6 +289,50 @@ If you find nothing blocking, say so explicitly. Do not invent problems, and do 
 **A full context window is not a failed review.** A long review can exhaust the context window of the conversation (ChatGPT shows a banner with a "Continue in a new chat" button). 10x-chat then continues in a new chat with an automatic summary of the old one and asks there — the same reviewer, the same conversation, a fresh window. The new chat stays bound to the same repository and branch. The protocol does not change: the reviewer still gets the GitHub coordinates and still reads the code itself. Do not restart a role because the chat was continued, and do not report a continued chat as a missing answer.
 
 **What is not on GitHub cannot be reviewed by a remote reviewer.** Uncommitted work, untracked files and local-only artifacts are invisible to the reviewer, and no file is attached to make them visible. For that case the review runs **locally** (see the local review path in step 1) — you are the reviewer, the findings carry the same schema, and the report states that no independent check on GitHub happened.
+
+### The implicit-decisions audit
+
+A technically plausible implementation passes every other check and still has decided something nobody asked it to decide. The architecture pass answers that, and you check its answer against the base and the head before it goes into the report:
+
+> What did you decide that I did not tell you to decide?
+
+Ask it of every material change:
+
+1. **Which consequential decisions were made without an explicit requirement?** A requirement says what the change must do; it never says what it must not change.
+2. **What alternatives were available?** The existing abstraction, the refactoring, the standard library, the dependency in the manifest, the maintained library — or the simple thing.
+3. **Why does the implementation choose this approach?** The reason must be evidence, not habit.
+4. **Which assumptions are supported** by code, tests, documentation or an accepted decision — and which are not? An unsupported assumption is recorded as an assumption, not as a fact.
+5. **Which behavioral or operational guarantees change?** Compare the base revision with the head. The contracts that matter here are persistence and durability, ordering and consistency, delivery and retry guarantees, concurrency and synchronization, resource limits and backpressure, timeout and cancellation semantics, compatibility with existing callers and stored data, and recovery after a process, a network or a dependency failure. Take the ones the change touches — the list is not a form to fill in.
+
+**The failure modes of the touched paths.** For the paths the change touches, walk the ordinary case, the boundary input, the exhausted resource, the concurrent operation, the partial failure, the restart, the unavailable dependency, the timeout, the retry and the cancellation — and the data loss, the duplication and the stale state that come with them. A bounded queue, a retry, a cache, a persistence layer and a particular architecture are not better by default: judge the contract they actually offer and the trade-off they accept.
+
+**A decision is not a defect.** Keep these apart, and keep them apart in the report:
+
+| Kind | What it is |
+|---|---|
+| Confirmed behavioral change | The code shows it: the base and the head differ in this way. |
+| Intended decision | The requirements, a document of the repository or an accepted decision asked for it. |
+| Implicit decision | Nobody asked for it — a human has to look at it. |
+| Unverified assumption | The claim rests on material nobody read — mark it, do not promote it. |
+
+A trade-off is not a defect, and a missed opportunity is not a defect. A decision becomes a finding only when there is a concrete failure scenario, a broken contract, a security problem or another actionable issue, with the evidence of it. Everything else goes into the *Implicit decisions and trade-offs* section of the report, where it never changes the verdict.
+
+**The approach: refactor first, or reuse.** Before you judge the chosen approach, look at the target repository and the change context: could this have been solved more simply by refactoring existing code or by reusing a stable, maintained solution instead of introducing custom code? Consider these options in order and stop at the first that solves it:
+
+1. **Existing project code** — an abstraction, a helper, a module or a capability that should be reused or simplified.
+2. **Refactoring first** — a small, focused refactoring that removes duplication, corrects an unsuitable boundary or makes the change simpler than another abstraction.
+3. **Language and platform capabilities** — the standard library, the runtime or a platform API.
+4. **Existing dependencies and tools** — a dependency the project already uses.
+5. **External maintained solutions** — a mature, maintained library or tool.
+6. **Custom implementation** — only when the previous options do not fit; then it must be small and justified.
+
+For an external solution that is a realistic candidate, weigh its maintenance activity and release history, its compatibility with the language, the runtime and the supported versions, its license and security posture, the stability of its API and its documentation, the cost of the adoption and the migration, and the long-term maintenance against the custom implementation. **Do not recommend a dependency merely because it exists**, and do not turn a trivial change into a research project.
+
+When the approach materially affects the complexity or the long-term maintenance, record the chosen approach, the evidence for it, the alternatives and why they were rejected, the trade-off, and whether the plan should be rewritten before the implementation or a refactoring proposed afterwards. A custom implementation is not automatically wrong, and a refactoring suggestion is not automatically a required change: raise a finding only when the chosen approach causes a concrete, evidence-backed problem — avoidable duplication that materially raises the risk, an unnecessary dependency, a violated convention of the project, an unjustified maintenance or security burden. Otherwise it stays a decision or a non-blocking recommendation.
+
+When the review context carries an implementation plan or a governing Issue, compare the change with it and say where the plan should have considered a refactoring or a reuse.
+
+**A trivial change skips the audit.** A rename, a typo fix, a comment, a version bump: one line in the report — *Not applicable — <why>* — and no audit. The check is proportional to the change.
 
 ## 3. Read the findings against a common schema
 
@@ -290,6 +353,8 @@ Severity is not a matter of taste:
 - **MAJOR** — a real defect with a narrower trigger, a missing guard that a supported input can hit, an untested risky path.
 - **MINOR** — style, naming, a small duplication, a missing comment.
 - **INFO** — an observation or a suggestion for later.
+
+**A decision is not a finding.** The decisions the change made without being asked have their own section in the report — *Implicit decisions and trade-offs* — and they never carry a severity and never change the verdict. A decision that turns out to break a contract, to have a concrete failure scenario or to be a security problem becomes a finding and is reported as one.
 
 ## 4. Merge, deduplicate, resolve
 
@@ -318,7 +383,7 @@ Produce exactly one of:
 - **APPROVE** — no `BLOCKING` and no unverified `MAJOR` finding remains, and every check you ran passed.
 - **REQUEST CHANGES** — at least one `BLOCKING` finding, or a `MAJOR` finding that is still unverified, or a relevant check that failed.
 
-Non-blocking recommendations (MINOR, INFO) never block approval, but they belong in the report.
+Non-blocking recommendations (MINOR, INFO) never block approval, but they belong in the report. The implicit decisions of the change never block approval either — only a finding does.
 
 Write the report with the shared format in [report-format.md](report-format.md). For a local review (target **C** without publication, or target **D**) the report says in the `Target` field that this was a local analysis, and lists the missing independent check under *Not verified*.
 
@@ -335,6 +400,9 @@ Write the report with the shared format in [report-format.md](report-format.md).
 - [ ] Findings deduplicated; verified and unverified ones labelled; false positives dropped.
 - [ ] Disagreements resolved explicitly, with the reasoning recorded.
 - [ ] Each reported finding checked against the diff and the repository's checks.
+- [ ] The implicit-decisions audit ran: the decisions the requirements did not state, the behavior of the base that changed, the failure modes of the touched paths — or the *Not applicable* note of a trivial change.
+- [ ] The approach was checked: the existing code, a focused refactoring, the platform capabilities, the dependencies of the project, a maintained external solution — and the chosen approach and its alternatives recorded when the complexity or the maintenance is affected.
+- [ ] Decisions and defects kept apart: a trade-off is in the *Implicit decisions and trade-offs* section, a finding only with a concrete failure scenario and its evidence.
 - [ ] Every check recorded with its command and result; nothing claimed without evidence.
 - [ ] For a local review: the report states that it was a local analysis, and the missing independent check is listed under *Not verified*.
 - [ ] For an Issue-linked review: the pipeline ran with `--issue`, and the report names the version of the Issue it judged.

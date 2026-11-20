@@ -255,6 +255,26 @@ describe('cli flows', () => {
       }
     });
   });
+
+  it('installs a playbook that audits the decisions the requirements did not state', async () => {
+    await withTempHome(async (home) => {
+      const { readFile } = await import('node:fs/promises');
+      const path = await import('node:path');
+
+      const result = await runCli(['skill', 'install'], { HOME: home });
+      expect(result.code).toBe(0);
+
+      const workflows = path.join(home, '.codex', 'skills', '10x-chat', 'workflows');
+      const playbook = await readFile(path.join(workflows, 'pr-review.md'), 'utf-8');
+      const format = await readFile(path.join(workflows, 'report-format.md'), 'utf-8');
+
+      // The key question of the audit, the questions it asks and the place
+      // where the answer goes.
+      expect(playbook).toMatch(/What did you decide that I did not tell you to decide\?/);
+      expect(playbook).toMatch(/refactor existing code|refactoring existing code/i);
+      expect(format).toMatch(/## Implicit decisions and trade-offs/);
+    });
+  });
 });
 
 it('rejects --all with the api transport', async () => {

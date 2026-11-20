@@ -242,11 +242,14 @@ onto it like this:
 | `FIX` | `fix` — optional |
 | the status of the finding | `verification` — `confirmed` → *Open*, `unverified` → *Unverified*, `rejected` → *Rejected* |
 
-Two fields of the report have no counterpart in a pipeline run and say so:
+Three fields of the report have no counterpart in a pipeline run and say so:
 the *Acceptance criteria* of the change are the caller's, not the pipeline's,
-and the *Checks* table carries the steps of the pipeline. A review with a
-governing Issue names that Issue and its version in the header of the report,
-and its *Acceptance criteria* row names the criteria of the Issue.
+the *Checks* table carries the steps of the pipeline, and the *Implicit
+decisions and trade-offs* section belongs to the manual playbook — the
+reviewers of the pipeline answer with findings only, so a pipeline report has
+no such section. A review with a governing Issue names that Issue and its
+version in the header of the report, and its *Acceptance criteria* row names
+the criteria of the Issue.
 
 ## Running it
 
