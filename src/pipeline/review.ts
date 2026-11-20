@@ -325,7 +325,10 @@ async function callersOf(repoRoot: string, file: string, revision?: string): Pro
       // A deleted file is grepped in the revision it belongs to: the head does
       // not have it any more, and the callers that matter are the ones of the
       // code that was removed.
-      revision ? ['grep', '-l', '-F', file, revision] : ['grep', '-l', '-F', '--', file],
+      // The name of the file is the pattern, and `--` closes the options: the
+      // search runs over the whole tree, and the files that mention the file
+      // are its callers.
+      revision ? ['grep', '-l', '-F', file, revision] : ['grep', '-l', '-F', file, '--'],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {

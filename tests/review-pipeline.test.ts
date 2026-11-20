@@ -723,6 +723,50 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('gives the verifier the files that mention the file of a finding', async () => {
+    // The callers of a change are the files that mention it: the material of
+    // the verification names them.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-callers-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'src', 'main.ts'), "import './src/app.ts';\n", 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/app.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('src/main.ts');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a secret out of the diff and out of the evidence', async () => {
     // A file that may hold a secret is never read: its content reaches
     // neither the diff of the bundle nor the evidence of a finding.
@@ -2018,6 +2062,66 @@ describe('the parsing of the answers', () => {
     expect(parsed.verdicts).toHaveLength(2);
     expect(parsed.invalid).toHaveLength(1);
     expect(parsed.invalid[0]).toContain('verdict missing or unknown');
+  });
+
+  it('reads the verdicts of a verification in a fence', () => {
+    // The verifier answers in a fenced block of JSON: the fence is not part of
+    // the payload, and the payload is still read.
+    const answer = [
+      'Here is what I found:',
+      '```json',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'the line shows it' }],
+      }),
+      '```',
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toHaveLength(1);
+    expect(parsed.verdicts[0].id).toBe('f-00000001');
+  });
+
+  it('keeps the valid verdicts of a payload with a malformed entry', () => {
+    // A malformed entry does not take the valid ones with it.
+    const parsed = parseVerdicts(
+      JSON.stringify({
+        verdicts: [null, { id: 'f-00000001', verdict: 'confirmed', evidence: 'the line shows it' }],
+      }),
+    );
+    expect(parsed.verdicts).toHaveLength(1);
+    expect(parsed.invalid.join(' ')).toContain('the entry is not an object');
+  });
+
+  it('reads the payload of the verdicts that carries more of them', () => {
+    // The example of the format comes first, the answer comes last: the
+    // payload that carries more verdicts is the answer.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      'And here is what I found:',
+      JSON.stringify({
+        verdicts: [
+          { id: 'f-00000002', verdict: 'confirmed', evidence: 'the line shows it' },
+          { id: 'f-00000003', verdict: 'rejected', evidence: 'the code is fine' },
+        ],
+      }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toHaveLength(2);
+    expect(parsed.verdicts.map((verdict) => verdict.id)).toEqual(['f-00000002', 'f-00000003']);
+  });
+
+  it('fails a verification whose payload lies behind too many delimiters', () => {
+    // Fifty delimiters of prose and then the payload: the bound of the
+    // candidates is reached, and the answer settles nothing.
+    const prose = Array.from({ length: 60 }, () => '{').join(' ');
+    const answer = `${prose} ${JSON.stringify({
+      verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'the line shows it' }],
+    })}`;
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toHaveLength(0);
+    expect(parsed.invalid.join(' ')).toContain('more than 50 delimiters without JSON');
   });
 
   it('fails an answer whose payload lies behind too many delimiters', () => {
