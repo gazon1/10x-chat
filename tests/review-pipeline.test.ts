@@ -25,8 +25,11 @@ import {
   webRepositoryUrl,
 } from '../src/pipeline/context.js';
 import {
+  decisionId,
+  dedupeDecisions,
   dedupeFindings,
   findingId,
+  parseReviewerDecisions,
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
@@ -100,8 +103,29 @@ const FINDING = {
 
 /** The answer of a reviewer with one finding. */
 function answerWith(findings: unknown[]): string {
-  return JSON.stringify({ findings });
+  return JSON.stringify({ findings, decisions: [] });
 }
+
+/** The answer of a reviewer with decisions and no finding. */
+function answerWithDecisions(decisions: unknown[]): string {
+  return JSON.stringify({ findings: [], decisions });
+}
+
+/** The answer of a reviewer with a finding and a decision in one payload. */
+function answerWithBoth(findings: unknown[], decisions: unknown[]): string {
+  return JSON.stringify({ findings, decisions });
+}
+
+/** The decision a reviewer reports — what the change decided on its own. */
+const DECISION = {
+  decision: 'The retry of a failed delivery is not idempotent',
+  kind: 'implicit',
+  previous: 'The queue delivered every message exactly once.',
+  rationale: 'The handler of the retry writes the receipt before it sends.',
+  consequence: 'A redelivered message is stored twice.',
+  risk: 'Two workers that retry at the same time double the receipt.',
+  needsHuman: true,
+};
 
 /** The parts of a text that are not inside a fenced block. */
 function outsideFences(text: string): string {
@@ -193,6 +217,354 @@ describe('the review pipeline', () => {
     expect(run.findings[0].reportedBy).toEqual(['correctness', 'architecture']);
     expect(run.findings[0].verification).toBe('confirmed');
     expect(run.findings[0].evidence).toContain('exec(input) is called with the raw input');
+  });
+
+  it('asks every role for the implicit decisions', async () => {
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    // The audit is part of the review: every role is asked for the decisions.
+    expect(prompts[0]).toContain('"decisions"');
+    expect(prompts[1]).toContain('"decisions"');
+    expect(prompts[2]).toContain('"decisions"');
+    // The approach is the business of the architecture role alone.
+    expect(prompts[1]).toContain('The approach');
+    expect(prompts[0]).not.toContain('The approach');
+  });
+
+  it('reports the implicit decisions of the reviewers', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWithDecisions([DECISION]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].decision).toBe(DECISION.decision);
+    expect(run.decisions[0].kind).toBe('implicit');
+    expect(run.decisions[0].needsHuman).toBe(true);
+    expect(run.decisions[0].reportedBy).toEqual(['architecture']);
+    // A decision is not a defect: it is not a finding either.
+    expect(run.findings).toHaveLength(0);
+    // And a decision that waits for a human never blocks the merge.
+    expect(run.verdict).toBe('APPROVE');
+
+    const section = run.report.split('## Implicit decisions and trade-offs')[1] ?? '';
+    expect(section).toContain(DECISION.decision);
+    expect(section).toContain('Previous behavior or alternative');
+    expect(section).toContain('Human confirmation: needed');
+  });
+
+  it('keeps the finding of an answer that carries a decision too', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWithBoth([FINDING], [DECISION]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    // The list of the decisions travels next to the list of the findings: it
+    // is not a list of findings, and it does not hide the finding either.
+    expect(run.findings).toHaveLength(1);
+    expect(run.findings[0].title).toBe(FINDING.title);
+    expect(run.decisions).toHaveLength(1);
+    expect(run.steps.find((candidate) => candidate.id === 'review-correctness')?.status).toBe(
+      'passed',
+    );
+  });
+
+  it('merges the decisions that two roles named alike', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWithDecisions([DECISION]) },
+      { prompt: '# Role: architecture', answer: answerWithDecisions([DECISION]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].reportedBy).toEqual(['correctness', 'architecture']);
+  });
+
+  it('marks a decision that does not pass the schema as invalid', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWithDecisions([{ kind: 'implicit' }]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('decision missing');
+    expect(run.decisions).toHaveLength(0);
+  });
+
+  it('does not ask a role for an empty array instead of the decisions', async () => {
+    // The answer is an object with two lists: a reviewer that finds no defect
+    // still reports the decisions of the change. An instruction to return an
+    // empty array would let it answer with a bare list, and the audit would be
+    // lost without a word.
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain('return an empty array');
+      expect(prompt).toContain(
+        'return "findings": [] and still report every consequential decision',
+      );
+    }
+  });
+
+  it('keeps the decisions of a reviewer that found no defect', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWithDecisions([DECISION]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].reportedBy).toEqual(['correctness']);
+    expect(run.findings).toHaveLength(0);
+  });
+
+  it('fails the step when the property of the decisions is not a list', async () => {
+    // The property is there and it is not a list: the answer does not report no
+    // decision, it reports a broken one.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: JSON.stringify({ findings: [], decisions: 'none' }),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('the property is not an array');
+    expect(run.decisions).toHaveLength(0);
+  });
+
+  it('does not report the example of the format as a decision', async () => {
+    // The example of the schema carries the union of the kinds, and it is not
+    // a kind: the echo of the example fails the step instead of becoming a
+    // decision of the change.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: JSON.stringify({
+          findings: [],
+          decisions: [
+            {
+              decision: 'what was decided',
+              kind: 'behavior_change|intended|implicit|assumption',
+              previous: 'the previous behavior or the alternative that was available',
+              rationale: 'the evidence and the rationale',
+              consequence: 'what changes because of it',
+              risk: 'the failure scenario or the unresolved risk',
+              needsHuman: false,
+            },
+          ],
+        }),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(0);
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('kind missing or unknown');
+  });
+
+  it('takes the answer that comes last when an example of the format comes first', () => {
+    // The example of the schema carries one entry, and the answer that follows
+    // carries none: the example is not the answer, and the audit of the
+    // decisions is not failed by it.
+    const example = JSON.stringify({
+      findings: [],
+      decisions: [
+        {
+          decision: 'what was decided',
+          kind: 'behavior_change|intended|implicit|assumption',
+          previous: 'the previous behavior or the alternative that was available',
+          rationale: 'the evidence and the rationale',
+          consequence: 'what changes because of it',
+          risk: 'the failure scenario or the unresolved risk',
+          needsHuman: false,
+        },
+      ],
+    });
+
+    const parsed = parseReviewerDecisions(`${example}\n${answerWith([])}`, 'correctness');
+
+    expect(parsed.decisions).toHaveLength(0);
+    expect(parsed.invalid).toHaveLength(0);
+  });
+
+  it('fails the step of a decision that leaves one of its fields out', async () => {
+    // The audit is the whole account of a decision: what it replaces, why, what
+    // it changes and what can fail. A decision without one of them is a broken
+    // answer, and it does not pass as a decision.
+    for (const field of ['previous', 'rationale', 'consequence', 'risk']) {
+      const incomplete = { ...DECISION } as Record<string, unknown>;
+      delete incomplete[field];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([]) },
+        { prompt: '# Role: architecture', answer: answerWithDecisions([incomplete]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+      expect(step?.status).toBe('failed');
+      expect(step?.detail).toContain(`${field} missing or malformed`);
+      expect(run.decisions).toHaveLength(0);
+    }
+  });
+
+  it('fails the step of a decision whose flag of the human is not a flag', async () => {
+    // A value that is not a boolean is not a flag: it is never replaced by a
+    // default, because a default hides what the reviewer wrote.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([{ ...DECISION, needsHuman: 'true' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('needsHuman missing or malformed');
+    expect(run.decisions).toHaveLength(0);
+  });
+
+  it('reports a broken decisions list even when another payload answers', async () => {
+    // The answer carries a payload that answers and a payload that breaks the
+    // key: the broken one is reported, and the decision of the other survives.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: `${answerWithDecisions([DECISION])}\n${JSON.stringify({ findings: [], decisions: 'none' })}`,
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('the property is not an array');
+  });
+
+  it('accepts a kind that the reviewer wrote in the words of the report', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([{ ...DECISION, kind: 'unverified assumption' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].kind).toBe('assumption');
   });
 
   it('sends the page of the change instead of the diff', async () => {
@@ -3445,6 +3817,51 @@ describe('the identity of a finding', () => {
   });
 });
 
+describe('the identity of a decision', () => {
+  const decisionOf = (text: string) => ({
+    id: decisionId(text),
+    kind: 'implicit' as const,
+    decision: text,
+    needsHuman: false,
+    reportedBy: ['correctness' as const],
+  });
+
+  it('tells two decisions of a reversed order apart', () => {
+    // The order of the words is the order of the contract: "A sends to B" and
+    // "B sends to A" are two decisions, and one of them hides the other.
+    const one = decisionId('A sends the messages to B');
+    const other = decisionId('B sends the messages to A');
+
+    expect(one).not.toBe(other);
+    const merged = dedupeDecisions([
+      decisionOf('A sends the messages to B'),
+      decisionOf('B sends the messages to A'),
+    ]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('tells a decision and its opposite apart', () => {
+    // The negation is the difference between two contracts: a merge of them
+    // hides the disagreement about the behavior of the change.
+    const one = decisionId('The retry of a failed delivery is idempotent');
+    const other = decisionId('The retry of a failed delivery is not idempotent');
+
+    expect(one).not.toBe(other);
+    const merged = dedupeDecisions([
+      decisionOf('The retry of a failed delivery is idempotent'),
+      decisionOf('The retry of a failed delivery is not idempotent'),
+    ]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('gives one id to two decisions of one decision', () => {
+    const one = decisionId('The retry of a failed delivery is not idempotent');
+    const other = decisionId('the retry of a failed delivery is not idempotent');
+
+    expect(one).toBe(other);
+  });
+});
+
 describe('the search for the callers of a finding', () => {
   it('tells a search that found nothing from a search that failed', async () => {
     const found = await callersOf(repo, 'src/app.ts', revision);
@@ -3523,7 +3940,9 @@ describe('an answer that carries no findings', () => {
     expect(parsed.invalid.length).toBeGreaterThan(0);
   });
 
-  it('lets a reviewer that answers with an empty list pass its step', async () => {
+  it('fails the step of a reviewer that answers without the key of the decisions', async () => {
+    // A bare list is the answer of a reviewer that did not do the audit: the
+    // key of the decisions is missing, and the audit must not pass by silence.
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: '[]' },
       { prompt: '# Role: architecture', answer: answerWith([]) },
@@ -3538,7 +3957,27 @@ describe('an answer that carries no findings', () => {
 
     expect(run.findings).toEqual([]);
     const step = run.steps.find((entry) => entry.id === 'review-correctness');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('decisions');
+  });
+
+  it('lets a reviewer that answers with an empty audit pass its step', async () => {
+    // The list of the decisions may be empty — the key must be there.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((entry) => entry.id === 'review-correctness');
     expect(step?.status).toBe('passed');
+    expect(run.decisions).toEqual([]);
   });
 });
 

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
+  Decision,
+  DecisionKind,
   Finding,
   FindingCategory,
   FindingSeverity,
@@ -29,6 +31,19 @@ export const VERIFICATIONS: readonly FindingVerification[] = [
   'rejected',
 ];
 
+/**
+ * The kinds of an implicit decision.
+ *
+ * An unknown kind is an implicit one: a decision nobody could classify is a
+ * decision that needs the attention of a human.
+ */
+export const DECISION_KINDS: readonly DecisionKind[] = [
+  'behavior_change',
+  'intended',
+  'implicit',
+  'assumption',
+];
+
 /** The result of parsing the answer of a reviewer. */
 export interface ParsedFindings {
   /** The findings that passed the schema. */
@@ -49,6 +64,14 @@ export interface VerificationVerdict {
 /** The result of parsing the answer of a verification pass. */
 export interface ParsedVerdicts {
   verdicts: VerificationVerdict[];
+  invalid: string[];
+}
+
+/** The result of parsing the decisions of an answer. */
+export interface ParsedDecisions {
+  /** The decisions that passed the schema. */
+  decisions: Decision[];
+  /** The entries that did not pass it, and why. */
   invalid: string[];
 }
 
@@ -414,11 +437,17 @@ function payloadEntries(
  * would then be read as an empty review. A bare list is a list of entries only
  * when it carries objects that are not payloads themselves: a list of strings
  * is a list of the prose, and a list of payloads is a container of payloads.
+ *
+ * A list of another kind is no list of entries: the decisions of an answer
+ * travel next to the findings, and a bare list of them would otherwise be read
+ * as a list of findings and fail the step of the role. An entry that carries
+ * the key of the other list is an entry of that list, not of this one.
  */
 function payloadChoices<T extends { invalid: string[] }>(
   candidates: JsonCandidate[],
   key: string,
   parse: (entries: unknown[]) => T,
+  foreignKey = '',
 ): CandidateChoice<T>[] {
   const choices: CandidateChoice<T>[] = [];
   for (const candidate of candidates) {
@@ -429,7 +458,8 @@ function payloadChoices<T extends { invalid: string[] }>(
         entry !== null &&
         typeof entry === 'object' &&
         !Array.isArray(entry) &&
-        !(key in (entry as Record<string, unknown>)),
+        !(key in (entry as Record<string, unknown>)) &&
+        !(foreignKey !== '' && foreignKey in (entry as Record<string, unknown>)),
     );
     if (!payload.keyed && !carriesEntries) {
       // An empty list is an answer that carries no findings: the prompt asks
@@ -516,56 +546,73 @@ export function findingId(finding: { file?: string; line?: number; title: string
   return `f-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
 }
 
+/** The words of a text that carry no meaning of their own. */
+const STOPWORDS = new Set([
+  'a',
+  'an',
+  'the',
+  'is',
+  'are',
+  'to',
+  'of',
+  'in',
+  'on',
+  'and',
+  'or',
+  'not',
+  'no',
+  'with',
+  'for',
+  'this',
+  'that',
+  'it',
+  'be',
+  'can',
+  'will',
+  'does',
+  'do',
+  'from',
+  'by',
+  'at',
+  'as',
+  'if',
+  'then',
+  'than',
+  'but',
+  'has',
+  'have',
+  'when',
+  'into',
+  'its',
+  'their',
+]);
+
+/**
+ * The negation of a statement — the word that turns it around.
+ *
+ * A decision and the opposite of a decision are two decisions: "the retry is
+ * idempotent" and "the retry is not idempotent" disagree about the contract
+ * of the change, and a merge of the two hides the disagreement.
+ */
+const NEGATIONS = new Set(['not', 'no']);
+
+/**
+ * The words of a text.
+ *
+ * The letters and the numbers of every alphabet: a title written in another
+ * script carries its meaning too, and an empty title would give the same id
+ * to two different findings.
+ */
+function wordsOf(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word !== '');
+}
+
 /** The words of a title that carry its meaning. */
 function tokensOf(title: string): Set<string> {
-  const stopwords = new Set([
-    'a',
-    'an',
-    'the',
-    'is',
-    'are',
-    'to',
-    'of',
-    'in',
-    'on',
-    'and',
-    'or',
-    'not',
-    'no',
-    'with',
-    'for',
-    'this',
-    'that',
-    'it',
-    'be',
-    'can',
-    'will',
-    'does',
-    'do',
-    'from',
-    'by',
-    'at',
-    'as',
-    'if',
-    'then',
-    'than',
-    'but',
-    'has',
-    'have',
-    'when',
-    'into',
-    'its',
-    'their',
-  ]);
-  return new Set(
-    title
-      .toLowerCase()
-      // The letters and the numbers of every alphabet: a title written in
-      // another script carries its meaning too, and an empty title would give
-      // the same id to two different findings.
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => word !== '' && !stopwords.has(word)),
-  );
+  return new Set(wordsOf(title).filter((word) => !STOPWORDS.has(word)));
 }
 
 /** The comparable form of a title — the words of it, sorted. */
@@ -599,8 +646,13 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(candidates, 'findings', (entries) =>
-    parseFindingEntries(entries, role),
+  const choices = payloadChoices(
+    candidates,
+    'findings',
+    (entries) => parseFindingEntries(entries, role),
+    // The decisions of the answer travel next to the findings: a bare list of
+    // them is not a list of findings.
+    'needsHuman',
   );
   if (choices.length === 0) {
     return {
@@ -669,6 +721,202 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
   });
 
   return { findings, invalid };
+}
+
+/**
+ * The words a reviewer may use for a kind of decision.
+ *
+ * The kind of a decision is required, like the severity of a finding: a
+ * decision that carries an unknown kind is malformed, and the step of the role
+ * fails. A reviewer that writes the kind in the words of the report — "an
+ * implicit decision" — still says a kind.
+ */
+const DECISION_KIND_WORDS: Record<string, DecisionKind> = {
+  behaviorchange: 'behavior_change',
+  intended: 'intended',
+  intendeddecision: 'intended',
+  implicit: 'implicit',
+  implicitdecision: 'implicit',
+  assumption: 'assumption',
+  unverifiedassumption: 'assumption',
+};
+
+/**
+ * The kind of a decision — an unknown kind is no kind.
+ *
+ * The example of the format carries the union of the kinds, and it is not a
+ * kind: an answer that echoes the example of the schema fails the step of the
+ * role instead of reporting the example as a decision of the change.
+ */
+function decisionKindOf(value: unknown): DecisionKind | undefined {
+  const text = textOf(value)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  return text ? DECISION_KIND_WORDS[text] : undefined;
+}
+
+/**
+ * The comparable form of a decision — the words of it, in their order.
+ *
+ * The order matters: "A sends messages to B" and "B sends messages to A"
+ * are two different contracts, and a form that sorts the words of them would
+ * read them as one. The negation matters too: a decision and its opposite
+ * disagree about the contract of the change.
+ */
+export function normalizeDecision(decision: string): string {
+  return wordsOf(decision)
+    .filter((word) => !STOPWORDS.has(word) || NEGATIONS.has(word))
+    .join(' ');
+}
+
+/**
+ * The id of a decision.
+ *
+ * The id is a hash of the normalized text of the decision: two roles that
+ * report the same decision report one decision.
+ */
+export function decisionId(decision: string): string {
+  const key = JSON.stringify(normalizeDecision(decision) || decision.trim().toLowerCase());
+  return `d-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
+}
+
+/**
+ * Parse the decisions of the answer of a reviewer.
+ *
+ * The answer must carry the key of the decisions: the list may be empty, but
+ * the key must be there — a reviewer that answered without it did not do the
+ * audit, and an audit that passes by silence is not an audit. An answer that
+ * carries the key with a broken list is malformed too: the answer does not
+ * report no decision, it reports a broken one. An entry that does not pass
+ * the schema is invalid — it is reported, never silently dropped.
+ *
+ * Only a payload that carries the key of the decisions is read: a bare list of
+ * findings is not a list of decisions. The last such payload is the answer —
+ * a model that repeats the format of the answer puts the format first, and
+ * the answer that follows is the one that counts.
+ */
+export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDecisions {
+  const { candidates } = jsonCandidates(text);
+  const choices: CandidateChoice<ParsedDecisions>[] = [];
+  const malformed: string[] = [];
+  for (const candidate of candidates) {
+    const value = candidate.value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (!('decisions' in record)) continue;
+    const entries = record.decisions;
+    if (!Array.isArray(entries)) {
+      // The property is there and it is not a list: the answer is malformed,
+      // not an answer without decisions.
+      malformed.push('decisions: the property is not an array');
+      continue;
+    }
+    choices.push({
+      candidate,
+      parsed: parseDecisionEntries(entries, role),
+      count: entries.length,
+      keyed: true,
+    });
+  }
+  if (choices.length === 0) {
+    return {
+      decisions: [],
+      invalid: [...malformed, 'the answer carries no decisions — the key is missing'],
+    };
+  }
+  // The answer comes last: the example of the format precedes it, and an
+  // example that carries more entries than the answer is still an example.
+  const best = choices.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
+  // A broken payload is reported even when another payload answers: the answer
+  // carries a broken decisions list somewhere, and that is not nothing.
+  return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...malformed] };
+}
+
+/** The decisions of one payload of an answer. */
+function parseDecisionEntries(entries: unknown[], role: ReviewRole): ParsedDecisions {
+  const decisions: Decision[] = [];
+  const invalid: string[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      invalid.push(`decisions[${index}]: the entry is not an object`);
+      return;
+    }
+    const value = entry as Record<string, unknown>;
+    const decision = textOf(value.decision);
+    if (!decision) {
+      invalid.push(`decisions[${index}]: decision missing or malformed`);
+      return;
+    }
+    const kind = decisionKindOf(value.kind);
+    if (!kind) {
+      invalid.push(`decisions[${index}]: kind missing or unknown`);
+      return;
+    }
+    const previous = textOf(value.previous);
+    if (!previous) {
+      invalid.push(`decisions[${index}]: previous missing or malformed`);
+      return;
+    }
+    const rationale = textOf(value.rationale);
+    if (!rationale) {
+      invalid.push(`decisions[${index}]: rationale missing or malformed`);
+      return;
+    }
+    const consequence = textOf(value.consequence);
+    if (!consequence) {
+      invalid.push(`decisions[${index}]: consequence missing or malformed`);
+      return;
+    }
+    const risk = textOf(value.risk);
+    if (!risk) {
+      invalid.push(`decisions[${index}]: risk missing or malformed`);
+      return;
+    }
+    // The flag of the human is a flag: a value that is not a boolean is not
+    // replaced by a default, it is a broken answer.
+    if (typeof value.needsHuman !== 'boolean') {
+      invalid.push(`decisions[${index}]: needsHuman missing or malformed`);
+      return;
+    }
+    decisions.push({
+      id: decisionId(decision),
+      kind,
+      decision,
+      previous,
+      rationale,
+      consequence,
+      risk,
+      needsHuman: value.needsHuman,
+      reportedBy: [role],
+    });
+  });
+  return { decisions, invalid };
+}
+
+/**
+ * Merge the decisions of the roles.
+ *
+ * Two roles that report the same decision report it once: the account of the
+ * first one is kept, the roles that reported it are named, and the flag of the
+ * human wins when one of them asks for it.
+ */
+export function dedupeDecisions(decisions: Decision[]): Decision[] {
+  const merged = new Map<string, Decision>();
+  for (const decision of decisions) {
+    const known = merged.get(decision.id);
+    if (!known) {
+      merged.set(decision.id, { ...decision });
+      continue;
+    }
+    known.reportedBy = [...new Set([...known.reportedBy, ...decision.reportedBy])];
+    known.needsHuman = known.needsHuman || decision.needsHuman;
+    // The most concrete kind wins: a change of behavior is more than an
+    // assumption.
+    if (DECISION_KINDS.indexOf(decision.kind) < DECISION_KINDS.indexOf(known.kind)) {
+      known.kind = decision.kind;
+    }
+  }
+  return [...merged.values()];
 }
 
 /**
