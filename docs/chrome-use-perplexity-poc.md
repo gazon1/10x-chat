@@ -67,7 +67,9 @@ requested capability.
   queries. If the composer is unavailable, the ask fails with a clear message
   (log in in Chrome if required).
 - **Cleanup:** every ask uses a dedicated `chrome-use` session name and always
-  attempts `chrome-use … done` in `finally` to close tabs it opened.
+  attempts `chrome-use … done` in `finally` to close tabs it opened. A request
+  whose deadline expired before the first command never opens a session and
+  never touches the browser.
 - **Timeout:** respects `request.timeoutMs` best-effort per command (a timed-out
   process gets a short termination grace). If the prompt was confirmed sent and
   the answer wait times out, failure is `timeout/submitted`. A command timeout or

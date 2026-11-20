@@ -34,11 +34,6 @@ export function sanitizeUrl(raw?: string): string | undefined {
   }
 }
 
-export function redactPath(value: string): string {
-  if (!HOME) return value;
-  return value.split(HOME).join('~');
-}
-
 export function redactText(value: string): string {
   let out = value;
   if (HOME) out = out.split(HOME).join('~');

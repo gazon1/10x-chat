@@ -360,8 +360,12 @@ export function createChromeUsePerplexityBackend(
 
     let submitted = false;
     let partialText = '';
+    // A session exists only after the open command was issued. A request whose
+    // deadline expired before it must not touch the browser at all.
+    let sessionAttempted = false;
 
     const cleanup = async (): Promise<void> => {
+      if (!sessionAttempted) return;
       try {
         // Cleanup is lifecycle management: give it its own bounded budget so a
         // request timeout cannot starve tab/session teardown.
@@ -375,6 +379,7 @@ export function createChromeUsePerplexityBackend(
       let t = ensureTime(false);
       if (t) return t;
 
+      sessionAttempted = true;
       const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
       if (!opened.ok) {
         known.set(request.requestId, { submission: opened.outcome.failure.submission });
