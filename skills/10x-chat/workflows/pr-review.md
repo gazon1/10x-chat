@@ -4,6 +4,8 @@ Use it when the user asks for a review of a pull request, a branch, a patch, or 
 
 **Division of labour.** The coding agent (you) inspects the target repository, reads its conventions, runs its checks and adjudicates the findings. 10x-chat supplies independent reviewers and the protocol that turns their answers into a verdict. 10x-chat never builds, tests, or modifies the target repository.
 
+**The same protocol in code.** `10x-chat review` runs this playbook end to end: it collects the context, asks the isolated roles, verifies every finding against the source and writes the report of [report-format.md](report-format.md) — the repository doc `docs/review-pipeline.md` describes it. The steps below describe the **manual** path, where you run the reviewers yourself and they open the repository on GitHub; the pipeline instead gives them a bounded bundle of the change (the diff and the files around it) and reads the code of the checkout itself. Use the pipeline for a review of a git checkout, the steps below when the target is not a checkout or when the reviewer must read GitHub itself. Never run both for the same change: one verdict, one report.
+
 **The reviewers read the repository on GitHub themselves — no files are sent at all.** A reviewer that receives a pasted diff sees a snapshot of a few files; a reviewer that receives the repository URL, the coordinates of the change and the commit SHAs reads the whole change in its real context: the surrounding code, the conventions, the CI run. So:
 
 - The prompt carries the **GitHub coordinates** — repository URL, the identity of the target (**pull request number and URL**, or the **compare URL** of a branch), base and head SHA — plus the changed file list and a short brief. Nothing else.

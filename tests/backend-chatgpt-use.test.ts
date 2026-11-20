@@ -13,6 +13,7 @@ interface Call {
   command: string;
   args: string[];
   timeoutMs?: number;
+  input?: string;
 }
 
 /** A runner that answers with canned envelopes and records the calls. */
@@ -20,7 +21,7 @@ function fakeRunner(answers: (ProcessResult | Error)[]): { runner: ProcessRunner
   const calls: Call[] = [];
   const runner: ProcessRunner = {
     run: async (command, args, options) => {
-      calls.push({ command, args, timeoutMs: options?.timeoutMs });
+      calls.push({ command, args, timeoutMs: options?.timeoutMs, input: options?.input });
       const answer = answers.shift();
       if (answer instanceof Error) throw answer;
       return answer ?? { code: 0, stdout: '', stderr: '', timedOut: false };
@@ -376,6 +377,50 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     // for the parts around it.
     expect(calls[0]?.timeoutMs).toBe(150_000);
   });
+
+  it('sends a prompt that does not fit into an argument through the stdin', async () => {
+    // The kernel of Linux limits one argument of a process to 128 KiB and the
+    // command line of Windows to 32 767 characters: a bigger prompt is refused
+    // before the CLI sees it. The bundle of a review of a big change is bigger
+    // than that.
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+    const prompt = 'x'.repeat(200_000);
+
+    const outcome = await backend.ask({ requestId: 'req-1', prompt });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls[0]?.args).toContain('--stdin');
+    expect(calls[0]?.args).not.toContain(prompt);
+    expect(calls[0]?.input).toBe(prompt);
+  });
+
+  it('keeps a prompt that fits into an argument an argument', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+    const prompt = 'x'.repeat(29_000);
+
+    await backend.ask({ requestId: 'req-1', prompt });
+
+    expect(calls[0]?.args).toContain('--no-stdin');
+    expect(calls[0]?.args).toContain(prompt);
+    expect(calls[0]?.input).toBeUndefined();
+  });
+
+  it('does not crash when the process dies before it reads the input', async () => {
+    // The broken pipe of a process that died is an error of the stream: it
+    // must not become an unhandled error of the run.
+    const result = await nodeProcessRunner.run(process.execPath, ['-e', 'process.exit(0);'], {
+      input: 'x'.repeat(1_000_000),
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.timedOut).toBe(false);
+  }, 15_000);
 
   it('gives two different requests two different receipts', async () => {
     const { runner, calls } = fakeRunner([

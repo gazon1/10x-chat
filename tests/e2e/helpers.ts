@@ -5,6 +5,11 @@ import path from 'node:path';
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const CLI_ENTRY = path.join(REPO_ROOT, 'src', 'bin', 'cli.ts');
+/**
+ * The loader of TypeScript — an absolute path, so the CLI starts in any
+ * directory: the resolution of a bare `tsx` follows the working directory.
+ */
+const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs');
 
 export interface CliResult {
   code: number;
@@ -33,11 +38,13 @@ export function stripAnsi(value: string): string {
  * parent (the forced file store of `tests/setup.ts`) away.
  *
  * @param input what is written to the stdin of the CLI (and closed)
+ * @param options `cwd` — the directory the command runs in
  */
 export function runCli(
   args: string[],
   env: NodeJS.ProcessEnv = {},
   input?: string,
+  options: { cwd?: string } = {},
 ): Promise<CliResult> {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
   for (const [key, value] of Object.entries(env)) {
@@ -47,9 +54,9 @@ export function runCli(
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.env.NODE_BINARY ?? 'node',
-      ['--import', 'tsx', CLI_ENTRY, ...args],
+      ['--import', TSX_LOADER, CLI_ENTRY, ...args],
       {
-        cwd: REPO_ROOT,
+        cwd: options.cwd ?? REPO_ROOT,
         env: childEnv,
       },
     );

@@ -32,6 +32,30 @@ export function getSessionsDir(): string {
   return path.join(getAppDir(), 'sessions');
 }
 
+/** Reviews root: ~/.10x-chat/reviews */
+export function getReviewsDir(): string {
+  return path.join(getAppDir(), 'reviews');
+}
+
+/**
+ * The identifier of a run — a single name, not a path.
+ *
+ * The identifier names the directory of the run under the reviews root. A
+ * name that carries a separator or a `..` would write the run outside of
+ * that root, so it is refused the way a name of a profile is refused.
+ */
+function assertReviewId(runId: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId === '.' || runId === '..') {
+    throw new Error('Review id must contain only letters, numbers, dots, dashes, or underscores');
+  }
+}
+
+/** Review directory of a run: ~/.10x-chat/reviews/<id> */
+export function getReviewDir(runId: string): string {
+  assertReviewId(runId);
+  return path.join(getReviewsDir(), runId);
+}
+
 /** Session directory for a specific session: ~/.10x-chat/sessions/<id> */
 export function getSessionDir(sessionId: string): string {
   return path.join(getSessionsDir(), sessionId);
