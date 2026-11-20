@@ -367,21 +367,23 @@ async function callersOf(repoRoot: string, file: string, revision: string): Prom
       // a file that changes while the reviewers run must not reach the backend.
       // The name of the file is the pattern, and the revision is the tree it
       // is searched in. The pattern follows `-e`: a name that starts with a
-      // dash is a name of a file, not an option of the command.
-      ['grep', '-l', '-F', '-e', file, revision],
+      // dash is a name of a file, not an option of the command. The names come
+      // back NUL-separated and unquoted: a name that holds a newline or a
+      // space is a name of a file, and the quoting of git would hide it.
+      ['grep', '-z', '-l', '-F', '-e', file, revision],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {
           resolve([]);
           return;
         }
+        const prefix = `${revision}:`;
         resolve(
           stdout
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line !== '')
-            .map((line) => line.replace(`${revision}:`, ''))
-            .filter((line) => line !== '')
+            .split('\0')
+            .filter((name) => name !== '')
+            .map((name) => (name.startsWith(prefix) ? name.slice(prefix.length) : name))
+            .filter((name) => name !== '')
             .slice(0, 20),
         );
       },

@@ -1144,6 +1144,50 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('finds the callers of a file whose name holds a newline', async () => {
+    // The name of a caller is a name of a file: git quotes a name that holds
+    // a newline, and the quoted name is not the name of the file.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-newline-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'app.ts'), 'export const app = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'caller\nname.ts'), "import './app.ts';\n", 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'app.ts'), 'export const app = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'app.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('caller\nname.ts');
+      expect(verification).not.toContain('"caller');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('gives the verifier the files that mention the file of a finding', async () => {
     // The callers of a change are the files that mention it: the material of
     // the verification names them.

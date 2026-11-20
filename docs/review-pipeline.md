@@ -194,7 +194,10 @@ revision under review:
   **bundle** of the reviewers is read from the same commit — it is the context
   of the change, and the context must be the context of the head. The **callers**
   of a file are searched in the revision under review as well: the files that
-  mention it are the ones of the code that is reviewed. A **symlink** is
+  mention it are the ones of the code that is reviewed. The names of the
+  callers come back **NUL-separated and unquoted**: a name that holds a
+  newline is a name of a file, and the quoting of git would hide it behind
+  an escape. A **symlink** is
   followed in the revision too: the target of a link is a blob of the commit,
   and the checkout may retarget the link while the reviewers run. A link that
   the change **deletes** is followed in the base revision, where the file
