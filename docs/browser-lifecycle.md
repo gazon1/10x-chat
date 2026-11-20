@@ -43,7 +43,7 @@ A method that takes no bound of the caller may still declare a bound of its own 
 - Each caller owns the returned `BrowserSession` and must `await close()` (orchestrators/CLI do this in `finally`).
 - Shared daemon contexts are owned by the daemon server until closed via RPC; `BrowserSession.close()` performs best-effort storage-state save + page/context close.
 - Persistent contexts own their profile lock for the session lifetime; lock release happens after context close/export.
-- CLI process handlers stop the daemon on SIGINT/SIGTERM/uncaughtException to avoid orphaned browser processes.
+- CLI process handlers clean up the browser sessions this process owns on SIGINT/SIGTERM/uncaughtException. The shared daemon is stopped only through its safety barrier (`requestDaemonStop`), so a command that never opened a browser and another invocation's session are never affected. Explicit administrative shutdown keeps its documented semantics.
 
 ## Diagnostics
 

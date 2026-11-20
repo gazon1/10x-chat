@@ -2,7 +2,7 @@
 
 import chalk from 'chalk';
 import { Command } from 'commander';
-import { stopDaemon } from '../browser/daemon.js';
+import { cleanupBrowserOnProcessExit } from '../browser/manager.js';
 import { createChatCommand } from '../cli/chat.js';
 import { createConfigCommand } from '../cli/config.js';
 import { createDaemonCommand } from '../cli/daemon.js';
@@ -18,10 +18,11 @@ import { createSkillCommand } from '../cli/skill.js';
 import { createSessionCommand, createStatusCommand } from '../cli/status.js';
 import { getPackageVersion } from '../version.js';
 
-// Ensure the browser daemon is stopped on unexpected exit (Ctrl+C, crash, etc.)
-// so Chrome for Testing doesn't linger in the dock after the CLI finishes.
+// Clean up browser resources this process owns on unexpected exit. The shared
+// daemon is stopped only through its safety barrier, so another invocation's
+// session is never terminated.
 const cleanupAndExit = (code: number) => {
-  stopDaemon()
+  cleanupBrowserOnProcessExit()
     .catch(() => {})
     .finally(() => process.exit(code));
 };

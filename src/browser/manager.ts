@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { BrowserContext, Page } from 'playwright';
 import { getIsolatedProfileDir, getSharedProfileDir } from '../paths.js';
 import type { ProfileMode, ProviderName } from '../types.js';
-import { launchSharedBrowserSession } from './daemon.js';
+import { launchSharedBrowserSession, requestDaemonStop } from './daemon.js';
 import {
   type BrowserOp,
   browserError,
@@ -45,6 +45,52 @@ export interface BrowserSession {
    */
   sharedState: boolean;
   close: () => Promise<void>;
+}
+
+const ownedSessions = new Set<BrowserSession>();
+
+export function hasOwnedBrowserSessions(): boolean {
+  return ownedSessions.size > 0;
+}
+
+function trackOwnedSession(session: BrowserSession): BrowserSession {
+  let closing: Promise<void> | undefined;
+  const originalClose = session.close;
+  const tracked: BrowserSession = {
+    ...session,
+    close: async () => {
+      if (closing) return closing;
+      closing = (async () => {
+        try {
+          await originalClose();
+        } finally {
+          ownedSessions.delete(tracked);
+        }
+      })();
+      return closing;
+    },
+  };
+  ownedSessions.add(tracked);
+  return tracked;
+}
+
+/** Close every browser session this process still owns. */
+export async function closeOwnedBrowserSessions(): Promise<void> {
+  const sessions = [...ownedSessions];
+  await Promise.allSettled(sessions.map((session) => session.close()));
+}
+
+/**
+ * Clean up the browser resources this process owns on exit.
+ *
+ * Only the sessions this process opened are closed. The shared daemon is
+ * stopped only through its own safety barrier, so a daemon used by another
+ * invocation is never terminated.
+ */
+export async function cleanupBrowserOnProcessExit(): Promise<void> {
+  if (!hasOwnedBrowserSessions()) return;
+  await closeOwnedBrowserSessions().catch(() => {});
+  await requestDaemonStop().catch(() => {});
 }
 
 export interface LaunchOptions {
@@ -170,13 +216,13 @@ async function launchSharedBrowser(opts: LaunchOptions): Promise<BrowserSession>
         // no local debug artifacts; daemon owns page/context internals
       }
     };
-    return {
+    return trackOwnedSession({
       context: session.context,
       page: session.page,
       lock: null,
       sharedState: true,
       close,
-    };
+    });
   } catch (error) {
     throw browserError(
       'Failed to launch shared browser session',
@@ -262,7 +308,7 @@ async function launchSharedPersistentBrowser(opts: LaunchOptions): Promise<Brows
     }
   };
 
-  return { context, page, lock, sharedState: false, close };
+  return trackOwnedSession({ context, page, lock, sharedState: false, close });
 }
 
 /**
@@ -323,5 +369,5 @@ async function launchIsolatedBrowser(opts: LaunchOptions): Promise<BrowserSessio
     }
   };
 
-  return { context, page, lock, sharedState: false, close };
+  return trackOwnedSession({ context, page, lock, sharedState: false, close });
 }
