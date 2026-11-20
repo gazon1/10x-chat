@@ -47,6 +47,7 @@ export {
   type KnowledgeSource,
   type KnowledgeStatus,
   listKnowledgeProviders,
+  MAX_TIMEOUT_MS,
   NOTEBOOKLM_PROVIDER_NAME,
   type NotebookLmOptions,
   registerKnowledgeProvider,

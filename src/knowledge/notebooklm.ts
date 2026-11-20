@@ -21,6 +21,9 @@ export const NOTEBOOKLM_PROVIDER_NAME = 'notebooklm';
 /** How long an operation may take before it is killed. */
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/** The largest deadline Node.js can wait for — a bigger one fires at once. */
+export const MAX_TIMEOUT_MS = 2_147_483_647;
+
 /** The options of the provider. */
 export interface NotebookLmOptions {
   /** The command of the CLI — the one on the PATH by default. */
@@ -118,6 +121,13 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
   const runner = options.runner ?? nodeProcessRunner;
   const profile = options.profile;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // The deadline goes straight into a timer of Node.js: a value it cannot
+  // wait for would fire at once, and no value at all would never fire.
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) {
+    throw new Error(
+      `Invalid timeoutMs: ${timeoutMs} (expected a positive integer of at most ${MAX_TIMEOUT_MS} ms)`,
+    );
+  }
 
   /**
    * Run the CLI and decode its JSON.

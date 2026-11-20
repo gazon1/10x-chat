@@ -8,14 +8,11 @@ import type {
   KnowledgeSource,
   KnowledgeStatus,
 } from '../knowledge/contract.js';
-import { NOTEBOOKLM_PROVIDER_NAME } from '../knowledge/notebooklm.js';
+import { MAX_TIMEOUT_MS, NOTEBOOKLM_PROVIDER_NAME } from '../knowledge/notebooklm.js';
 import { getKnowledgeProvider } from '../knowledge/registry.js';
 
 /** The version of the JSON contract of the commands. */
 const SCHEMA = '10x-chat/knowledge/v1';
-
-/** The largest deadline Node.js can wait for — a bigger one fires at once. */
-const MAX_TIMEOUT_MS = 2_147_483_647;
 
 /** The options every operation of the group takes. */
 interface CommonOptions {

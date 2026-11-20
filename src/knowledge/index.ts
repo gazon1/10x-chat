@@ -13,6 +13,7 @@ export {
 } from './contract.js';
 export {
   createNotebookLmProvider,
+  MAX_TIMEOUT_MS,
   NOTEBOOKLM_PROVIDER_NAME,
   type NotebookLmOptions,
 } from './notebooklm.js';

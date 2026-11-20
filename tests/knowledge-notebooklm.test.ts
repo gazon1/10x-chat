@@ -471,6 +471,14 @@ describe('the NotebookLM provider', () => {
       expect(outcome.failure.mayHaveRun).toBe(true);
     }
   });
+
+  it('refuses a deadline that Node.js cannot wait for', () => {
+    expect(() => createNotebookLmProvider({ timeoutMs: 2_147_483_648 })).toThrow(
+      /Invalid timeoutMs/,
+    );
+    expect(() => createNotebookLmProvider({ timeoutMs: 0 })).toThrow(/Invalid timeoutMs/);
+    expect(() => createNotebookLmProvider({ timeoutMs: 1.5 })).toThrow(/Invalid timeoutMs/);
+  });
 });
 
 describe('the registry of the knowledge providers', () => {
