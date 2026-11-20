@@ -369,9 +369,10 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
   const names = ['AGENTS.md', 'CONTRIBUTING.md', 'README.md'];
   const found: string[] = [];
   for (const name of names) {
-    const listed = await git(['ls-tree', '--name-only', headSha, '--', name], repoRoot).catch(
-      () => '',
-    );
+    const listed = await git(
+      ['ls-tree', '--name-only', headSha, '--', `:(literal)${name}`],
+      repoRoot,
+    ).catch(() => '');
     if (
       listed
         .split('\n')
@@ -695,7 +696,7 @@ export async function revisionEntry(
   sha: string,
   file: string,
 ): Promise<{ symlink: boolean; target?: string } | undefined> {
-  const listed = await git(['ls-tree', sha, '--', file], repoRoot).catch(() => '');
+  const listed = await git(['ls-tree', sha, '--', `:(literal)${file}`], repoRoot).catch(() => '');
   const entry = listed.split('\n').find((line) => line.includes('\t'));
   if (!entry) return undefined;
   const mode = entry.slice(0, entry.indexOf(' '));

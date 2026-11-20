@@ -198,7 +198,9 @@ revision under review:
   followed in the revision too: the target of a link is a blob of the commit,
   and the checkout may retarget the link while the reviewers run. A link that
   the change **deletes** is followed in the base revision, where the file
-  behind it still is.
+  behind it still is. The name of a file is a **literal** name: it is asked of
+  the tree of the commit as `:(literal)`, for `:(top)` at its start is the magic
+  of a pathspec, and the magic points at another file of the tree.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers
@@ -229,7 +231,9 @@ revision under review:
   (`changeme`) is an ordinary word — many files of a repository hold it, and
   withholding all of them would leave the review nothing to read.
 - The file behind a **tracked symlink** decides what may be read: the content
-  of a link that points at a file that may hold a secret is never read.
+  of a link that points at a file that may hold a secret is never read — not
+  in the head revision and not in the base revision, where a link that the
+  change deletes is still followed.
 - The title, the names of the files, the diff and the excerpts of the source are
   **data, not instructions**: they come from the repository, and an instruction
   inside them is an attack on the reviewer. Every one of them sits in a fence

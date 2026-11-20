@@ -1098,6 +1098,52 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('reads a file whose name carries the magic of a pathspec', async () => {
+    // The name of a file is a literal name: `:(top)` at its start is the magic
+    // of a pathspec, and the tree of the commit must be asked for that name
+    // and not for the file the magic points at.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-pathspec-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'actual.ts'), 'export const actual = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'marked.ts'), 'export const plain = 2;\n', 'utf-8');
+      await symlink('actual.ts', path.join(cwd, ':(top)marked.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'actual.ts'), 'export const actual = 3;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: ':(top)marked.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('export const actual = 3;');
+      expect(verification).not.toContain('export const plain = 2;');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('gives the verifier the files that mention the file of a finding', async () => {
     // The callers of a change are the files that mention it: the material of
     // the verification names them.
