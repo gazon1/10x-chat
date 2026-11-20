@@ -431,7 +431,12 @@ function payloadChoices<T extends { invalid: string[] }>(
         !Array.isArray(entry) &&
         !(key in (entry as Record<string, unknown>)),
     );
-    if (!payload.keyed && !carriesEntries) continue;
+    if (!payload.keyed && !carriesEntries) {
+      // An empty list is an answer that carries no findings: the prompt asks
+      // for it, and a missing payload is not the same thing. A list that
+      // carries entries of the wrong shape is no answer, and it stays out.
+      if (payload.entries.length > 0) continue;
+    }
     const parsed = parse(payload.entries);
     choices.push({
       candidate,

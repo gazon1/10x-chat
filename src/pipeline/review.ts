@@ -381,7 +381,7 @@ export async function callersOf(
   repoRoot: string,
   file: string,
   revision: string,
-): Promise<{ callers: string[]; failure?: string }> {
+): Promise<{ callers: string[]; failure?: string; truncated?: boolean }> {
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     execFile(
@@ -407,15 +407,20 @@ export async function callersOf(
             ? (error as { code: number }).code
             : undefined;
         const prefix = `${revision}:`;
-        const callers = stdout
+        const names = stdout
           .split('\0')
           .filter((name) => name !== '')
           .map((name) => (name.startsWith(prefix) ? name.slice(prefix.length) : name))
-          .filter((name) => name !== '')
-          .slice(0, 20);
+          .filter((name) => name !== '');
+        // The list of the callers is cut at twenty names: the material of a
+        // verification is bounded. A cut list is not a whole list, and the
+        // verifier is told that it is cut.
+        const truncated = names.length > 20;
+        const callers = names.slice(0, 20);
         if (reported || (code !== undefined && code !== 0 && code !== 1)) {
           resolve({
             callers,
+            ...(truncated ? { truncated: true } : {}),
             failure:
               reason ||
               (error instanceof Error ? error.message : String(error)) ||
@@ -431,11 +436,12 @@ export async function callersOf(
         if (error) {
           resolve({
             callers,
+            ...(truncated ? { truncated: true } : {}),
             failure: error instanceof Error ? error.message : String(error),
           });
           return;
         }
-        resolve({ callers });
+        resolve({ callers, ...(truncated ? { truncated: true } : {}) });
       },
     );
   });
@@ -462,6 +468,12 @@ async function verificationMaterial(
     ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : headSha)
     : { callers: [] as string[] };
   const callers = search.callers;
+  // The list of the callers is cut at twenty names: the material is bounded.
+  // The verifier is told that the list is cut, so that it does not read a
+  // whole list in a part of one.
+  const callersCut = search.truncated
+    ? 'The list of the files that mention it is cut: it shows the first twenty of more.'
+    : '';
   // The excerpt comes from the repository: a fence that it cannot close keeps
   // it data and not an instruction. The claim of the reviewer carries the
   // text of the repository too — a reviewer that quotes the change quotes an
@@ -503,6 +515,7 @@ async function verificationMaterial(
     callers.length > 0
       ? `Files that mention it:\n${callersFence}text\n${callersText}\n${callersFence}`
       : '',
+    callersCut,
     search.failure
       ? `The files that mention it could not be searched: the search failed.\n${failureFence}text\n${failureText}\n${failureFence}`
       : callers.length === 0

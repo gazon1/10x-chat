@@ -3525,3 +3525,101 @@ describe('the search for the callers of a finding', () => {
     expect(run.findings[0].verificationNote).toContain('could not be found');
   });
 });
+
+describe('an answer that carries no findings', () => {
+  it('reads an empty list as an answer without findings', () => {
+    // The prompt of a reviewer asks for an empty list when it finds nothing.
+    const parsed = parseReviewerFindings('[]', 'correctness');
+
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it('keeps a list of the wrong shape out', () => {
+    const parsed = parseReviewerFindings('["a finding", "another one"]', 'correctness');
+
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid.length).toBeGreaterThan(0);
+  });
+
+  it('lets a reviewer that answers with an empty list pass its step', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: '[]' },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.findings).toEqual([]);
+    const step = run.steps.find((entry) => entry.id === 'review-correctness');
+    expect(step?.status).toBe('passed');
+  });
+});
+
+describe('the list of the callers of a finding', () => {
+  it('says that the list is cut when it does not fit the material', async () => {
+    // The material of a verification is bounded: the list of the callers is
+    // cut at twenty names, and the verifier is told that it is cut.
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(
+        path.join(repo, `caller-${String(index).padStart(2, '0')}.ts`),
+        `import './src/app.ts';\n`,
+        'utf-8',
+      );
+    }
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'callers');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
+
+    const search = await callersOf(repo, 'src/app.ts', head);
+    expect(search.callers).toHaveLength(20);
+    expect(search.truncated).toBe(true);
+  });
+
+  it('tells the verifier that the list of the callers is cut', async () => {
+    for (let index = 0; index < 25; index += 1) {
+      await writeFile(
+        path.join(repo, `caller-${String(index).padStart(2, '0')}.ts`),
+        `import './src/app.ts';\n`,
+        'utf-8',
+      );
+    }
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'callers');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
+
+    const prompts: string[] = [];
+    const id = findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title });
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [{ id, verdict: 'unverified', evidence: 'the list is cut' }],
+        }),
+      },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf({ baseSha: head, headSha: head }),
+    });
+
+    const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+    expect(verification).toContain('is cut');
+  });
+});
