@@ -99,6 +99,17 @@ const FINDING = {
   fix: 'Validate the input before the call.',
 };
 
+/** The decision the architecture pass reports — a trade-off, not a defect. */
+const DECISION = {
+  kind: 'Implicit decision',
+  decision: 'The audit of the decisions lives in the architecture pass.',
+  previous: 'The pipeline reported the findings and nothing else.',
+  evidence: 'docs/review-pipeline.md',
+  consequence: 'An automated review shows the decision of the change.',
+  risk: 'A trade-off reaches the reader as if it were nothing.',
+  confirmation: 'yes',
+};
+
 /** The answer of a reviewer with one finding. */
 function answerWith(findings: unknown[]): string {
   return JSON.stringify({ findings, decisions: [] });
@@ -373,7 +384,10 @@ describe('the review pipeline', () => {
   it('writes the steps and the findings to the directory of the run', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([]) },
-      { prompt: '# Role: architecture', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([], [DECISION]),
+      },
       { prompt: '# Role: tests', answer: answerWith([]) },
     ]);
 
@@ -385,9 +399,13 @@ describe('the review pipeline', () => {
 
     const saved = JSON.parse(
       await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
-    ) as { steps: { id: string }[]; findings: unknown[] };
+    ) as { steps: { id: string }[]; findings: unknown[]; decisions: { kind: string }[] };
     expect(saved.steps.map((step) => step.id)).toContain('verify-findings');
     expect(saved.findings).toEqual([]);
+    // The decisions of the change have their own field of the stored run: a
+    // consumer that reopens the review after the process is gone sees them.
+    expect(saved.decisions).toHaveLength(1);
+    expect(saved.decisions[0].kind).toBe('Implicit decision');
     const report = await readFile(path.join(home, 'reviews', run.id, 'report.md'), 'utf-8');
     expect(report).toContain('# PR review — Add the run function');
   });
@@ -2575,16 +2593,6 @@ describe('the review pipeline', () => {
 });
 
 describe('the implicit decisions of a review', () => {
-  const DECISION = {
-    kind: 'Implicit decision',
-    decision: 'The audit of the decisions lives in the manual playbook only.',
-    previous: 'The pipeline reported the findings and nothing else.',
-    evidence: 'docs/review-pipeline.md',
-    consequence: 'An automated review shows no decision of the change.',
-    risk: 'A trade-off reaches the reader as if it were nothing.',
-    confirmation: 'yes',
-  };
-
   it('collects the decisions of the architecture pass and renders them', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([]) },
@@ -2605,7 +2613,7 @@ describe('the implicit decisions of a review', () => {
     expect(run.decisions[0].kind).toBe('Implicit decision');
     expect(run.decisions[0].confirmation).toBe('yes');
     expect(run.report).toContain('## Implicit decisions and trade-offs');
-    expect(run.report).toContain('The audit of the decisions lives in the manual playbook only.');
+    expect(run.report).toContain('The audit of the decisions lives in the architecture pass.');
   });
 
   it('keeps a decision out of the findings and out of the verdict', async () => {
