@@ -60,6 +60,13 @@ run the audit, and it fails the pass: a review that says "no material
 decision" because nobody asked is not a review. An empty list is the answer
 that says there is none.
 
+The symmetry holds the other way round as well. The architecture pass answers
+two questions, and its answer must carry both keys: an answer that carries the
+decisions and no findings has answered one of the two. The missing key is not
+an empty list of findings, and the findings of that pass would be lost — the
+review would approve the change without them. Such an answer fails the pass
+like a missing list of decisions does.
+
 The decisions are read with a different rule than the findings. The answer
 comes last, and the number of the entries does not decide: a decision is not a
 defect, and an earlier payload of one decision must not hide the empty list

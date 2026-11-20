@@ -2684,6 +2684,28 @@ describe('the implicit decisions of a review', () => {
     expect(run.verdict).toBe('REQUEST CHANGES');
   });
 
+  it('fails the architecture pass when the answer omits the findings', async () => {
+    // The architecture pass answers two questions: an answer that carries the
+    // decisions and no findings has answered one of them. The findings of that
+    // pass would be lost, and the review would approve the change without them.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ decisions: [DECISION] }) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('no findings key');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+
   it('fails the architecture pass when a decision does not pass the schema', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([]) },
@@ -2805,11 +2827,39 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid[0]).toContain('not a list of findings');
   });
 
-  it('reads an answer that carries the decisions and no finding', () => {
-    // The architecture pass answers a second question: an answer that carries
-    // the decisions and no finding has answered it.
+  it('does not let the architecture pass answer with the decisions and no finding', () => {
+    // The architecture pass answers two questions: the findings and the
+    // decisions. An answer that carries the decisions and no findings has
+    // answered one of them: the key of the findings is missing, and a missing
+    // key is not an empty list. The findings of that pass would be lost, and
+    // the review would approve the change without them.
     const parsed = parseReviewerFindings(
       JSON.stringify({
+        decisions: [
+          {
+            kind: 'Implicit decision',
+            decision: 'a decision',
+            previous: 'the behavior of the base revision',
+            evidence: 'the code',
+            consequence: 'the guarantee',
+            risk: 'the failure scenario',
+            confirmation: 'yes',
+          },
+        ],
+      }),
+      'architecture',
+    );
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no findings key');
+  });
+
+  it('reads an answer that carries the findings and the decisions', () => {
+    // Both keys are there: the answer of the architecture pass is read, and
+    // the empty list of the findings is a valid answer.
+    const parsed = parseReviewerFindings(
+      JSON.stringify({
+        findings: [],
         decisions: [
           {
             kind: 'Implicit decision',

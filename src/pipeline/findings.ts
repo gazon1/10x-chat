@@ -687,15 +687,22 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     parseFindingEntries(entries, role),
   );
   if (choices.length === 0) {
-    // An answer that carries the decisions of the change and no finding is an
-    // answer of the architecture pass: it has nothing to report, and that is
-    // not a malformed answer. The other reviewers have one question to
-    // answer, and a payload without their findings is not their answer.
+    // The architecture pass answers two questions: the findings and the
+    // decisions. An answer that carries the decisions and no findings has
+    // answered one of them: the key of the findings is missing, and a missing
+    // key is not an empty list. The findings of that pass would be lost, and
+    // the review would approve the change without them.
     if (
       role === 'architecture' &&
       candidates.some((candidate) => keyedEntries(candidate.value, 'decisions') !== undefined)
     ) {
-      return { findings: [], invalid: [...notes] };
+      return {
+        findings: [],
+        invalid: [
+          'the answer carries the decisions of the change and no findings key — the architecture pass answers two questions and must carry both keys',
+          ...notes,
+        ],
+      };
     }
     return {
       findings: [],

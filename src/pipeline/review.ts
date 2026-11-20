@@ -104,7 +104,7 @@ Audit the approach as well: could this have been solved more simply by refactori
 Answer with JSON only, without prose around it:
 { "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ], "decisions": [ { "kind": "Confirmed behavioral change|Intended decision|Implicit decision|Unverified assumption", "decision": "what the implementation decided", "previous": "the behavior of the base revision or the alternative that was available", "evidence": "the code, the test or the document", "consequence": "the guarantee or the contract that changes", "risk": "the failure scenario or the risk that stays open", "confirmation": "yes|no" } ] }
 
-If you find nothing blocking and name no material decision, return { "findings": [], "decisions": [] }. Never omit either key: an answer without the decisions is an audit that did not run. Do not invent problems to fill the schema. Do not rewrite the code.`,
+If you find nothing blocking and name no material decision, return { "findings": [], "decisions": [] }. Never omit either key: an answer without the decisions is an audit that did not run, and an answer without the findings is a review that lost them. Do not invent problems to fill the schema. Do not rewrite the code.`,
   tests: `# Role: tests
 
 You are an independent reviewer of a change. Your role: tests and verification.
