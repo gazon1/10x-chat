@@ -491,6 +491,51 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('refuses a checkout that hides a change behind a git flag', async () => {
+    // A file marked with assume-unchanged is not reported by the status, so
+    // the disk may hold a code that is not the code of the revision.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-flag-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'a.txt'), 'one\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'a.txt'), 'two\n', 'utf-8');
+      await gitIn(cwd, 'update-index', '--assume-unchanged', 'a.txt');
+
+      const status = await gitIn(cwd, 'status', '--porcelain');
+      expect(status).toBe('');
+
+      await expect(collectReviewContext({ cwd, base: 'main', head: 'feature' })).rejects.toThrow(
+        /assume-unchanged/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the old path of a renamed file as deleted', async () => {
+    // Git reports a rename as a rename: the old path is gone from the head
+    // all the same, and a finding about it must be read in the base.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-rename-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'old.ts'), 'export const old = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'mv', 'old.ts', 'new.ts');
+      await gitIn(cwd, 'commit', '-m', 'rename');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.deletedFiles).toContain('old.ts');
+      expect(context.deletedFiles).not.toContain('new.ts');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('does not read a file that is not part of the revision under review', async () => {
     // A local file that was never committed — a secret — must not reach the
     // backend, not even as the evidence of a finding.

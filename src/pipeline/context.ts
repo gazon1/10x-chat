@@ -231,6 +231,14 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
       'The checkout has uncommitted changes — the review reads the files of the checkout, so they must be the ones of the head.',
     );
   }
+  // A file whose flag hides its modification from the status is not the file
+  // of the revision: the bundle and the evidence are read from the disk.
+  const hidden = await modifiedBehindTheFlag(repoRoot, headSha);
+  if (hidden.length > 0) {
+    throw new Error(
+      `The checkout hides changes of ${hidden.join(', ')} behind a git flag (skip-worktree or assume-unchanged) — the review reads the files of the disk, and they must be the ones of the head.`,
+    );
+  }
 
   // The merge base is the real difference: a branch that lags behind its base
   // must not show the commits of the base as its own change. A diff that
@@ -340,6 +348,34 @@ function secretPathspecs(): string[] {
 }
 
 /**
+ * The files whose content on the disk is not the content of the revision.
+ *
+ * A file marked with `skip-worktree` or `assume-unchanged` is not reported by
+ * the status, so a change of it is invisible: the file is compared with the
+ * commit of the revision, and a file that is not on the disk at all is no
+ * file of the revision.
+ */
+async function modifiedBehindTheFlag(repoRoot: string, headSha: string): Promise<string[]> {
+  const listed = await gitRaw(['ls-files', '-v', '-z'], repoRoot);
+  const flagged = listed
+    .split('\0')
+    .filter((entry) => entry !== '')
+    // The tag of a file that hides its modification: `S` is skip-worktree, a
+    // lower case letter is assume-unchanged.
+    .filter((entry) => entry[0] === 'S' || (entry[0] >= 'a' && entry[0] <= 'z'));
+  const changed: string[] = [];
+  for (const entry of flagged) {
+    const file = entry.slice(2);
+    const onDisk = await run('git', ['hash-object', '--path', file, '--', file], repoRoot);
+    if (onDisk.code !== 0) continue;
+    const committed = await run('git', ['rev-parse', `${headSha}:${file}`], repoRoot);
+    if (committed.code !== 0) continue;
+    if (onDisk.stdout.trim() !== committed.stdout.trim()) changed.push(file);
+  }
+  return changed;
+}
+
+/**
  * The files of the revision — the paths, relative to the root of the repository.
  *
  * The list comes from the commit, not from the disk: a file that is not
@@ -356,16 +392,21 @@ export async function trackedFiles(repoRoot: string, headSha: string): Promise<s
  * A file that the change deletes is a file of the base revision: a finding
  * against it must be verified against the content it had before the deletion,
  * not rejected because it is gone from the head.
+ *
+ * The files are read from the two trees, not from the diff: a rename is a
+ * removal of the old path too, and git reports it as a rename.
  */
 export async function deletedFiles(
   repoRoot: string,
   baseSha: string,
   headSha: string,
 ): Promise<string[]> {
-  return gitNames(
-    ['diff', '--name-only', '-z', '--diff-filter=D', `${baseSha}...${headSha}`],
-    repoRoot,
-  );
+  const [base, head] = await Promise.all([
+    trackedFiles(repoRoot, baseSha),
+    trackedFiles(repoRoot, headSha),
+  ]);
+  const inHead = new Set(head);
+  return base.filter((file) => !inHead.has(file));
 }
 
 /**
