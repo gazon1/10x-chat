@@ -68,19 +68,21 @@ requested capability.
   (log in in Chrome if required).
 - **Cleanup:** every ask uses a dedicated `chrome-use` session name and always
   attempts `chrome-use … done` in `finally` to close tabs it opened.
-- **Timeout:** respects `request.timeoutMs` without exceeding it per command; if the
-  prompt was confirmed sent, timeout is reported as `timeout/submitted`. A command
-  timeout or deadline expiry before any submit attempt is reported as
-  `unavailable/not_submitted` (safe to retry, nothing sent). Any failed/timed-out
-  submit click is treated as potentially sent and reported as unknown submission
-  (never retried/resubmitted automatically).
+- **Timeout:** respects `request.timeoutMs` best-effort per command (a timed-out
+  process gets a short termination grace). If the prompt was confirmed sent and
+  the answer wait times out, failure is `timeout/submitted`. A command timeout or
+  deadline expiry before any submit attempt is `unavailable/not_submitted` (safe
+  to retry, nothing sent). Any failed/timed-out submit click is treated as
+  potentially sent and reported as `unknown_submission/unknown` (never
+  retried/resubmitted automatically).
 - **Cancellation:** capability `false`; `cancel` returns `{cancelled:false}`.
 - **Browser disconnect / chrome-use unavailable:** start/connect failures before
   submit → `unavailable/not_submitted`. Submit-click failures and connection loss
   after a possible send → `unknown_submission/unknown` (no automatic retry/resend).
   Post-submit loss while waiting → `unknown_submission/unknown` with an explicit
   message. The prompt is delivered via `fill --stdin` (argv-safe) with a stdin-based
-  eval fallback; a failed fill is not submitted.
+  eval fallback; a failed fill is not submitted. A malformed/invalid response
+  baseline is treated as `invalid_output/not_submitted` (request not sent).
 - **Conversation reuse:** not implemented in this POC; each ask opens the
   landing page in a fresh chrome-use session (explicitly declared unsupported).
   `status()` reports in-process submission state only (no persistent receipt); an unknown id is reported as `unknown` (never as safe-to-retry `not_submitted`).
