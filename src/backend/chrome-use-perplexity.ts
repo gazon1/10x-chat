@@ -360,8 +360,13 @@ export function createChromeUsePerplexityBackend(
 
     let submitted = false;
     let partialText = '';
+    // The session is only closed when it was really opened: a request whose
+    // deadline expired before the first command must not touch the browser at
+    // all, not even with the teardown of a session that never existed.
+    let sessionStarted = false;
 
     const cleanup = async (): Promise<void> => {
+      if (!sessionStarted) return;
       try {
         // Cleanup is lifecycle management: give it its own bounded budget so a
         // request timeout cannot starve tab/session teardown.
@@ -375,6 +380,7 @@ export function createChromeUsePerplexityBackend(
       let t = ensureTime(false);
       if (t) return t;
 
+      sessionStarted = true;
       const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
       if (!opened.ok) {
         known.set(request.requestId, { submission: opened.outcome.failure.submission });
