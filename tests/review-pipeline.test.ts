@@ -3498,6 +3498,22 @@ describe('the parsing of the answers', () => {
     expect(parsed.verdicts).toEqual([]);
   });
 
+  it('takes no verdict from an answer that carries nothing but an example', () => {
+    // The verifier showed the format of its answer and answered nothing: the
+    // example is not an answer, and a finding confirmed by an example is a
+    // finding that nobody verified.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of verdicts');
+  });
+
   it('does not confirm a finding with an earlier payload of the verdicts', () => {
     // The answer comes last and carries no verdict: the payload that comes
     // first does not confirm the finding.

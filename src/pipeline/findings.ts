@@ -1002,10 +1002,16 @@ export function parseVerdicts(text: string): ParsedVerdicts {
   // payload that is not an example of the format. A payload that carries more
   // verdicts is not the answer — an example of the format may carry more than
   // the answer does, and a finding confirmed by an example is a finding that
-  // nobody verified.
+  // nobody verified. An answer that carries nothing but an example has not
+  // answered, and the step of the verifier fails.
   const answers = choices.filter((choice) => !choice.candidate.example);
-  const pool = answers.length > 0 ? answers : choices;
-  const best = pool.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
+  if (answers.length === 0) {
+    return {
+      verdicts: [],
+      invalid: ['the answer contains no JSON payload of verdicts', ...notes],
+    };
+  }
+  const best = answers.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
   return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
 }
 
