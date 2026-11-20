@@ -104,7 +104,7 @@ export function parseIssue(payload: unknown, expected: number): IssueData {
 }
 
 /** Run `gh` and capture what it says. */
-function runGh(
+export function runGh(
   args: string[],
   cwd: string,
   timeoutMs: number,

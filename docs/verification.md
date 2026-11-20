@@ -306,3 +306,35 @@ attachment in an API run fails the run instead of being dropped.
 
 The check set of that change: typecheck, lint, test (41 files / **451 tests**), e2e (10
 CLI scenarios, the 7 live provider scenarios skipped) and build — all pass.
+
+## 12. Issue #59 — the Orca-backed Issue-to-PR workflow
+
+The change of [#59](https://github.com/gazon1/10x-chat/issues/59) (branch
+`gazon1/add-orca-backed-issue-to-pr-development-workflow`) adds the opt-in command
+`10x-chat workflow start|status|resume|stop|report`: a GitHub Issue becomes an isolated
+Orca worktree, a coding agent works in it, the review pipeline of `src/pipeline/` looks at the
+local change, the findings go back to the agent, and the loop repeats until the review approves
+the change or the workflow blocks. The state of the workflow lives in
+`~/.10x-chat/workflows/<id>/` and can be inspected and resumed.
+
+The workflow never pushes, never opens a pull request, never merges and never deletes the
+worktree — the change stays for a human, and the approval of the model is not the approval of a
+human. Orca is not required for any other command.
+
+| Item | State | Notes |
+|---|---|---|
+| The happy path | **verified (unit)** | `tests/workflow.test.ts` — Issue → worktree → agent → review → `completed` |
+| The fix loop | **verified (unit)** | `REQUEST CHANGES` sends the findings to the agent, the second iteration approves, the workflow ends in `completed` |
+| The gates | **verified (unit)** | the iteration limit, a HEAD that changed during the review, a changed Issue and a failed review step each end in `blocked` — never in a success |
+| The agent | **verified (unit)** | a pending agent leaves the workflow resumable, a failed worker and an unknown worker outcome end in `blocked`, a second `start` does not start a second agent |
+| The stop | **verified (unit)** | `stop` ends the workflow in `cancelled` |
+| The store | **verified (unit)** | `tests/workflow.test.ts` — the record survives a round trip, the directory is `0700` and the file `0600`, a foreign version is refused, `listWorkflows` finds the workflows |
+| The transitions | **verified (unit)** | an illegal transition is refused; `blocked` and `cancelled` are terminal |
+| The Orca adapter | **verified (unit)** | `tests/orca-client.test.ts` — a ready and a not-ready runtime, an answer that is not JSON, an `ok:false` answer, the repo list, the worker list, a missing dispatch id; the body is passed as an argument, never through a shell |
+| The CLI | **verified (unit + e2e)** | `tests/workflow-cli.test.ts` and `tests/e2e/cli.e2e.ts` — the help lists the steps, an unknown workflow fails with exit 1, a stored workflow is shown by `status` and `report` |
+| The review of a local change | **verified (unit)** | `src/pipeline/` — the worktree branch is never pushed, so the review falls back to the diff of the local change (`target.local = true`) instead of the page of a pull request |
+| A real Orca runtime | **not verified against a site** | the adapter was exercised against the real `orca` CLI of the machine during the development (status, repo list, worktree list, orchestration), but no workflow was run end to end against a real coding agent |
+| A real GitHub Issue | **not verified against a site** | the Issue is read through `gh`; the flow was not run against a live Issue |
+
+The check set of that change: typecheck, lint, knip, test (63 files / **1117 tests**), e2e (22
+CLI scenarios, the 10 live provider scenarios skipped) and build — all pass.

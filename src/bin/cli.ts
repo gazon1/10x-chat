@@ -17,6 +17,7 @@ import { createReviewCommand } from '../cli/review.js';
 import { createSecretsCommand } from '../cli/secrets.js';
 import { createSkillCommand } from '../cli/skill.js';
 import { createSessionCommand, createStatusCommand } from '../cli/status.js';
+import { createWorkflowCommand } from '../cli/workflow.js';
 import { getPackageVersion } from '../version.js';
 
 // Clean up browser resources this process owns on unexpected exit. The shared
@@ -54,6 +55,7 @@ program.addCommand(createImageCommand());
 program.addCommand(createKnowledgeCommand());
 program.addCommand(createResearchCommand());
 program.addCommand(createReviewCommand());
+program.addCommand(createWorkflowCommand());
 program.addCommand(createStatusCommand());
 program.addCommand(createSessionCommand());
 program.addCommand(createConfigCommand());

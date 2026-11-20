@@ -294,19 +294,21 @@ function contextBlock(context: ReviewContext): string {
   const diffFence = fenceFor(context.diff);
   // The reviewers read the change on GitHub: the page of the pull request or
   // of the comparison is the context, not a pasted diff of it. A change
-  // without a page has only its diff.
-  const page =
-    context.prUrl ??
-    (context.repositoryUrl
-      ? `${context.repositoryUrl}/compare/${context.baseSha}...${context.headSha}`
-      : undefined);
+  // without a page has only its diff — a local change has no page either: the
+  // commit of its head is not on GitHub.
+  const page = context.local
+    ? undefined
+    : (context.prUrl ??
+      (context.repositoryUrl
+        ? `${context.repositoryUrl}/compare/${context.baseSha}...${context.headSha}`
+        : undefined));
   // The identity of the repository, the target and the refs come from the
   // checkout and from the remote: a path of the checkout may hold a newline
   // and any text, and a fence that they cannot close keeps them data.
   const metadata = [
     ...(context.repositoryUrl ? [`Repository: ${context.repositoryUrl}`] : []),
     ...(page ? [context.pr ? `Pull request: #${context.pr} — ${page}` : `Compare: ${page}`] : []),
-    ...(context.repositoryUrl
+    ...(context.repositoryUrl && !context.local
       ? [`Commit: ${context.repositoryUrl}/commit/${context.headSha}`]
       : []),
     `Target: ${target}`,
@@ -989,9 +991,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       step(
         'build-bundle',
         'passed',
-        context.repositoryUrl
+        context.repositoryUrl && !context.local
           ? 'the brief carries the GitHub coordinates of the change — no file is bundled'
-          : 'the brief carries the diff — the repository has no page on GitHub',
+          : 'the brief carries the diff — the change has no page on GitHub',
         bundleStart,
       ),
     );
