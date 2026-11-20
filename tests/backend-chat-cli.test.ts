@@ -98,7 +98,9 @@ describe('the --backend option of chat (CLI)', () => {
       expect(res.code).toBe(1);
       expect(res.output).toMatch(pattern);
     }
-  });
+    // Seven starts of the CLI in a row: the default timeout of a test is
+    // too tight on a loaded machine.
+  }, 30_000);
 
   it('runs a chat through the backend without a browser', async () => {
     const res = await runCli(
