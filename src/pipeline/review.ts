@@ -90,7 +90,7 @@ Look only for real defects: logic that is wrong, callers that break, data loss, 
 Answer with JSON only, without prose around it:
 { "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
 
-If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+If you find nothing blocking, return an empty findings list. Do not invent problems to fill the schema. Do not rewrite the code.`,
   architecture: `# Role: architecture
 
 You are an independent reviewer of a change. Your role: architecture, maintainability, compatibility and scope discipline.
@@ -104,7 +104,7 @@ Audit the approach as well: could this have been solved more simply by refactori
 Answer with JSON only, without prose around it:
 { "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ], "decisions": [ { "kind": "Confirmed behavioral change|Intended decision|Implicit decision|Unverified assumption", "decision": "what the implementation decided", "previous": "the behavior of the base revision or the alternative that was available", "evidence": "the code, the test or the document", "consequence": "the guarantee or the contract that changes", "risk": "the failure scenario or the risk that stays open", "confirmation": "yes|no" } ] }
 
-If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+If you find nothing blocking and name no material decision, return { "findings": [], "decisions": [] }. Never omit either key: an answer without the decisions is an audit that did not run. Do not invent problems to fill the schema. Do not rewrite the code.`,
   tests: `# Role: tests
 
 You are an independent reviewer of a change. Your role: tests and verification.
@@ -114,7 +114,7 @@ Is the behaviour covered, are the assertions meaningful, would the test fail wit
 Answer with JSON only, without prose around it:
 { "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/test.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
 
-If the change is covered, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
+If the change is covered, return an empty findings list. Do not invent problems to fill the schema. Do not rewrite the code.`,
 };
 
 /**

@@ -235,6 +235,35 @@ describe('the review pipeline', () => {
     expect(prompt.split('\n')).toContain('````text');
   });
 
+  it('asks the architecture pass for the decisions without contradicting itself', async () => {
+    // The prompt demands both keys and tells the reviewer to return an empty
+    // array when it has nothing: a reviewer that follows the last sentence
+    // answers without the decisions, and the audit of the change never runs.
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const prompt = prompts.find((text) => text.includes('# Role: architecture')) ?? '';
+    expect(prompt).toContain('"decisions"');
+    expect(prompt).toContain('Never omit either key');
+    expect(prompt).not.toContain('return an empty array');
+  });
+
   it('sends the comparison page of a branch that is not a pull request', async () => {
     const prompts: string[] = [];
     const backend = createFakeBackend([
