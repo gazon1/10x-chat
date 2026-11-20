@@ -131,6 +131,49 @@ that was merged into a finding counts: the overlap of the titles is not
 transitive, so a finding that overlaps a merged title is the same defect even
 when it does not overlap the title that was kept.
 
+## The implicit decisions
+
+The requirements of a change never say everything. Every role is therefore
+asked, besides the defects, for the **implicit decisions** of the change: what
+the implementation decided that nobody asked for, what it changes and what can
+fail. The architecture role is asked one thing more — whether the custom code
+was needed at all, or whether the existing code of the repository, a focused
+refactoring, the standard library or a dependency of the project would have
+served better.
+
+A decision carries a kind — `behavior_change`, `intended`, `implicit` or
+`assumption` — the decision itself, the previous behavior or the alternative
+that was available, the evidence and the rationale, the consequence, the
+failure scenario or the unresolved risk, and whether a human has to confirm it.
+All of them are required: the kind is required, like the severity of a finding,
+and a decision that carries an unknown kind is malformed and fails the step of
+its role. A reviewer that writes the kind in the words of the report still says
+a kind. The four explanatory fields are required too — a decision that leaves
+one of them out is a broken answer, and the flag of the human must be a
+boolean: a value that is not one is never replaced by a default.
+
+**The decisions are part of the answer.** The answer of a reviewer must carry the
+key `decisions`, even when its list is empty: an answer without it did not do
+the audit, and the step of the role fails instead of passing by silence. A
+property of the decisions that is there and is not a list is malformed too, and
+it is reported even when another payload of the answer carries the decisions.
+The last payload that carries the key is the answer — a model that repeats the
+format of the answer puts the format first. An entry that does not pass the
+schema is invalid, like a malformed finding: it is reported in the step of the
+role and never becomes a decision. Two roles that name the same decision name
+it once — the id of a decision is a hash of its normalized text, and the
+normalization keeps the order of the words and the negation, so "A sends to B"
+and "B sends to A", or a decision and its opposite, stay two decisions.
+
+**The two lists never read each other.** The list of the decisions is not a
+list of findings: an answer that carries both keeps its finding and hands its
+decisions to the audit, and neither list hides the other.
+
+**A decision is not a defect.** The decisions are not verified against the
+source the way the findings are, and they never become findings: they are the
+reading of the reviewers, and the report says so. Only a proven defect blocks
+the merge.
+
 ## What the reviewers get
 
 The reviewers read the change **on GitHub** — the way the manual playbook does.
@@ -260,6 +303,14 @@ the *Acceptance criteria* of the change are the caller's, not the pipeline's,
 and the *Checks* table carries the steps of the pipeline. A review with a
 governing Issue names that Issue and its version in the header of the report,
 and its *Acceptance criteria* row names the criteria of the Issue.
+
+The *Implicit decisions and trade-offs* section of the report carries the
+decisions of the reviewers: the decision, its kind, the previous behavior or
+the alternative, the evidence and the rationale, the consequence, the failure
+scenario or the unresolved risk, and whether a human has to confirm it. The
+decisions that need a human come first. When the roles reported none, the
+section says so in one line — and says that the audit is incomplete when a
+role pass did not finish.
 
 ## Running it
 

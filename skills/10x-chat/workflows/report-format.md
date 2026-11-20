@@ -29,6 +29,16 @@ Keep it short: a reader should get the verdict, the evidence and the open risks 
 |---|---|---|---|---|---|---|
 | 1 | BLOCKING | `path/file.ts:42` | <one line> | <failure scenario> | <proof> | Fixed / Open / Unverified / Rejected / Accepted |
 
+## Implicit decisions and trade-offs
+<what the change decided where the requirements said nothing — the reading of the reviewers, not a verdict>
+
+1. **<the decision>** — <behavior change | intended decision | implicit decision | unverified assumption>
+   - Previous behavior or alternative: <what it was, or what else was available>
+   - Evidence and rationale: <the code, the test, the document or the requirement>
+   - Consequence: <what changes because of it>
+   - Failure scenario or unresolved risk: <what can go wrong, or none>
+   - Human confirmation: needed / not needed
+
 ## Acceptance criteria
 | Criterion | Status | Evidence |
 |---|---|---|
@@ -61,6 +71,8 @@ Rules that make the report trustworthy:
 - **`SKIPPED` and `UNAVAILABLE` are different.** Skipped is a decision; unavailable is a missing capability. Both are listed under *Not verified* as well.
 - **Unverified is a first-class state.** A finding you could not reproduce is `UNVERIFIED` — visible, not promoted to a defect and not dropped.
 - **Every finding has a status.** `Fixed`, `Open`, `Unverified`, `Rejected` (with the reason) or `Accepted` (with the human decision). A finding without a status is unresolved.
+- **A decision is not a defect.** The *Implicit decisions and trade-offs* section says what the change decided where the requirements said nothing: a behavior change, an intended decision, an implicit decision or an unverified assumption. Only a proven defect is a finding, only a finding blocks the merge, and a decision is never repeated as a finding. A design trade-off that the change accepts on purpose is a decision, not a bug.
+- **The section says when it does not apply.** A trivial change may skip the audit — the section then carries a one-line note instead of an empty list.
 - **No secrets.** Never paste credentials, tokens, `.env` contents or customer data into the report, even to quote a finding.
 
 For a development run, the *Verdict* section is replaced by the completion summary (what was built per checkpoint) and the *Acceptance criteria* table is the main body. Everything else stays the same.

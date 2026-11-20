@@ -192,9 +192,9 @@ function requirementsOf(overrides: Partial<IssueRequirements> = {}): IssueRequir
 /** A backend that answers with no finding at all. */
 function quietBackend() {
   return createFakeBackend([
-    { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [] }) },
-    { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
-    { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
+    { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [], decisions: [] }) },
+    { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
+    { prompt: '# Role: tests', answer: JSON.stringify({ findings: [], decisions: [] }) },
   ]);
 }
 
@@ -367,9 +367,12 @@ describe('the requirements of a review', () => {
     await fakeGh({});
     const prompts: string[] = [];
     const backend = createFakeBackend([
-      { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [FINDING] }) },
-      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
-      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
+      {
+        prompt: '# Role: correctness',
+        answer: JSON.stringify({ findings: [FINDING], decisions: [] }),
+      },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
+      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [], decisions: [] }) },
       {
         prompt: '# Verification',
         answer: JSON.stringify({
@@ -489,9 +492,9 @@ describe('the requirements of a review', () => {
   it('does not advance the baseline when the review is incomplete', async () => {
     await fakeGh({});
     const backend = createFakeBackend([
-      { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [], decisions: [] }) },
       { prompt: '# Role: architecture', failure: 'unavailable' },
-      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [], decisions: [] }) },
     ]);
     const run = await runReviewPipeline({
       backend,
@@ -1002,9 +1005,12 @@ describe('the requirements of a review', () => {
     await fakeGh({});
     const major = { ...FINDING, severity: 'MAJOR' };
     const backend = createFakeBackend([
-      { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [major] }) },
-      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
-      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
+      {
+        prompt: '# Role: correctness',
+        answer: JSON.stringify({ findings: [major], decisions: [] }),
+      },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
+      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [], decisions: [] }) },
       {
         prompt: '# Verification',
         answer: JSON.stringify({

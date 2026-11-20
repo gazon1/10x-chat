@@ -54,8 +54,11 @@ export {
 } from './knowledge/index.js';
 export { collectReviewContext, MAX_DIFF_CHARS } from './pipeline/context.js';
 export {
+  decisionId,
+  dedupeDecisions,
   dedupeFindings,
   findingId,
+  parseReviewerDecisions,
   parseReviewerFindings,
   parseVerdicts,
 } from './pipeline/findings.js';
@@ -66,6 +69,8 @@ export {
   runReviewPipeline,
 } from './pipeline/review.js';
 export type {
+  Decision,
+  DecisionKind,
   Finding,
   FindingCategory,
   FindingSeverity,

@@ -1,4 +1,5 @@
 import type {
+  DecisionKind,
   Finding,
   ReviewImprovements,
   ReviewRun,
@@ -180,6 +181,69 @@ function statusOf(finding: Finding): string {
   }
 }
 
+/** The label of a kind of decision — what kind of attention it needs. */
+const KIND_LABEL: Record<DecisionKind, string> = {
+  behavior_change: 'behavior change',
+  intended: 'intended decision',
+  implicit: 'implicit decision',
+  assumption: 'unverified assumption',
+};
+
+/**
+ * The implicit decisions of the run.
+ *
+ * A decision is the reading of the reviewers, not a verified fact: the report
+ * says so, and the defects stay in the findings above. A decision that a
+ * human has to confirm is the one the report puts first — it is the one that
+ * waits for a person.
+ */
+function decisionsSection(run: ReviewRun): string[] {
+  const lines: string[] = ['## Implicit decisions and trade-offs'];
+  lines.push(
+    'The reading of the reviewers: what the change decided where the requirements said nothing. A decision is not a defect — the proven defects are in the findings above.',
+  );
+  // A run of an older version has no decisions: the section says so instead of
+  // failing.
+  const decisions = [...(run.decisions ?? [])].sort(
+    (a, b) => Number(b.needsHuman) - Number(a.needsHuman),
+  );
+  // The audit belongs to every role: a role that did not finish leaves the
+  // audit unfinished, whatever the other roles reported.
+  const unfinished = run.steps.filter(
+    (candidate) => candidate.id.startsWith('review-') && candidate.status !== 'passed',
+  );
+  if (decisions.length === 0) {
+    lines.push(
+      unfinished.length > 0
+        ? `- The audit is incomplete — ${unfinished.map((step) => `${step.id} (${step.status})`).join(', ')}.`
+        : '- None reported — the reviewers named no decision of consequence (a trivial change may skip the audit).',
+    );
+    return lines;
+  }
+  if (unfinished.length > 0) {
+    lines.push(
+      `- The audit is incomplete — ${unfinished.map((step) => `${step.id} (${step.status})`).join(', ')}.`,
+    );
+  }
+  decisions.forEach((decision, index) => {
+    lines.push('');
+    lines.push(
+      `${index + 1}. **${literal(decision.decision)}** — ${KIND_LABEL[decision.kind]}` +
+        ` (${decision.reportedBy.join(', ')})`,
+    );
+    for (const [label, value] of [
+      ['Previous behavior or alternative', decision.previous],
+      ['Evidence and rationale', decision.rationale],
+      ['Consequence', decision.consequence],
+      ['Failure scenario or unresolved risk', decision.risk],
+    ] as const) {
+      lines.push(`   - ${label}: ${literal(value)}`);
+    }
+    lines.push(`   - Human confirmation: ${decision.needsHuman ? 'needed' : 'not needed'}`);
+  });
+  return lines;
+}
+
 /**
  * The findings a role reported.
  *
@@ -313,6 +377,9 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
       );
     });
   }
+  lines.push('');
+
+  lines.push(...decisionsSection(run));
   lines.push('');
 
   lines.push('## Acceptance criteria');

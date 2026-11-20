@@ -402,7 +402,7 @@ if (prompt.indexOf('# Verification') >= 0) {
             fix: 'Fix the function.',
           },
         ];
-  text = JSON.stringify({ findings: findings });
+  text = JSON.stringify({ findings: findings, decisions: [] });
 }
 process.stdout.write(
   JSON.stringify({ status: 'completed', request_id: requestId, result: { text: text } }),
