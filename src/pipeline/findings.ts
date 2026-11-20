@@ -841,24 +841,40 @@ function parseDecisionEntries(entries: unknown[], role: ReviewRole): ParsedDecis
       return;
     }
     const previous = textOf(value.previous);
+    if (!previous) {
+      invalid.push(`decisions[${index}]: previous missing or malformed`);
+      return;
+    }
     const rationale = textOf(value.rationale);
+    if (!rationale) {
+      invalid.push(`decisions[${index}]: rationale missing or malformed`);
+      return;
+    }
     const consequence = textOf(value.consequence);
+    if (!consequence) {
+      invalid.push(`decisions[${index}]: consequence missing or malformed`);
+      return;
+    }
     const risk = textOf(value.risk);
-    // A decision that nobody classified needs a human: it is the kind the
-    // reviewers did not name.
-    const needsHuman =
-      typeof value.needsHuman === 'boolean'
-        ? value.needsHuman
-        : kind === 'implicit' || kind === 'assumption';
+    if (!risk) {
+      invalid.push(`decisions[${index}]: risk missing or malformed`);
+      return;
+    }
+    // The flag of the human is a flag: a value that is not a boolean is not
+    // replaced by a default, it is a broken answer.
+    if (typeof value.needsHuman !== 'boolean') {
+      invalid.push(`decisions[${index}]: needsHuman missing or malformed`);
+      return;
+    }
     decisions.push({
       id: decisionId(decision),
       kind,
       decision,
-      ...(previous ? { previous } : {}),
-      ...(rationale ? { rationale } : {}),
-      ...(consequence ? { consequence } : {}),
-      ...(risk ? { risk } : {}),
-      needsHuman,
+      previous,
+      rationale,
+      consequence,
+      risk,
+      needsHuman: value.needsHuman,
       reportedBy: [role],
     });
   });
@@ -868,8 +884,9 @@ function parseDecisionEntries(entries: unknown[], role: ReviewRole): ParsedDecis
 /**
  * Merge the decisions of the roles.
  *
- * Two roles that report the same decision report it once: the fields of both
- * are kept and the roles that reported it are named.
+ * Two roles that report the same decision report it once: the account of the
+ * first one is kept, the roles that reported it are named, and the flag of the
+ * human wins when one of them asks for it.
  */
 export function dedupeDecisions(decisions: Decision[]): Decision[] {
   const merged = new Map<string, Decision>();
@@ -880,10 +897,6 @@ export function dedupeDecisions(decisions: Decision[]): Decision[] {
       continue;
     }
     known.reportedBy = [...new Set([...known.reportedBy, ...decision.reportedBy])];
-    known.previous = known.previous ?? decision.previous;
-    known.rationale = known.rationale ?? decision.rationale;
-    known.consequence = known.consequence ?? decision.consequence;
-    known.risk = known.risk ?? decision.risk;
     known.needsHuman = known.needsHuman || decision.needsHuman;
     // The most concrete kind wins: a change of behavior is more than an
     // assumption.

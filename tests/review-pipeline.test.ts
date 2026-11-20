@@ -443,6 +443,56 @@ describe('the review pipeline', () => {
     expect(parsed.invalid).toHaveLength(0);
   });
 
+  it('fails the step of a decision that leaves one of its fields out', async () => {
+    // The audit is the whole account of a decision: what it replaces, why, what
+    // it changes and what can fail. A decision without one of them is a broken
+    // answer, and it does not pass as a decision.
+    for (const field of ['previous', 'rationale', 'consequence', 'risk']) {
+      const incomplete = { ...DECISION } as Record<string, unknown>;
+      delete incomplete[field];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([]) },
+        { prompt: '# Role: architecture', answer: answerWithDecisions([incomplete]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+      expect(step?.status).toBe('failed');
+      expect(step?.detail).toContain(`${field} missing or malformed`);
+      expect(run.decisions).toHaveLength(0);
+    }
+  });
+
+  it('fails the step of a decision whose flag of the human is not a flag', async () => {
+    // A value that is not a boolean is not a flag: it is never replaced by a
+    // default, because a default hides what the reviewer wrote.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([{ ...DECISION, needsHuman: 'true' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('needsHuman missing or malformed');
+    expect(run.decisions).toHaveLength(0);
+  });
+
   it('reports a broken decisions list even when another payload answers', async () => {
     // The answer carries a payload that answers and a payload that breaks the
     // key: the broken one is reported, and the decision of the other survives.

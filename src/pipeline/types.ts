@@ -53,13 +53,13 @@ export interface Decision {
   /** What was decided. */
   decision: string;
   /** The previous behavior or the alternative that was available. */
-  previous?: string;
+  previous: string;
   /** The evidence and the rationale of the decision. */
-  rationale?: string;
+  rationale: string;
   /** What changes because of the decision. */
-  consequence?: string;
+  consequence: string;
   /** The failure scenario or the unresolved risk. */
-  risk?: string;
+  risk: string;
   /** Whether a human has to confirm the decision. */
   needsHuman: boolean;
   /** The roles that reported the decision — more than one after a merge. */

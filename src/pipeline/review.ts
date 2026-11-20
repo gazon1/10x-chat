@@ -124,6 +124,8 @@ Consider the failure modes of the paths the change touches: normal operation, bo
 
 A decision is not a defect. A defect you can prove is a finding; a trade-off the change accepts on purpose is a decision, not a bug; an assumption nobody checked is an assumption. Do not report a decision that a finding of yours already reports. Mark the decisions a human has to confirm.
 
+Every decision carries all of its fields: the previous behavior or the alternative, the evidence and the rationale, the consequence, the failure scenario or the unresolved risk, and the flag of the human. A decision that leaves one of them out is a broken answer, and the step of the role fails.
+
 Answer with an empty "decisions" array when the change decides nothing of consequence — a trivial change may skip the audit.`;
 
 /**

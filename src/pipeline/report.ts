@@ -230,7 +230,7 @@ function decisionsSection(run: ReviewRun): string[] {
       ['Consequence', decision.consequence],
       ['Failure scenario or unresolved risk', decision.risk],
     ] as const) {
-      if (value) lines.push(`   - ${label}: ${literal(value)}`);
+      lines.push(`   - ${label}: ${literal(value)}`);
     }
     lines.push(`   - Human confirmation: ${decision.needsHuman ? 'needed' : 'not needed'}`);
   });
