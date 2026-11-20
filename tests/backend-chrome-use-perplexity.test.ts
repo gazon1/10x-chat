@@ -48,6 +48,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
           if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
           if (script.includes('return { count:n')) {
             prosePolls++;
+            // 1: partial, 2-4: final text unchanged -> 3 consecutive stable polls
             const text = prosePolls >= 2 ? 'Paris is the capital of France.' : 'Paris is the';
             return ok({ result: { count: 1, text, html: `<p>${text}</p>` } });
           }
@@ -62,12 +63,12 @@ describe('chrome-use Perplexity backend (POC)', () => {
       },
     };
 
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     const out = await backend.ask({ requestId: 'req-1', prompt: 'Capital of France?' });
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.text).toContain('Paris');
+    expect(out.value.text).toBe('Paris is the capital of France.');
     expect(out.value.submission).toBe('submitted');
     expect(out.value.truncated).toBe(false);
 
@@ -79,7 +80,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
 
     const status = await backend.status('req-1');
     expect(status.submission).toBe('submitted');
-    expect(status.text).toContain('Paris');
+    expect(status.text).toBe('Paris is the capital of France.');
   });
 
   it('reports unavailable when chrome-use cannot be started', async () => {
@@ -118,7 +119,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     const out = await backend.ask({ requestId: 'req-1', prompt: 'hi', timeoutMs: 5_000 });
     expect(out.ok).toBe(false);
     if (out.ok) return;
@@ -140,7 +141,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
     expect(out.ok).toBe(false);
     if (out.ok) return;
@@ -168,7 +169,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
     expect(out.ok).toBe(false);
     if (out.ok) return;
@@ -185,7 +186,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     // 0 or negative timeout => deadline already passed before any submit attempt.
     for (const timeoutMs of [0, -1]) {
       calls.length = 0;
@@ -216,13 +217,47 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
     const out = await backend.ask({ requestId: 'req-timeout2', prompt: 'hi', timeoutMs: 15 });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.failure.kind).toBe('unavailable');
     expect(out.failure.submission).toBe('not_submitted');
     expect(calls.some((c) => c.args[2] === 'click')).toBe(false);
+  });
+
+  it('waits for consecutive stable polls and does not return a paused intermediate answer', async () => {
+    let prosePolls = 0;
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        const sub = args[2];
+        if (sub === 'open' || sub === 'wait' || sub === 'fill' || sub === 'press' || sub === 'click' || sub === 'done') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            prosePolls++;
+            // 1: partial, 2: same (pause, 1 stable), 3: longer (resumes), 4-6: final stable x3
+            let text = 'Part 1';
+            if (prosePolls >= 3) text = 'Part 1 and Part 2 complete';
+            return ok({ result: { count: 1, text, html: `<p>${text}</p>` } });
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 3 });
+    const out = await backend.ask({ requestId: 'req-pause', prompt: 'hi', timeoutMs: 5_000 });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value.text).toBe('Part 1 and Part 2 complete');
+  });
+
+  it('reports unknown submission state for an unknown request id', async () => {
+    const backend = createChromeUsePerplexityBackend({ runner: { run: async () => ok() } });
+    const status = await backend.status('never-seen');
+    expect(status.submission).toBe('unknown');
   });
 
   it('rejects attachments and model selection explicitly', async () => {

@@ -107,8 +107,8 @@ export interface ChromeUsePerplexityBackendOptions {
   sessionPrefix?: string;
   /** Poll interval while waiting for a stable answer. */
   pollMs?: number;
-  /** How long the answer must stay unchanged to count as complete. */
-  stableMs?: number;
+  /** Consecutive unchanged polls required before considering the answer complete. */
+  stablePolls?: number;
 }
 
 const nowMs = (): number => Date.now();
@@ -202,7 +202,7 @@ export function createChromeUsePerplexityBackend(
   const runner = options.runner ?? nodeProcessRunner;
   const sessionPrefix = options.sessionPrefix ?? '10x-pplx';
   const pollMs = options.pollMs ?? 800;
-  const stableMs = options.stableMs ?? 1200;
+  const stablePolls = options.stablePolls ?? 3;
   // Best-effort in-process record: this POC has no persistent receipt, but
   // status() must not lie about a request it already handled in this process.
   const known = new Map<
@@ -482,7 +482,7 @@ export function createChromeUsePerplexityBackend(
       known.set(request.requestId, { submission: 'submitted' });
 
       let lastText = '';
-      let lastChange = nowMs();
+      let stableCount = 0;
       let lastHtml = '';
       for (;;) {
         t = ensureTime(true);
@@ -516,18 +516,23 @@ export function createChromeUsePerplexityBackend(
             lastText = text;
             lastHtml = html;
             partialText = text;
-            lastChange = nowMs();
-          } else if (nowMs() - lastChange >= stableMs) {
-            const value: BackendResponse = {
-              requestId: request.requestId,
-              text: lastText,
-              markdown: lastHtml || lastText,
-              truncated: false,
-              submission: 'submitted',
-            };
-            known.set(request.requestId, { submission: 'submitted', text: lastText, truncated: false });
-            return { ok: true, value };
+            stableCount = 0;
+          } else {
+            stableCount += 1;
+            if (stableCount >= stablePolls) {
+              const value: BackendResponse = {
+                requestId: request.requestId,
+                text: lastText,
+                markdown: lastHtml || lastText,
+                truncated: false,
+                submission: 'submitted',
+              };
+              known.set(request.requestId, { submission: 'submitted', text: lastText, truncated: false });
+              return { ok: true, value };
+            }
           }
+        } else {
+          stableCount = 0;
         }
         await sleep(Math.min(pollMs, remaining() ?? pollMs));
       }
@@ -547,7 +552,10 @@ export function createChromeUsePerplexityBackend(
     ask: (request) => serialize(() => ask(request)),
     status: async (requestId: string): Promise<BackendStatus> => {
       const k = known.get(requestId);
-      if (!k) return { requestId, submission: 'not_submitted' };
+      // This POC keeps no persistent receipt across processes; without
+      // in-process evidence the submission state is unknown (never claim
+      // not_submitted for a request that may have been sent elsewhere).
+      if (!k) return { requestId, submission: 'unknown' };
       return {
         requestId,
         submission: k.submission,

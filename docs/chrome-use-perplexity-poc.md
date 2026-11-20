@@ -82,7 +82,7 @@ requested capability.
   a stdin-based eval fallback; a failed fill is not submitted.
 - **Conversation reuse:** not implemented in this POC; each ask opens the
   landing page in a fresh chrome-use session (explicitly declared unsupported).
-  `status()` reports in-process submission state only (no persistent receipt).
+  `status()` reports in-process submission state only (no persistent receipt); an unknown id is reported as `unknown` (never as safe-to-retry `not_submitted`).
 
 ## Comparison with existing Playwright provider path
 
