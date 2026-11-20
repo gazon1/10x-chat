@@ -152,21 +152,23 @@ back truncated is `failed`, and the run is incomplete.
 
 The payload of an answer is looked for in the whole answer: a model fences it,
 wraps it in a sentence, or repeats the format of the answer before the answer
-itself. The payload that carries more entries is the answer, and an empty
-payload is an example of the format: it must not hide a payload that carries
-something — not even a payload whose entries are malformed, because a
-malformed answer is a failed step, not a review without findings. When two
-payloads carry the same number of entries, the answer comes last: a model that
-repeats the format of the answer puts the format first. The schema of an
-entry does not decide between them: a payload whose entries pass the schema is
+itself. The place of the payload decides which one is the answer, and the
+number of the entries does not: the answer comes last. A payload that the
+prose introduces as an example — "the format I use is", "for example", "a
+sample answer" — is not the answer and never passes as one, not even when it
+is the last payload of the text: it carries the entries of the example and not
+the entries the reviewer found. The schema of an entry does not decide
+between two payloads either: a payload whose entries pass the schema is
 not the answer when a later payload carries the answer itself, and the
 malformed entries of that payload fail the step instead of being dropped
 without a word. A payload
 under the key of the format and a bare list are read into one pool: neither of
 them hides the other, so a bare list that carries the findings is never lost
-behind an empty payload. A bare list of strings is a list of the prose and a
-bare list of payloads is a container of payloads — neither is an answer of
-findings. Fifty
+behind an empty payload. An empty bare list is the one exception: it carries
+nothing, a pair of brackets in a sentence says nothing about the review, and
+it answers only when no other payload does. A bare list of strings is a list
+of the prose and a bare list of payloads is a container of payloads — neither
+is an answer of findings. Fifty
 delimiters that carry no JSON at all are tolerated; when there are more, the
 payload of the answer may lie behind them, and the step of the reviewer or of
 the verifier is `failed` rather than "no findings".

@@ -2687,6 +2687,38 @@ describe('the implicit decisions of a review', () => {
     expect(run.report).toContain('Not verified — the architecture pass did not answer');
   });
 
+  it('fails the architecture pass when the example passes for the answer', async () => {
+    // The model shows the format of its answer and answers with a bare list:
+    // the example is not the answer, and the audit of the decisions did not
+    // run. The example must not pass as the answer of the architecture pass,
+    // or the review approves a change whose decisions were never audited.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: [
+          'Example:',
+          JSON.stringify({ findings: [], decisions: [] }),
+          '',
+          'Actual answer:',
+          '[]',
+        ].join('\n'),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('no decisions');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+
   it('fails the architecture pass when the answer omits the findings', async () => {
     // The architecture pass answers two questions: an answer that carries the
     // decisions and no findings has answered one of them. The findings of that
@@ -3294,6 +3326,32 @@ describe('the parsing of the answers', () => {
     const parsed = parseReviewerFindings('[]', 'correctness');
     expect(parsed.invalid).toEqual([]);
     expect(parsed.findings).toEqual([]);
+  });
+
+  it('does not take an example of the format for the answer', () => {
+    // The prose introduces the payload as an example: it carries the entries
+    // of the example, not the entries the reviewer found. The example comes
+    // last, and the position alone would read it as the answer.
+    const answer = [
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING] }),
+      'The format I use is:',
+      JSON.stringify({ findings: [{ ...FINDING, title: 'an entry of the example' }] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes an answer that a preamble introduces for the answer', () => {
+    // The preamble names the format of the answer, and the answer is the only
+    // payload of the text: it is the answer and not an example.
+    const answer = ['The format I use is:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
   it('reads the verdicts of a verification', () => {

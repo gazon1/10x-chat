@@ -138,6 +138,8 @@ export interface JsonCandidate {
   fenced: boolean;
   /** Where the payload starts in the answer. */
   at: number;
+  /** The prose introduces the payload as an example of the format. */
+  example: boolean;
 }
 
 /** A fenced block of an answer. */
@@ -305,7 +307,13 @@ export function jsonCandidates(text: string): JsonCandidates {
         covered = Math.max(covered, index + slice.length);
         if (seen.has(key)) continue;
         seen.add(key);
-        candidates.push({ value, fenced: source.fenced, at: source.at + index });
+        const at = source.at + index;
+        candidates.push({
+          value,
+          fenced: source.fenced,
+          at,
+          example: introducesAsExample(text, at),
+        });
       } catch {
         broken += 1;
         if (broken > MAX_JSON_CANDIDATES) {
@@ -835,6 +843,28 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
 }
 
 /**
+ * Whether the prose introduces a payload as an example of the format.
+ *
+ * A model that shows the format of its answer writes a word before the
+ * payload — "the format I use is", "for example", "a sample answer". Such a
+ * payload carries the entries of the example, not the entries the reviewer
+ * found, and it must never pass as the answer: the review would report
+ * findings that nobody made, or the audit of the decisions would pass on an
+ * answer that never answered.
+ *
+ * The word is read in the lines right before the payload. The word of a
+ * sentence that comes later says nothing about the payload that precedes it.
+ */
+function introducesAsExample(text: string, at: number): boolean {
+  const before = text.slice(Math.max(0, at - 240), at);
+  const lines = before.split('\n');
+  return EXAMPLE_WORDS.test(lines.slice(-2).join('\n'));
+}
+
+/** The words that introduce an example of the format of an answer. */
+const EXAMPLE_WORDS = /\b(example|examples|sample|schema|format)\b|e\.g\./i;
+
+/**
  * The payload of the answer — the last payload of the text.
  *
  * The answer comes last: a model that repeats the format of its answer puts
@@ -843,8 +873,13 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * an answer without the decisions is the answer, and it must not be replaced
  * by the example of the format that precedes it.
  *
- * An empty bare list is the one exception: it carries nothing, and a list of
- * the prose — an empty pair of brackets in a sentence — says nothing about
+ * A payload that the prose introduces as an example is not the answer, and it
+ * never passes as one — not even when it is the only payload of the answer:
+ * the answer of a reviewer is the payload of the top level, and the example
+ * of the format is not it.
+ *
+ * An empty bare list is the second exception: it carries nothing, and a list
+ * of the prose — an empty pair of brackets in a sentence — says nothing about
  * the review. It is displaced by every other payload of the answer, and it
  * answers only when nothing else does. A payload under the key is never
  * displaced by it, not even when it carries no findings: the prompt asks for
@@ -852,9 +887,15 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  */
 function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined {
   const eligible = candidates.filter((candidate) => carriesTheShapeOfAnAnswer(candidate.value));
-  const pool = eligible.every((candidate) => isEmptyBareList(candidate.value))
-    ? eligible
-    : eligible.filter((candidate) => !isEmptyBareList(candidate.value));
+  // An example is not an answer. When every payload of the answer is an
+  // example, there is no other answer to read, and the last of them is read
+  // as one: an answer that carries nothing but a preamble is a rare answer,
+  // and failing it would fail a reviewer that did answer.
+  const answers = eligible.filter((candidate) => !candidate.example);
+  const base = answers.length > 0 ? answers : eligible;
+  const pool = base.every((candidate) => isEmptyBareList(candidate.value))
+    ? base
+    : base.filter((candidate) => !isEmptyBareList(candidate.value));
   let answer: JsonCandidate | undefined;
   for (const candidate of pool) {
     if (!answer || candidate.at > answer.at) answer = candidate;
