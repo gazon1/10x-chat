@@ -68,6 +68,24 @@ function label(name: string): string {
 }
 
 /**
+ * The name of a file, as the inline code of a heading.
+ *
+ * A name of Git is a name of a file, and the name may hold words that look
+ * like an instruction of the review. A heading of plain text reads as prose
+ * of the prompt; the name in a code span reads as the name of a file, and it
+ * cannot write a heading of its own.
+ */
+function inlineCode(name: string): string {
+  const runs = name.match(/`+/g);
+  const longest = runs ? Math.max(...runs.map((run) => run.length)) : 0;
+  const fence = '`'.repeat(longest + 1);
+  // A code span that starts or ends with a backtick needs a space on that
+  // side: the backtick would close the span otherwise.
+  const pad = name.startsWith('`') || name.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${name}${pad}${fence}`;
+}
+
+/**
  * The language of a file, as the identifier of its fence.
  *
  * The identifier is a word: a name of Git may hold anything, and an
@@ -146,18 +164,18 @@ export async function buildBundle(opts: BundleOptions): Promise<string> {
     if (opts.read) {
       const read = await opts.read(relativePath);
       if (read === undefined) {
-        parts.push(`## ${name} (SKIPPED — not in the revision)\n`);
+        parts.push(`## ${inlineCode(name)} (SKIPPED — not in the revision)\n`);
         continue;
       }
       if (Buffer.byteLength(read) > MAX_FILE_SIZE) {
-        parts.push(`## ${name} (SKIPPED — exceeds 1 MB)\n`);
+        parts.push(`## ${inlineCode(name)} (SKIPPED — exceeds 1 MB)\n`);
         continue;
       }
       content = read;
     } else {
       const fileStat = await stat(filePath);
       if (fileStat.size > MAX_FILE_SIZE) {
-        parts.push(`## ${name} (SKIPPED — exceeds 1 MB)\n`);
+        parts.push(`## ${inlineCode(name)} (SKIPPED — exceeds 1 MB)\n`);
         continue;
       }
       content = await readFile(filePath, 'utf-8');
@@ -165,7 +183,7 @@ export async function buildBundle(opts: BundleOptions): Promise<string> {
     const ext = language(filePath);
 
     const fence = fenceFor(content);
-    parts.push(`## ${name}\n`);
+    parts.push(`## ${inlineCode(name)}\n`);
     parts.push(`${fence}${ext}`);
     parts.push(content);
     parts.push(`${fence}\n`);

@@ -123,7 +123,10 @@ are escaped before they become glob patterns: a name of a file is a name, not a
 pattern. The name of a file is rendered in the bundle as **escaped literal
 text**: a name of Git may hold a newline, and a name that writes a line of its
 own writes into the prompt of the backend — the text of the repository then
-looks like an instruction of the review. The language of a fence is restricted
+looks like an instruction of the review. The name is the **inline code** of a
+heading as well: a name may hold words that look like an instruction of the
+review, and a heading of plain text reads as prose of the prompt, while the
+name in a code span reads as the name of a file. The language of a fence is restricted
 to the extension of the file, and an extension that is not a plain word is
 `txt`: the identifier of a fence is a part of the prompt too. The bundle does
 not follow a symlink: the file behind it is not a file
