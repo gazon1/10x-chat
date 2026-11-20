@@ -90,17 +90,20 @@ Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also prin
 
 ## Playbooks
 
-Two ready-made workflows live next to this file. They are provider-neutral and language-neutral — they work in any repository, with any build system.
+Ready-made workflows live next to this file. They are provider-neutral and language-neutral — they work in any repository, with any build system.
 
 | Playbook | File | Use it when |
 |---|---|---|
 | PR review | [workflows/pr-review.md](workflows/pr-review.md) | The user asks for a review of a PR, a branch, a patch or a diff. |
 | Helix-style development | [workflows/helix-development.md](workflows/helix-development.md) | The user asks for a change to be built and gated by checkpoints. |
+| Project context brief | [workflows/project-context.md](workflows/project-context.md) | Reviewers or checkpoints need a reusable, evidence-backed understanding of the repository's architecture, constraints, decisions and verification conventions. Optional: if no brief exists, prepare a temporary context summary from the repository's own docs and source. |
 | Shared report format | [workflows/report-format.md](workflows/report-format.md) | Both playbooks end in this report shape. |
 
 **The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
 
 **The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, the target (pull request URL or compare URL), commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first — with the user's word — then asks for the review. `--file` and `--attach` are not used.
+
+**Project context is separate from review conversations.** When a brief helps, follow [workflows/project-context.md](workflows/project-context.md): give every fresh reviewer the same relevant context (with claims marked `CONFIRMED`, `INFERRED`, `UNKNOWN`, or unverified/stale and sourced where possible), but keep their first-pass findings and conversation history independent. Reuse and freshness checks happen before relying on an existing brief; never rewrite project docs or the brief automatically.
 
 Load the playbook file before starting one of these tasks — it carries the reviewer roles, the finding schema, the evidence rules and the report template.
 
