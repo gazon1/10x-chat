@@ -3461,9 +3461,10 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid.join(' ')).toContain('the entry is not an object');
   });
 
-  it('reads the payload of the verdicts that carries more of them', () => {
+  it('reads the payload of the verdicts that comes last', () => {
     // The example of the format comes first, the answer comes last: the
-    // payload that carries more verdicts is the answer.
+    // answer is the payload that comes last, and the number of the verdicts
+    // does not decide.
     const answer = [
       'The format I use is:',
       JSON.stringify({
@@ -3480,6 +3481,34 @@ describe('the parsing of the answers', () => {
     const parsed = parseVerdicts(answer);
     expect(parsed.verdicts).toHaveLength(2);
     expect(parsed.verdicts.map((verdict) => verdict.id)).toEqual(['f-00000002', 'f-00000003']);
+  });
+
+  it('does not confirm a finding with an example of the verdicts', () => {
+    // The example carries a confirmed verdict and the answer carries none: a
+    // finding that nobody verified must not be confirmed by the example.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      'And here is what I found:',
+      JSON.stringify({ verdicts: [] }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+  });
+
+  it('does not confirm a finding with an earlier payload of the verdicts', () => {
+    // The answer comes last and carries no verdict: the payload that comes
+    // first does not confirm the finding.
+    const answer = [
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      JSON.stringify({ verdicts: [] }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
   });
 
   it('fails a verification whose payload lies behind too many delimiters', () => {

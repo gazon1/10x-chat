@@ -144,7 +144,11 @@ Two verdicts for one finding that contradict each other settle nothing: the
 order of the answer must not decide the state of a finding. The finding stays
 `unverified` with the note that says why. Two verdicts that agree are one
 verdict: their evidence is merged, so the order of the answer decides nothing
-either.
+either. The payload of the verdicts is chosen like the payload of the findings
+of a reviewer: the last one that is not an example of the format. A payload
+that carries more verdicts is not the answer — an example may carry more than
+the answer does, and a finding confirmed by an example is a finding that
+nobody verified.
 
 An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came
@@ -158,7 +162,9 @@ prose introduces as an example — "for example", "a sample answer", "e.g." —
 is not the answer and never passes as one, not even when it is the last
 payload of the text: it carries the entries of the example and not the
 entries the reviewer found. An answer that carries nothing but an example has
-not answered, and the step of the reviewer fails. A preamble that only names
+not answered, and the step of the reviewer fails. The prose that introduces a
+payload is the prose between it and the payload before it: a word of a payload
+says nothing about the payload that follows it. A preamble that only names
 the format — "the format I use is" — introduces no example: the payload that
 follows it may be the answer itself. The schema of an entry does not decide
 between two payloads either: a payload whose entries pass the schema is

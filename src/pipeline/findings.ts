@@ -138,6 +138,8 @@ export interface JsonCandidate {
   fenced: boolean;
   /** Where the payload starts in the answer. */
   at: number;
+  /** Where the payload ends in the answer. */
+  end: number;
   /** The prose introduces the payload as an example of the format. */
   example: boolean;
 }
@@ -311,7 +313,8 @@ export function jsonCandidates(text: string): JsonCandidates {
           value,
           fenced: source.fenced,
           at,
-          example: introducesAsExample(text, at),
+          end: at + slice.length,
+          example: false,
         });
       } catch {
         broken += 1;
@@ -321,6 +324,15 @@ export function jsonCandidates(text: string): JsonCandidates {
         }
       }
     }
+  }
+  // The prose that introduces a payload is the prose between it and the
+  // payload before it: the word that says "example" belongs to the sentence
+  // that introduces the payload, and not to a word of a payload.
+  candidates.sort((a, b) => a.at - b.at);
+  let prose = 0;
+  for (const candidate of candidates) {
+    candidate.example = introducesAsExample(text.slice(prose, candidate.at));
+    prose = candidate.end;
   }
   return { candidates, exhausted };
 }
@@ -364,42 +376,6 @@ export function extractJson(text: string, key?: string): unknown {
 interface CandidateChoice<T extends { invalid: string[] }> {
   candidate: JsonCandidate;
   parsed: T;
-  /** The entries of the payload. */
-  count: number;
-  /** The payload carries its entries under a key — the format of the answer. */
-  keyed: boolean;
-}
-
-/**
- * The better of two candidates.
- *
- * The payload that carries more of the answer wins: an empty payload is an
- * example of the format and must not hide a payload that carries something —
- * not even a payload whose entries are malformed, because a malformed answer
- * is a failed step, not an empty review. A later payload beats an earlier one
- * — a model that repeats the format of the answer puts the format first, and
- * the answer that follows is the one that counts. The schema of an entry does
- * not decide: a payload whose entries pass the schema is not the answer when
- * a later payload carries the answer itself, and the malformed entries of
- * that payload fail the step instead of being silently dropped. A fenced
- * payload beats an unfenced one, and the payload under a key wins the last tie
- * only: it is the format of the answer, and a bare list is its fallback —
- * never a way to hide a payload that carries the findings.
- */
-function betterCandidate<T extends { invalid: string[] }>(
-  a: CandidateChoice<T>,
-  b: CandidateChoice<T>,
-): CandidateChoice<T> {
-  // The payload that carries more is the answer: a payload whose entries are
-  // malformed must not hide behind a smaller one, or the defect it carries
-  // disappears from the review without a word.
-  if (a.count !== b.count) return a.count > b.count ? a : b;
-  // The answer comes last: the example of the format precedes it.
-  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
-  if (a.candidate.fenced !== b.candidate.fenced) {
-    return a.candidate.fenced ? a : b;
-  }
-  return a.keyed ? a : b;
 }
 
 /** The entries of a payload — an array of them, or the list under a key. */
@@ -511,12 +487,7 @@ function payloadChoices<T extends { invalid: string[] }>(
       if (payload.entries.length > 0) continue;
     }
     const parsed = parse(payload.entries);
-    choices.push({
-      candidate,
-      parsed,
-      count: payload.entries.length,
-      keyed: payload.keyed,
-    });
+    choices.push({ candidate, parsed });
   }
   return choices;
 }
@@ -854,13 +825,11 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * A preamble that only names the format — "the format I use is" — introduces
  * no example: the payload that follows it may be the answer itself.
  *
- * The word is read in the lines right before the payload. The word of a
- * sentence that comes later says nothing about the payload that precedes it.
+ * The prose is the text between the payload and the one before it: a word of
+ * a payload says nothing about the payload that follows it.
  */
-function introducesAsExample(text: string, at: number): boolean {
-  const before = text.slice(Math.max(0, at - 240), at);
-  const lines = before.split('\n');
-  return EXAMPLE_WORDS.test(lines.slice(-2).join('\n'));
+function introducesAsExample(prose: string): boolean {
+  return EXAMPLE_WORDS.test(prose);
 }
 
 /** The words that introduce an example of the format of an answer. */
@@ -1029,7 +998,14 @@ export function parseVerdicts(text: string): ParsedVerdicts {
       invalid: ['the answer contains no JSON payload of verdicts', ...notes],
     };
   }
-  const best = choices.reduce(betterCandidate);
+  // The answer of a verifier is chosen like the answer of a reviewer: the last
+  // payload that is not an example of the format. A payload that carries more
+  // verdicts is not the answer — an example of the format may carry more than
+  // the answer does, and a finding confirmed by an example is a finding that
+  // nobody verified.
+  const answers = choices.filter((choice) => !choice.candidate.example);
+  const pool = answers.length > 0 ? answers : choices;
+  const best = pool.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
   return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
 }
 
