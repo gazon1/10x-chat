@@ -19,8 +19,13 @@ import type { IssueRequirements } from './types.js';
 /** The format of the stored snapshot — it changes when the format changes. */
 const SNAPSHOT_VERSION = 1;
 
-/** The name of the lock of the snapshots — one lock for the whole directory. */
-const LOCK_NAME = 'requirements.lock';
+/**
+ * The name of the lock of the snapshots — one lock for the whole directory.
+ *
+ * It is public: a test holds the lock of the store to prove that a second
+ * process stays out of it while the first one is inside.
+ */
+export const REQUIREMENTS_LOCK = 'requirements.lock';
 
 /** How long a run waits for the lock of the snapshots. */
 const LOCK_TIMEOUT_MS = 5_000;
@@ -349,7 +354,7 @@ export async function advanceBaseline(
   if (process.platform !== 'win32') await chmod(dir, 0o700);
   // The lock of the project is the lock of every store of the project: it is
   // an abstract unix socket, and the project runs on Linux only.
-  const lock = await acquireLock(dir, LOCK_NAME, { timeoutMs: LOCK_TIMEOUT_MS });
+  const lock = await acquireLock(dir, REQUIREMENTS_LOCK, { timeoutMs: LOCK_TIMEOUT_MS });
   try {
     const stored = await readBaseline(requirements.repository, requirements.number);
     if (stored && stored.observedAt >= requirements.observedAt) {

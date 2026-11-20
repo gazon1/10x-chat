@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
+import { acquireLock } from '../src/core/lock.js';
+import { getRequirementsDir } from '../src/paths.js';
 import { collectReviewContext } from '../src/pipeline/context.js';
 import { findingId } from '../src/pipeline/findings.js';
 import {
@@ -11,6 +13,7 @@ import {
   collectRequirements,
   hashRequirements,
   parseIssue,
+  REQUIREMENTS_LOCK,
 } from '../src/pipeline/requirements.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { IssueRequirements, ReviewContext } from '../src/pipeline/types.js';
@@ -187,6 +190,29 @@ function quietBackend() {
 /** The file of the baseline of the Issue. */
 function baselineFile(): string {
   return path.join(home, 'requirements', 'owner', 'name', '7.json');
+}
+
+/** Whether a file exists. */
+async function exists(file: string): Promise<boolean> {
+  return access(file).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Wait for a while. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Wait for a file to appear — a process of another run writes it. */
+async function waitForFile(file: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await exists(file)) return;
+    await sleep(50);
+  }
+  throw new Error(`the file ${file} did not appear`);
 }
 
 /** The parts of a text that are not inside a fenced block. */
@@ -599,6 +625,66 @@ describe('the requirements of a review', () => {
     const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
     expect(baseline.hash).toBe(newer);
     expect(baseline.observedAt).toBe('2026-06-01T00:00:00.000Z');
+  });
+
+  it('keeps a second process out of the store while the lock of the store is held', async () => {
+    await fakeGh({});
+    const newer = hashRequirements(ISSUE_TITLE, `${ISSUE_BODY} Newer.`);
+    const started = path.join(home, 'started');
+    const advanced = path.join(home, 'advanced');
+    const module = path
+      .resolve(import.meta.dirname, '..', 'src', 'pipeline', 'requirements.ts')
+      .replaceAll(path.sep, '/');
+    const script = path.join(home, 'advance-locked.mjs');
+    await writeFile(
+      script,
+      `const { writeFile } = await import('node:fs/promises');\n` +
+        `const { advanceBaseline, hashRequirements } = await import('file://${module}');\n` +
+        `const [title, body, started, advanced] = process.argv.slice(2);\n` +
+        // The marker says that the process is about to advance the baseline.
+        `await writeFile(started, 'started');\n` +
+        `await advanceBaseline({\n` +
+        `  repository: 'owner/name',\n` +
+        `  number: 7,\n` +
+        `  url: 'https://github.com/owner/name/issues/7',\n` +
+        `  title,\n` +
+        `  body,\n` +
+        `  hash: hashRequirements(title, body),\n` +
+        `  status: 'initial',\n` +
+        `  observedAt: '2026-06-01T00:00:00.000Z',\n` +
+        `});\n` +
+        `await writeFile(advanced, 'advanced');\n`,
+      'utf-8',
+    );
+
+    // The lock of the store is held by this process: the second process must
+    // wait for it, and the store must stay untouched until it is free.
+    const lock = await acquireLock(getRequirementsDir(), REQUIREMENTS_LOCK, { timeoutMs: 30_000 });
+    const child = spawn(
+      process.execPath,
+      ['--import', 'tsx', script, ISSUE_TITLE, `${ISSUE_BODY} Newer.`, started, advanced],
+      {
+        cwd: path.resolve(import.meta.dirname, '..'),
+        env: { ...process.env, TEN_X_CHAT_HOME: home },
+        stdio: 'ignore',
+      },
+    );
+    try {
+      // The child is running and waits for the lock of the store.
+      await waitForFile(started);
+      await sleep(600);
+      expect(await exists(advanced)).toBe(false);
+      expect(await exists(baselineFile())).toBe(false);
+
+      // The lock is free: the child writes the baseline.
+      await lock.release();
+      await waitForFile(advanced);
+      const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+      expect(baseline.hash).toBe(newer);
+    } finally {
+      await lock.release().catch(() => {});
+      child.kill();
+    }
   });
 
   it('fails the collection when the stored baseline cannot be read', async () => {
