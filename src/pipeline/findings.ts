@@ -372,12 +372,6 @@ export function extractJson(text: string, key?: string): unknown {
   return objects ?? parsed[0];
 }
 
-/** One payload of an answer, with what was read out of it. */
-interface CandidateChoice<T extends { invalid: string[] }> {
-  candidate: JsonCandidate;
-  parsed: T;
-}
-
 /** The entries of a payload — an array of them, or the list under a key. */
 function entriesOf(payload: unknown, key: string): unknown[] | undefined {
   if (Array.isArray(payload)) return payload;
@@ -398,98 +392,6 @@ function keyedEntries(payload: unknown, key: string): unknown[] | undefined {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
   const entries = (payload as Record<string, unknown>)[key];
   return Array.isArray(entries) ? entries : undefined;
-}
-
-/**
- * The entries of a payload.
- *
- * A payload that carries the key of the format is read under that key; a bare
- * list is read as it is. A payload of another shape is no payload of entries.
- */
-function payloadEntries(
-  payload: unknown,
-  key: string,
-): { entries: unknown[]; keyed: boolean } | undefined {
-  const keyed = keyedEntries(payload, key);
-  if (keyed !== undefined) return { entries: keyed, keyed: true };
-  if (Array.isArray(payload)) return { entries: payload, keyed: false };
-  return undefined;
-}
-
-/**
- * The keys of a decision that no finding carries — an entry that carries one
- * of them and no key of a finding is a decision, not a finding.
- *
- * The evidence is in both: a decision cites its evidence as a string, a
- * finding as a list.
- */
-const DECISION_KEYS = ['kind', 'decision', 'previous', 'consequence', 'confirmation'];
-
-/**
- * The keys of a finding that no decision carries.
- */
-const FINDING_KEYS = [
-  'title',
-  'severity',
-  'category',
-  'problem',
-  'impact',
-  'fix',
-  'file',
-  'line',
-  'endLine',
-];
-
-/**
- * Whether an entry looks like a decision.
- *
- * The answer of the architecture pass carries the decisions under their own
- * key, and the array of them is a JSON value of its own: a bare list of
- * decisions must not be read as a bare list of findings.
- */
-function looksLikeDecision(entry: unknown): boolean {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-  const value = entry as Record<string, unknown>;
-  if (FINDING_KEYS.some((key) => key in value)) return false;
-  return DECISION_KEYS.some((key) => key in value);
-}
-
-/**
- * The payloads of an answer that may carry entries.
- *
- * The payloads of both shapes are read into one pool: a payload that carries
- * the key must not hide a bare list that carries the findings — the answer
- * would then be read as an empty review. A bare list is a list of entries only
- * when it carries objects that are not payloads themselves: a list of strings
- * is a list of the prose, and a list of payloads is a container of payloads.
- */
-function payloadChoices<T extends { invalid: string[] }>(
-  candidates: JsonCandidate[],
-  key: string,
-  parse: (entries: unknown[]) => T,
-): CandidateChoice<T>[] {
-  const choices: CandidateChoice<T>[] = [];
-  for (const candidate of candidates) {
-    const payload = payloadEntries(candidate.value, key);
-    if (!payload) continue;
-    const carriesEntries = payload.entries.some(
-      (entry) =>
-        entry !== null &&
-        typeof entry === 'object' &&
-        !Array.isArray(entry) &&
-        !(key in (entry as Record<string, unknown>)) &&
-        !looksLikeDecision(entry),
-    );
-    if (!payload.keyed && !carriesEntries) {
-      // An empty list is an answer that carries no findings: the prompt asks
-      // for it, and a missing payload is not the same thing. A list that
-      // carries entries of the wrong shape is no answer, and it stays out.
-      if (payload.entries.length > 0) continue;
-    }
-    const parsed = parse(payload.entries);
-    choices.push({ candidate, parsed });
-  }
-  return choices;
 }
 
 /** A non-empty string, or undefined. */
@@ -881,8 +783,11 @@ const EXAMPLE_IE = 'ieabbreviation';
  * displaced by it, not even when it carries no findings: the prompt asks for
  * that payload, and it is the answer that says there is none.
  */
-function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined {
-  const eligible = candidates.filter((candidate) => carriesTheShapeOfAnAnswer(candidate.value));
+function answerCandidate(
+  candidates: JsonCandidate[],
+  carriesShape: (value: unknown) => boolean = carriesTheShapeOfAnAnswer,
+): JsonCandidate | undefined {
+  const eligible = candidates.filter((candidate) => carriesShape(candidate.value));
   // An example is not an answer. An answer that carries nothing but an
   // example has not answered, and the step of the reviewer fails: an example
   // that passes as the answer would pass the audit of a reviewer that never
@@ -918,6 +823,18 @@ function carriesTheShapeOfAnAnswer(value: unknown): boolean {
   // an answer whose findings are malformed is still the answer, and the
   // parser of the findings is the one that has to report it.
   return 'findings' in record || 'decisions' in record;
+}
+
+/** Whether a payload carries the shape of an answer of a verifier. */
+function carriesTheShapeOfAVerdictionAnswer(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length === 0 || value.every((entry) => !!entry && typeof entry === 'object');
+  }
+  if (!value || typeof value !== 'object') return false;
+  // The presence of the key marks the payload of the answer, not its value: a
+  // verdicts field that is not a list is a malformed answer, and it must not
+  // pass as an answer without verdicts.
+  return 'verdicts' in (value as Record<string, unknown>);
 }
 
 /** The decisions of one payload of an answer. */
@@ -1015,28 +932,38 @@ export function parseVerdicts(text: string): ParsedVerdicts {
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(candidates, 'verdicts', (entries) => parseVerdictEntries(entries));
-  if (choices.length === 0) {
-    return {
-      verdicts: [],
-      invalid: ['the answer contains no JSON payload of verdicts', ...notes],
-    };
-  }
   // The answer of a verifier is chosen like the answer of a reviewer: the last
   // payload that is not an example of the format. A payload that carries more
   // verdicts is not the answer — an example of the format may carry more than
   // the answer does, and a finding confirmed by an example is a finding that
   // nobody verified. An answer that carries nothing but an example has not
   // answered, and the step of the verifier fails.
-  const answers = choices.filter((choice) => !choice.candidate.example);
-  if (answers.length === 0) {
+  //
+  // The answer is chosen before it is read: a malformed answer is the answer,
+  // and it fails the step instead of falling back to an earlier payload. A
+  // verifier that answers "verdicts": "confirmed" would otherwise leave the
+  // finding confirmed by the example of the format.
+  const answer = answerCandidate(candidates, carriesTheShapeOfAVerdictionAnswer);
+  if (!answer) {
     return {
       verdicts: [],
       invalid: ['the answer contains no JSON payload of verdicts', ...notes],
     };
   }
-  const best = answers.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
-  return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
+  // A bare list is the answer of a verifier that answered without the key.
+  if (Array.isArray(answer.value)) {
+    const parsed = parseVerdictEntries(answer.value);
+    return { verdicts: parsed.verdicts, invalid: [...parsed.invalid, ...notes] };
+  }
+  const record = answer.value as Record<string, unknown>;
+  if (!Array.isArray(record.verdicts)) {
+    return {
+      verdicts: [],
+      invalid: ['the answer carries a verdicts field that is not a list of verdicts', ...notes],
+    };
+  }
+  const parsed = parseVerdictEntries(record.verdicts);
+  return { verdicts: parsed.verdicts, invalid: [...parsed.invalid, ...notes] };
 }
 
 /** The verdicts of one payload of an answer. */

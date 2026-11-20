@@ -3579,6 +3579,33 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid[0]).toContain('no JSON payload of verdicts');
   });
 
+  it('does not confirm a finding with an example of a malformed answer', () => {
+    // The example carries a confirmed verdict and the answer that follows is
+    // malformed: the answer is chosen before it is read, and the malformed
+    // answer fails the verification instead of falling back to the example.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      'And here is what I found:',
+      JSON.stringify({ verdicts: 'malformed' }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('not a list of verdicts');
+  });
+
+  it('fails a verification whose verdicts are not a list', () => {
+    // The answer of the verifier carries a verdicts field that is not a list:
+    // it is a malformed answer, and it settles nothing.
+    const parsed = parseVerdicts(JSON.stringify({ verdicts: 'confirmed' }));
+    expect(parsed.verdicts).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('not a list of verdicts');
+  });
+
   it('does not confirm a finding with an earlier payload of the verdicts', () => {
     // The answer comes last and carries no verdict: the payload that comes
     // first does not confirm the finding.

@@ -149,7 +149,10 @@ of a reviewer: the last one that is not an example of the format. A payload
 that carries more verdicts is not the answer — an example may carry more than
 the answer does, and a finding confirmed by an example is a finding that
 nobody verified. An answer that carries nothing but an example has not
-answered, and the step of the verifier fails.
+answered, and the step of the verifier fails. The answer is chosen before it is
+read: a malformed answer is the answer, and it fails the step instead of
+falling back to an earlier payload — a verifier whose `verdicts` field is not a
+list must not leave the finding confirmed by the example of the format.
 
 An answer that was cut off is not an answer: the findings it carries may be
 half of the review. The step of a reviewer or of a verifier whose answer came
