@@ -1010,6 +1010,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // The Issue is read again after the reviewers ran: a requirement that
   // changed in the meantime is a requirement the review did not judge, and
   // the baseline of the Issue moves only when the whole review finished.
+  // The move itself waits for the record of the run: a baseline that says
+  // "reviewed" without a review on the disk is a lie.
+  let pendingAdvance: { requirements: IssueRequirements; startedAt: number } | undefined;
   if (context?.requirements) {
     const checkStart = Date.now();
     const fresh = await checkFreshness(context.requirements, context.repoRoot);
@@ -1031,21 +1034,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         ),
       );
     } else {
-      try {
-        const advanced = await advanceBaseline(context.requirements);
-        // A newer snapshot of a concurrent run was kept: the baseline is up
-        // to date, and this run is not made older by it.
-        steps.push(step(UPDATE_REQUIREMENTS_STEP, 'passed', advanced.detail, updateStart));
-      } catch (error) {
-        steps.push(
-          step(
-            UPDATE_REQUIREMENTS_STEP,
-            'failed',
-            error instanceof Error ? error.message : String(error),
-            updateStart,
-          ),
-        );
-      }
+      pendingAdvance = { requirements: context.requirements, startedAt: updateStart };
     }
   }
 
@@ -1073,7 +1062,40 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   });
   steps.push(step('render-report', 'passed', 'the report of the run', renderStart));
 
-  await persistRun(run, options.runDir ?? getReviewDir(runId));
+  // The run is written before the baseline of the Issue moves: a review that
+  // could not be written did not happen, and its Issue was not reviewed.
+  const runDir = options.runDir ?? getReviewDir(runId);
+  await persistRun(run, runDir);
+
+  if (pendingAdvance) {
+    try {
+      const advanced = await advanceBaseline(pendingAdvance.requirements);
+      // A newer snapshot of a concurrent run was kept: the baseline is up
+      // to date, and this run is not made older by it.
+      steps.push(
+        step(UPDATE_REQUIREMENTS_STEP, 'passed', advanced.detail, pendingAdvance.startedAt),
+      );
+    } catch (error) {
+      steps.push(
+        step(
+          UPDATE_REQUIREMENTS_STEP,
+          'failed',
+          error instanceof Error ? error.message : String(error),
+          pendingAdvance.startedAt,
+        ),
+      );
+    }
+    // The record of the run must say what happened to the baseline of the
+    // Issue: the run on the disk is the one of the finished review.
+    const after = verdictOf(run);
+    run.verdict = after.verdict;
+    run.verdictReason = after.reason;
+    run.report = renderReviewReport(run, {
+      backendLabel: options.backendLabel ?? backend.name,
+    });
+    run.finishedAt = new Date().toISOString();
+    await persistRun(run, runDir);
+  }
   return run;
 }
 

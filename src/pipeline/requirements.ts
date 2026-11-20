@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { acquireLock } from '../core/lock.js';
 import { getRequirementsDir } from '../paths.js';
@@ -199,6 +200,27 @@ function snapshotPath(repository: string, number: number): string {
 }
 
 /**
+ * The store of the snapshots must not hold a symbolic link.
+ *
+ * The path of a snapshot is built from the repository and the number of the
+ * Issue, and both `chmod()` and `readFile()` follow a link: a link in the store
+ * would take the run outside of it and change the mode of a file that has
+ * nothing to do with the requirements. A store that holds one is refused.
+ */
+async function refuseLinks(file: string): Promise<void> {
+  const root = getRequirementsDir();
+  const parts = path.relative(root, file).split(path.sep);
+  let current = root;
+  for (const part of ['', ...parts]) {
+    if (part !== '') current = path.join(current, part);
+    const info = await lstat(current).catch(() => undefined);
+    if (info?.isSymbolicLink()) {
+      throw new Error(`the store of the requirements must not hold a symbolic link: ${current}`);
+    }
+  }
+}
+
+/**
  * The privacy of the store — the directories are private, the file is private.
  *
  * The mode is enforced before the read as well as before the write: a snapshot
@@ -234,10 +256,18 @@ export async function readBaseline(
   number: number,
 ): Promise<StoredSnapshot | undefined> {
   const file = snapshotPath(repository, number);
-  await enforcePrivacy(file);
   let content: string;
   try {
-    content = await readFile(file, 'utf-8');
+    await refuseLinks(file);
+    await enforcePrivacy(file);
+    // The file is opened without following a link: the store holds the
+    // snapshot of the Issue, and nothing else.
+    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      content = await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new Error(`Cannot read the snapshot of the issue #${number}: ${String(error)}`);
@@ -391,6 +421,9 @@ export async function advanceBaseline(
       };
     }
     const file = snapshotPath(requirements.repository, requirements.number);
+    // The store holds the snapshot of the Issue: a link in it would take the
+    // write outside of the store.
+    await refuseLinks(file);
     await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') await chmod(path.dirname(file), 0o700);
     await writeSnapshot(file, requirements);

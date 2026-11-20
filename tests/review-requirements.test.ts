@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -447,6 +457,33 @@ describe('the requirements of a review', () => {
     if (process.platform !== 'win32') {
       expect((await stat(baselineFile())).mode & 0o777).toBe(0o600);
     }
+    // The record of the run says that the baseline moved.
+    const stored = JSON.parse(
+      await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
+    );
+    const update = stored.steps.find(
+      (candidate: { id: string }) => candidate.id === 'update-requirements',
+    );
+    expect(update?.status).toBe('passed');
+  });
+
+  it('does not advance the baseline when the run cannot be written', async () => {
+    await fakeGh({});
+    // The directory of the run cannot be created: the review cannot be
+    // recorded, and a review that was not recorded was not reviewed.
+    const blocker = path.join(home, 'blocker');
+    await writeFile(blocker, 'not a directory', 'utf-8');
+
+    await expect(
+      runReviewPipeline({
+        backend: quietBackend(),
+        target: { cwd: repo, pr: 42, issue: 7 },
+        collect: async () => contextOf(requirementsOf()),
+        runDir: path.join(blocker, 'run'),
+      }),
+    ).rejects.toThrow();
+
+    await expect(readFile(baselineFile(), 'utf-8')).rejects.toThrow();
   });
 
   it('does not advance the baseline when the review is incomplete', async () => {
@@ -742,6 +779,32 @@ describe('the requirements of a review', () => {
       child.kill();
       await exited;
     }
+  });
+
+  it('refuses a snapshot that is a symbolic link', async () => {
+    await fakeGh({});
+    const secret = path.join(home, 'secret.json');
+    await writeFile(secret, '{"private":"data"}', 'utf-8');
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await symlink(secret, baselineFile());
+
+    // The link points outside of the store: the run must not read it, and it
+    // must not change the mode of the file it points to.
+    await expect(readBaseline('owner/name', 7)).rejects.toThrow(/symbolic link/);
+    await expect(collectReviewContext({ cwd: repo, pr: 42, issue: 7 })).rejects.toThrow(
+      /symbolic link/,
+    );
+    expect((await stat(secret)).mode & 0o777).toBe(0o644);
+  });
+
+  it('refuses a store whose directory is a symbolic link', async () => {
+    await fakeGh({});
+    const elsewhere = path.join(home, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    await mkdir(path.join(home, 'requirements'), { recursive: true });
+    await symlink(elsewhere, path.join(home, 'requirements', 'owner'));
+
+    await expect(readBaseline('owner/name', 7)).rejects.toThrow(/symbolic link/);
   });
 
   it('makes the store private when it reads a snapshot', async () => {

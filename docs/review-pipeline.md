@@ -184,13 +184,21 @@ Two rules keep the baseline honest:
   when every step of the review passed. A run that asked for changes did
   judge the requirements, and it advances the baseline; a run whose reviewer
   failed, whose verification was incomplete or whose Issue changed in the
-  meantime did not.
+  meantime did not. The run is written to its directory before the baseline
+  moves: a review that could not be recorded did not happen, and a baseline
+  that says "reviewed" without a review on the disk is a lie. The record of
+  the run is written again with the outcome of the move.
 - **An older run does not overwrite a newer one.** The snapshot carries the
   moment the Issue was observed, and the write happens under the lock of the
   directory: a run that observed the Issue earlier than the stored snapshot
   keeps the newer one. Two observations of the same millisecond cannot be
   ordered, and the stored snapshot is kept then — a tie never lets an
   observation that may be the older one overwrite the newer requirements.
+
+The store holds no symbolic link: `chmod()` and `readFile()` follow a link,
+and a link in the store would take the run outside of it and change the mode
+of a file that has nothing to do with the requirements. A snapshot that is a
+link is refused, and the file is opened without following a link.
 
 The stored snapshot is checked before it is read as a baseline: its version,
 every field and the agreement of its fields with each other. Its hash must
