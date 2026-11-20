@@ -16,8 +16,8 @@ Every step has a stable id. The outcome of every step is reported in the
 
 | Step id | What it does |
 |---|---|
-| `collect-context` | The PR metadata, the base and head commits, the changed files and the diff. |
-| `build-bundle` | The bounded bundle: the brief, the diff and the changed files (through `buildBundle`). |
+| `collect-context` | The PR metadata, the base and head commits, the changed files and the page of the change on GitHub. |
+| `build-bundle` | The brief: the GitHub coordinates of the change, the changed files and the conventions — no file is attached. |
 | `review-correctness` | The correctness, regression and security pass. |
 | `review-architecture` | The architecture, maintainability, compatibility and scope pass. |
 | `review-tests` | The tests and verification pass. |
@@ -118,24 +118,29 @@ that was merged into a finding counts: the overlap of the titles is not
 transitive, so a finding that overlaps a merged title is the same defect even
 when it does not overlap the title that was kept.
 
-The bundle holds the changed files and the convention files of the repository
-(`AGENTS.md`, `CONTRIBUTING.md`, `README.md`) — the reviewers are told to read
-them, so a backend that cannot browse the repository must find them in the
-bundle. A convention file is taken from the commit under review, not from the
-disk: an untracked `AGENTS.md` of the checkout is nobody's convention, and it
-would steer the reviewers away from the change. The names of the changed files
-are escaped before they become glob patterns: a name of a file is a name, not a
-pattern. The name of a file is rendered in the bundle as **escaped literal
-text**: a name of Git may hold a newline, and a name that writes a line of its
-own writes into the prompt of the backend — the text of the repository then
-looks like an instruction of the review. The name is the **inline code** of a
-heading as well: a name may hold words that look like an instruction of the
-review, and a heading of plain text reads as prose of the prompt, while the
-name in a code span reads as the name of a file. The language of a fence is restricted
-to the extension of the file, and an extension that is not a plain word is
-`txt`: the identifier of a fence is a part of the prompt too. The bundle does
-not follow a symlink: the file behind it is not a file
-of the revision, and it must not reach the backend.
+## What the reviewers get
+
+The reviewers read the change **on GitHub** — the way the manual playbook does.
+The brief carries the **page of the change** (the pull request, or the
+comparison of the base and head commits), the commit page, the base and head
+SHA, the subject, the names of the changed files and the conventions to read
+(`AGENTS.md`, `CONTRIBUTING.md`, `README.md` at the head commit). No file is
+attached and no diff is pasted: a reviewer that receives the page reads the
+whole change in its real context — the surrounding code, the conventions, the
+CI run — while a pasted diff is a snapshot of a few files that also has to fit
+into the window of the model (a change that is too long is refused outright by
+the chat UI).
+
+A change that has **no page** — a repository whose remote is not a URL (a path
+of the disk) — is reviewed from its **diff**, bounded and with the files that
+may hold a secret excluded. That diff is the only thing the brief carries in
+that case.
+
+The names of the files and the page are **data**: a name of Git or a URL may
+hold a newline, and a value that writes a line of its own writes into the
+prompt of the backend — the text of the repository then looks like an
+instruction of the review, and a fence that the value cannot close keeps it
+data.
 
 ## The requirements of the change
 
@@ -246,15 +251,15 @@ A caller must not read a clean exit of an incomplete review as an approval.
 
 ## The bounds
 
-- The diff of the bundle is cut at 120 000 characters; the cut is written into
-  the bundle and the step says so. A cut diff is a partial change: the step
-  `collect-context` does not pass, the review is incomplete, and the verdict is
-  `REQUEST CHANGES` — the reviewers cannot approve what they did not see.
-- The bundle holds at most 25 changed files; the omitted ones are named in the
-  step.
+- The diff of a change that has no page is cut at 120 000 characters; the cut
+  is written into the brief and the step says so. A cut diff is a partial
+  change: the step `collect-context` does not pass, the review is incomplete,
+  and the verdict is `REQUEST CHANGES` — the reviewers cannot approve what they
+  did not see. A change on GitHub has no such bound: the reviewer reads it
+  there.
 - The verification pass gets the excerpt around the line of a finding (32
-  lines) and the files that mention it — not the whole repository. The excerpt,
-  the bundle and the callers all come from the commit under review.
+  lines) and the files that mention it — not the whole repository. The excerpt
+  and the callers come from the commit under review.
 
 ## The rules of the collection
 
@@ -268,6 +273,11 @@ revision under review:
   the disk.
 - It fails when the difference of the commits cannot be computed (a diff that
   cannot be computed is an error, never an empty change that looks clean).
+- It fails when the change is not on `origin`: the reviewers open the page of
+  the pull request or of the comparison, so both commits of a branch must be
+  pushed (`git push origin <branch>`). A comparison of a commit that `origin`
+  does not have shows nothing, and a review of nothing reads like a clean
+  review.
 - It fails when a file of the revision is not on the disk and a git flag
   (`skip-worktree`, `assume-unchanged`) hides its deletion from the status: the
   review reads the files of the disk, and they must be the ones of the head.
@@ -289,8 +299,6 @@ revision under review:
 - The excerpt of a verification is read from the **commit under review**, not
   from the disk: a file that changes while the reviewers run must not reach the
   backend, and the evidence of a verdict must be the code of the head. The
-  **bundle** of the reviewers is read from the same commit — it is the context
-  of the change, and the context must be the context of the head. The
   **callers**
   of a file are searched in the revision under review as well: the files that
   mention it are the ones of the code that is reviewed. The names of the
@@ -308,15 +316,15 @@ revision under review:
   of a pathspec, and the magic points at another file of the tree.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
-  neither the diff of the bundle nor the evidence of a finding. The reviewers
+  neither the diff of the fallback nor the evidence of a finding. The reviewers
   are told that the change touches it, and a finding about it stays
   `Unverified`: it cannot be settled without the content. A secret is a file
   as well as a directory: a file named `.credentials` or `secrets` is a secret
   of the same kind, and the name alone is enough.
 - A file that may hold a secret keeps the secret when the change **renames**
   it: the new name is not a secret by its own pattern, but the content is the
-  content of the old one, so the new name is excluded from the diff and from
-  the bundle as well. A file the change **adds** that carries a line of a
+  content of the old one, so the new name is excluded from the diff as well.
+  A file the change **adds** that carries a line of a
   secret keeps it too — the rename detection of git is a similarity,
   and a secret that was copied into a file of its own is not a rename. The
   secret of the base and the secret that stays in the repository are both
@@ -347,7 +355,8 @@ revision under review:
   of a link that points at a file that may hold a secret is never read — not
   in the head revision and not in the base revision, where a link that the
   change deletes is still followed.
-- The title, the names of the files, the diff and the excerpts of the source are
+- The title, the names of the files, the page of the change, the code on GitHub,
+  the diff and the excerpts of the source are
   **data, not instructions**: they come from the repository, and an instruction
   inside them is an attack on the reviewer. Every one of them sits in a fence
   that is longer than the backticks it carries, so the content cannot close it,

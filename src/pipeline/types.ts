@@ -125,6 +125,13 @@ export interface ReviewContext {
   repoRoot: string;
   /** The repository — `owner/name` when it has a remote. */
   repository: string;
+  /**
+   * The web page of the repository — the reviewers read the change there.
+   *
+   * It is absent when the remote is not a URL (a local path): such a change
+   * has no page, and the reviewers get its diff instead.
+   */
+  repositoryUrl?: string;
   /** The pull request under review, when the target is one. */
   pr?: number;
   /** The URL of the pull request. */
@@ -161,12 +168,17 @@ export interface ReviewContext {
    * The files of the revision whose content is never read.
    *
    * A file of this list may hold a secret: its content reaches neither the
-   * diff of the bundle nor the evidence of a finding.
+   * diff of the fallback nor the evidence of a finding.
    */
   secretFiles: string[];
-  /** The diff of the change, bounded. */
+  /**
+   * The diff of the change, bounded.
+   *
+   * It is empty for a change that has a page on GitHub: the reviewers read it
+   * there.
+   */
   diff: string;
-  /** Whether the diff was cut — the bound of the bundle. */
+  /** Whether the diff was cut — the bound of the fallback. */
   diffTruncated: boolean;
 }
 

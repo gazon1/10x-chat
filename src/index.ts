@@ -31,11 +31,7 @@ export {
   runBackendChat,
   runChat,
 } from './core/index.js';
-export {
-  collectReviewContext,
-  MAX_CONTEXT_FILES,
-  MAX_DIFF_CHARS,
-} from './pipeline/context.js';
+export { collectReviewContext, MAX_DIFF_CHARS } from './pipeline/context.js';
 export {
   dedupeFindings,
   findingId,
