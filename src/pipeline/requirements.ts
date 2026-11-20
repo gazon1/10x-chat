@@ -176,7 +176,14 @@ export async function fetchIssue(
 
 /** The repository of an Issue — `owner/name`, and nothing else. */
 export function assertRepository(repository: string): void {
-  if (!/^[^/\s]+\/[^/\s]+$/.test(repository)) {
+  const parts = repository.split('/');
+  // A `.` or a `..` is a name of a directory, not a name of a repository: the
+  // path of the snapshot is built from the two parts, and a `..` in one of them
+  // would take the store of the snapshots out of the store.
+  if (
+    parts.length !== 2 ||
+    parts.some((part) => part === '' || part === '.' || part === '..' || /\s/.test(part))
+  ) {
     throw new Error(
       `The repository of the issue is unknown (${repository}) — the checkout must have an origin remote of the form owner/name.`,
     );
@@ -191,12 +198,18 @@ function safePart(part: string): string {
 /** The file of the snapshot of an Issue. */
 function snapshotPath(repository: string, number: number): string {
   const [owner, name] = repository.split('/');
-  return path.join(
-    getRequirementsDir(),
-    safePart(owner ?? ''),
-    safePart(name ?? ''),
-    `${number}.json`,
-  );
+  const root = getRequirementsDir();
+  const file = path.join(root, safePart(owner ?? ''), safePart(name ?? ''), `${number}.json`);
+  // The path of the snapshot stays inside the store: the name of a repository
+  // comes from the remote of the checkout, and a remote that names a directory
+  // of the parent would read and write outside of the store.
+  const relative = path.relative(path.resolve(root), path.resolve(file));
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(
+      `The repository of the issue (${repository}) does not name a place in the store of the snapshots.`,
+    );
+  }
+  return file;
 }
 
 /**

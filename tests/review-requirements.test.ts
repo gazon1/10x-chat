@@ -818,6 +818,33 @@ describe('the requirements of a review', () => {
     await expect(readBaseline('owner/name', 7)).rejects.toThrow(/must hold a file/);
   });
 
+  it('refuses a repository that would take the store of the snapshots out of the store', async () => {
+    await fakeGh({});
+    // The name of the repository is built from the remote of the checkout, and
+    // a remote that names a directory of the parent would put the path of the
+    // snapshot outside of the store.
+    await gitIn(repo, 'remote', 'set-url', 'origin', 'https://github.com/../victim');
+
+    await expect(collectReviewContext({ cwd: repo, pr: 42, issue: 7 })).rejects.toThrow(
+      /The repository of the issue is unknown/,
+    );
+    // Nothing was written outside of the store.
+    await expect(access(path.join(home, 'victim', '7.json'))).rejects.toThrow();
+  });
+
+  it('never reads a snapshot outside of the store', async () => {
+    const outside = path.join(home, 'victim');
+    await mkdir(outside, { recursive: true });
+    const file = path.join(outside, '7.json');
+    await writeFile(file, '{"private":"data"}', 'utf-8');
+
+    await expect(readBaseline('../victim', 7)).rejects.toThrow(
+      /does not name a place in the store/,
+    );
+    // The file outside of the store was not read and its mode was not changed.
+    expect((await stat(file)).mode & 0o777).toBe(0o644);
+  });
+
   it('makes the store private when it reads a snapshot', async () => {
     const file = baselineFile();
     const dir = path.dirname(file);

@@ -178,6 +178,11 @@ users of the machine. It says whether the Issue is seen for the first time
 did (`changed`). A changed Issue is named as changed in the context and in the
 report, and the reviewers get its complete current body.
 
+The name of the repository comes from the remote of the checkout, and it names
+a place inside the store: a name that carries a `..` is refused, and the path
+of the snapshot is checked to stay under `~/.10x-chat/requirements` before it
+is read or written.
+
 Two rules keep the baseline honest:
 
 - **A run that did not finish does not advance it.** The baseline moves only
