@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/index.js';
 import { collectReviewContext } from '../src/pipeline/context.js';
 import { findingId } from '../src/pipeline/findings.js';
-import { advanceBaseline, hashRequirements, parseIssue } from '../src/pipeline/requirements.js';
+import {
+  advanceBaseline,
+  collectRequirements,
+  hashRequirements,
+  parseIssue,
+} from '../src/pipeline/requirements.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { IssueRequirements, ReviewContext } from '../src/pipeline/types.js';
 
@@ -77,6 +82,8 @@ async function fakeGh(options: {
   issueRaw?: string;
   /** The read of the Issue that fails and every read after it. */
   issueFailFromCall?: number;
+  /** The `gh` that never answers. */
+  issueHangs?: boolean;
 }): Promise<{ log: string; issueFile: string }> {
   const bin = path.join(home, 'bin');
   await mkdir(bin, { recursive: true });
@@ -109,13 +116,16 @@ async function fakeGh(options: {
     await writeFile(issueFile, JSON.stringify(issue), 'utf-8');
   }
   const issueAnswer =
-    options.issueExit !== undefined
-      ? `printf 'no such issue' >&2\nexit ${options.issueExit}`
-      : options.issueFailFromCall !== undefined
-        ? // The reads are counted: the read of the number fails and every
-          // read after it fails too.
-          `n=$(cat "${log}.count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${log}.count"; if [ $n -ge ${options.issueFailFromCall} ]; then printf 'no such issue' >&2; exit 1; fi; cat "${issueFile}"`
-        : `cat "${issueFile}"`;
+    options.issueHangs === true
+      ? // The CLI that never answers: the run must not wait for it forever.
+        'sleep 30'
+      : options.issueExit !== undefined
+        ? `printf 'no such issue' >&2\nexit ${options.issueExit}`
+        : options.issueFailFromCall !== undefined
+          ? // The reads are counted: the read of the number fails and every
+            // read after it fails too.
+            `n=$(cat "${log}.count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${log}.count"; if [ $n -ge ${options.issueFailFromCall} ]; then printf 'no such issue' >&2; exit 1; fi; cat "${issueFile}"`
+          : `cat "${issueFile}"`;
   const file = path.join(bin, 'gh');
   await writeFile(
     file,
@@ -555,6 +565,67 @@ describe('the requirements of a review', () => {
     // approval, and the baseline of the issue stays where it was.
     expect(run.verdict).toBe('REQUEST CHANGES');
     await expect(readFile(baselineFile(), 'utf-8')).rejects.toThrow();
+  });
+
+  it('advances the baseline after a completed review that asked for changes', async () => {
+    await fakeGh({});
+    const major = { ...FINDING, severity: 'MAJOR' };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [major] }) },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: major.file, line: major.line, title: major.title }),
+              verdict: 'confirmed',
+              evidence: 'the excerpt of the file shows the defect',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    // The revision under review is a real commit: a finding that points at a
+    // file of it is judged, and a finding that points at a file that is not
+    // in it is rejected before the verifier is asked.
+    const headSha = await gitIn(repo, 'rev-parse', 'HEAD');
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo, pr: 42, issue: 7 },
+      collect: async () => ({ ...contextOf(requirementsOf()), headSha }),
+    });
+
+    // The review finished: it judged the requirements, and the requirements
+    // it judged are the ones of the next review.
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.steps.every((step) => step.status === 'passed')).toBe(true);
+    const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+    expect(baseline.hash).toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
+  });
+
+  it('fails the collection when the stored baseline lost a field', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await writeFile(
+      baselineFile(),
+      JSON.stringify({ version: 1, repository: 'owner/name', number: 7, hash: 'abc' }),
+      'utf-8',
+    );
+
+    await expect(collectReviewContext({ cwd: repo, pr: 42, issue: 7 })).rejects.toThrow(
+      /another format/,
+    );
+  });
+
+  it('gives up on a gh that never answers', async () => {
+    await fakeGh({ issueHangs: true });
+
+    await expect(collectRequirements(7, 'owner/name', repo, { timeoutMs: 300 })).rejects.toThrow(
+      /did not answer within/,
+    );
   });
 
   it('leaves a review without an issue exactly as it was', async () => {

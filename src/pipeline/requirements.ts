@@ -25,6 +25,14 @@ const LOCK_NAME = 'requirements.lock';
 /** How long a run waits for the lock of the snapshots. */
 const LOCK_TIMEOUT_MS = 5_000;
 
+/**
+ * How long the `gh` CLI may take to answer.
+ *
+ * The CLI reads the Issue over the network: a run that waits for it forever
+ * never produces a report, and a review without a report is nothing.
+ */
+const GH_TIMEOUT_MS = 60_000;
+
 /** The Issue as `gh` answers it. */
 export interface IssueData {
   number: number;
@@ -93,17 +101,33 @@ export function parseIssue(payload: unknown, expected: number): IssueData {
 function runGh(
   args: string[],
   cwd: string,
+  timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
-    execFile('gh', args, { cwd, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
-      const code =
-        error && typeof (error as { code?: unknown }).code === 'number'
-          ? (error as { code: number }).code
-          : error
-            ? 1
-            : 0;
-      resolve({ stdout: String(stdout), stderr: String(stderr), code });
-    });
+    execFile(
+      'gh',
+      args,
+      { cwd, maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) => {
+        // A command that had to be killed answered nothing: it is a timeout,
+        // and the reason says so — the run must not wait for it any longer.
+        if (error && (error as { killed?: boolean }).killed) {
+          resolve({
+            stdout: '',
+            stderr: `gh did not answer within ${Math.round(timeoutMs / 1000)}s`,
+            code: 124,
+          });
+          return;
+        }
+        const code =
+          error && typeof (error as { code?: unknown }).code === 'number'
+            ? (error as { code: number }).code
+            : error
+              ? 1
+              : 0;
+        resolve({ stdout: String(stdout), stderr: String(stderr), code });
+      },
+    );
   });
 }
 
@@ -118,10 +142,12 @@ export async function fetchIssue(
   number: number,
   repository: string,
   cwd: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<IssueData> {
   const result = await runGh(
     ['issue', 'view', String(number), '--repo', repository, '--json', 'number,url,title,body'],
     cwd,
+    options.timeoutMs ?? GH_TIMEOUT_MS,
   );
   if (result.code !== 0) {
     const reason = result.stderr.trim() || result.stdout.trim() || 'gh is not available';
@@ -189,7 +215,18 @@ export async function readBaseline(
   }
   try {
     const parsed = JSON.parse(content) as StoredSnapshot;
-    if (parsed.version !== SNAPSHOT_VERSION || typeof parsed.hash !== 'string') {
+    // The whole snapshot is checked: a snapshot that lost a field is not a
+    // snapshot, and a snapshot that is read as one would let a run advance a
+    // baseline it cannot compare.
+    if (
+      parsed.version !== SNAPSHOT_VERSION ||
+      typeof parsed.hash !== 'string' ||
+      typeof parsed.observedAt !== 'string' ||
+      typeof parsed.repository !== 'string' ||
+      typeof parsed.number !== 'number' ||
+      typeof parsed.title !== 'string' ||
+      typeof parsed.body !== 'string'
+    ) {
       throw new Error('it has another format');
     }
     return parsed;
@@ -211,9 +248,10 @@ export async function collectRequirements(
   number: number,
   repository: string,
   cwd: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<IssueRequirements> {
   assertRepository(repository);
-  const issue = await fetchIssue(number, repository, cwd);
+  const issue = await fetchIssue(number, repository, cwd, options);
   const hash = hashRequirements(issue.title, issue.body);
   const observedAt = new Date().toISOString();
   const baseline = await readBaseline(repository, number);
