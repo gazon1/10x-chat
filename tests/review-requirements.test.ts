@@ -398,9 +398,13 @@ describe('the requirements of a review', () => {
       collect: async () => contextOf(requirementsOf()),
     });
 
-    // The three roles and the verification — four requests.
-    expect(prompts).toHaveLength(4);
-    for (const prompt of prompts) {
+    // The three roles and the verification get the requirements — four
+    // requests. The advisory assessment is the fifth one, and it is not one of
+    // them: it judges the completed review and not the Issue.
+    expect(prompts).toHaveLength(5);
+    const reviewers = prompts.filter((prompt) => !prompt.startsWith('# Follow-up improvements'));
+    expect(reviewers).toHaveLength(4);
+    for (const prompt of reviewers) {
       expect(prompt).toContain(ISSUE_BODY);
       expect(prompt).toContain('https://github.com/owner/name/issues/7');
     }

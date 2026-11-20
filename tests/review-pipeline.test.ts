@@ -360,7 +360,11 @@ describe('the review pipeline', () => {
       collect: async () => contextOf(),
     });
 
-    for (const prompt of prompts) {
+    // The advisory assessment is not a reviewer: it answers with its own
+    // payload and its own schema, and it is asked for nothing else.
+    const reviewers = prompts.filter((prompt) => prompt.startsWith('# Role:'));
+    expect(reviewers).toHaveLength(3);
+    for (const prompt of reviewers) {
       expect(prompt).not.toContain('return an empty array');
       expect(prompt).toContain(
         'return "findings": [] and still report every consequential decision',
