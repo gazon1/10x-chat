@@ -366,6 +366,35 @@ describe('the review pipeline', () => {
     expect(run.findings).toHaveLength(0);
   });
 
+  it('fails the step when an example of the format hides a malformed answer', async () => {
+    // The example of the format passes the schema, the answer that follows is
+    // malformed: the step fails and the review carries no finding, instead of
+    // reporting the example as a finding of the review.
+    const backend = createFakeBackend([
+      {
+        prompt: '# Role: correctness',
+        answer: [
+          'The format I use is:',
+          answerWith([{ ...FINDING, title: 'an example of the format' }]),
+          'And here is what I found:',
+          answerWith([{ title: 'A malformed entry' }]),
+        ].join('\n'),
+      },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-correctness');
+    expect(step?.status).toBe('failed');
+    expect(run.findings).toHaveLength(0);
+  });
+
   it('does not confirm a finding because the model says so', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
@@ -602,6 +631,29 @@ describe('the review pipeline', () => {
     expect(run.report).not.toContain('![pixel]');
     expect(run.report).not.toContain('[Open]');
     expect(run.report).toContain('\\!\\[pixel\\]');
+  });
+
+  it('keeps a bare URL of a reviewer from becoming a link of the report', async () => {
+    // A bare URL is a link of a report that is opened in a viewer: the link
+    // of a reviewer must never become a link of the report.
+    const loud = {
+      ...FINDING,
+      problem: 'The input of run() reaches exec(); see https://attacker.example/payload.',
+    };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([loud]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).not.toContain('https://attacker.example');
+    expect(run.report).toContain('https\\://attacker.example');
   });
 
   it('clears the C1 control characters of a reviewer from the report', async () => {
@@ -1289,6 +1341,21 @@ describe('the review pipeline', () => {
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].title).toBe(FINDING.title);
+    expect(parsed.invalid.length).toBeGreaterThan(0);
+  });
+
+  it('does not let an example of the format hide a malformed answer', () => {
+    // The example of the format comes first and passes the schema, the answer
+    // comes last and is malformed: the answer is the payload that is read, and
+    // its malformed entry fails the step instead of being dropped silently.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [{ ...FINDING, title: 'an example of the format' }] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [{ title: 'a malformed entry' }] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(0);
     expect(parsed.invalid.length).toBeGreaterThan(0);
   });
 
@@ -3238,5 +3305,18 @@ describe('the context of a review', () => {
 
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0]?.title).toBe(finding.title);
+  });
+
+  it('reads a payload whose evidence holds a run of backticks', async () => {
+    // The fence of Markdown is closed by a run that stands on a line of its
+    // own: a run of backticks inside the payload of a finding is its
+    // evidence, not the end of the block.
+    const finding = { ...FINDING, evidence: ['const a = 1; ```js'] };
+    const answer = ['```json', JSON.stringify({ findings: [finding] }), '```'].join('\n');
+
+    const parsed = parseReviewerFindings(answer, 'correctness');
+
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0]?.evidence).toEqual(finding.evidence);
   });
 });

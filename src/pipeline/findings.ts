@@ -158,7 +158,7 @@ function fencesOf(text: string): Fence[] {
     tag.lastIndex = start;
     let contentStart = start + (tag.exec(text)?.[0].length ?? 0);
     while (text[contentStart] === ' ' || text[contentStart] === '\t') contentStart += 1;
-    const close = closingFence(text, contentStart, opening);
+    const close = closingFence(text, contentStart, opening, lineStart(text, open));
     if (!close) break;
     // A block that holds nothing but its info string is the info string
     // itself — a payload of `true` is a payload, not a language.
@@ -173,11 +173,19 @@ function fencesOf(text: string): Fence[] {
   return fences;
 }
 
-/** The run of backticks that closes a fence, if the answer carries one. */
+/**
+ * The run of backticks that closes a fence, if the answer carries one.
+ *
+ * A fence of Markdown is closed by a run that stands on a line of its own:
+ * only whitespace may follow it, and nothing but whitespace may come
+ * before it. The fence of a payload that a model wrote in its sentence is
+ * the one exception — it is closed on the line of its opening.
+ */
 function closingFence(
   text: string,
   from: number,
   opening: number,
+  openLine: number,
 ): { start: number; end: number } | undefined {
   let index = from;
   while (index < text.length) {
@@ -185,10 +193,31 @@ function closingFence(
     if (at < 0) return undefined;
     let run = 0;
     while (text[at + run] === '`') run += 1;
-    if (run >= opening) return { start: at, end: at + run };
+    if (run >= opening && closesTheLine(text, at, at + run, openLine)) {
+      return { start: at, end: at + run };
+    }
     index = at + run;
   }
   return undefined;
+}
+
+/** Whether a run of backticks stands where the fence of Markdown may end. */
+function closesTheLine(text: string, start: number, end: number, openLine: number): boolean {
+  const line = lineStart(text, start);
+  // Nothing but whitespace after the run on its line.
+  const rest = text.slice(end);
+  const newline = rest.indexOf('\n');
+  const tail = newline < 0 ? rest : rest.slice(0, newline);
+  if (tail.trim() !== '') return false;
+  // Nothing but whitespace before it — or the fence is closed on the line of
+  // its opening, which is the fence of a payload in a sentence.
+  if (text.slice(line, start).trim() === '') return true;
+  return line === openLine;
+}
+
+/** The offset of the start of the line the offset is on. */
+function lineStart(text: string, at: number): number {
+  return text.lastIndexOf('\n', at - 1) + 1;
 }
 
 /**
@@ -303,8 +332,6 @@ interface CandidateChoice<T extends { invalid: string[] }> {
   parsed: T;
   /** The entries of the payload. */
   count: number;
-  /** The entries of the payload that pass the schema. */
-  valid: number;
   /** The payload carries its entries under a key — the format of the answer. */
   keyed: boolean;
 }
@@ -312,24 +339,23 @@ interface CandidateChoice<T extends { invalid: string[] }> {
 /**
  * The better of two candidates.
  *
- * The payload that carries more of the answer wins: the entries that pass the
- * schema are the answer, the example of the schema is not. An empty payload is
- * an example of the format and must not hide a payload that carries something
- * — not even a payload whose entries are malformed, because a malformed answer
- * is a failed step, not an empty review. A fenced payload beats an unfenced
- * one, and a later payload beats an earlier one — a model that repeats the
- * format of the answer puts the format first. The payload under a key wins the
- * last tie only: it is the format of the answer, and a bare list is its
- * fallback — never a way to hide a payload that carries the findings.
+ * The payload that carries more of the answer wins: an empty payload is an
+ * example of the format and must not hide a payload that carries something —
+ * not even a payload whose entries are malformed, because a malformed answer
+ * is a failed step, not an empty review. A later payload beats an earlier one
+ * — a model that repeats the format of the answer puts the format first, and
+ * the answer that follows is the one that counts. The schema of an entry does
+ * not decide: a payload whose entries pass the schema is not the answer when
+ * a later payload carries the answer itself, and the malformed entries of
+ * that payload fail the step instead of being silently dropped. A fenced
+ * payload beats an unfenced one, and the payload under a key wins the last tie
+ * only: it is the format of the answer, and a bare list is its fallback —
+ * never a way to hide a payload that carries the findings.
  */
 function betterCandidate<T extends { invalid: string[] }>(
   a: CandidateChoice<T>,
   b: CandidateChoice<T>,
 ): CandidateChoice<T> {
-  if (a.valid !== b.valid) return a.valid > b.valid ? a : b;
-  const aEmpty = a.count === 0;
-  const bEmpty = b.count === 0;
-  if (aEmpty !== bEmpty) return aEmpty ? b : a;
   // The payload that carries more is the answer: a payload whose entries are
   // malformed must not hide behind a smaller one, or the defect it carries
   // disappears from the review without a word.
@@ -393,7 +419,6 @@ function payloadChoices<T extends { invalid: string[] }>(
   candidates: JsonCandidate[],
   key: string,
   parse: (entries: unknown[]) => T,
-  validOf: (parsed: T) => number,
 ): CandidateChoice<T>[] {
   const choices: CandidateChoice<T>[] = [];
   for (const candidate of candidates) {
@@ -412,7 +437,6 @@ function payloadChoices<T extends { invalid: string[] }>(
       candidate,
       parsed,
       count: payload.entries.length,
-      valid: validOf(parsed),
       keyed: payload.keyed,
     });
   }
@@ -548,10 +572,12 @@ export function normalizeTitle(title: string): string {
  * promoted.
  *
  * An answer may carry more than one payload: an example of the schema in the
- * prose of the answer is one of them. The payload whose entries pass the
- * schema wins — an example of a finding does not. The payloads of both shapes
- * are read into one pool: a payload under the key of the format must not hide
- * a bare list that carries the findings.
+ * prose of the answer is one of them. The payload that carries the answer is
+ * the one that is read — the example of a finding does not carry it, and a
+ * malformed answer fails the step instead of being hidden by an example that
+ * happens to pass the schema. The payloads of both shapes are read into one
+ * pool: a payload under the key of the format must not hide a bare list that
+ * carries the findings.
  */
 export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFindings {
   const { candidates, exhausted } = jsonCandidates(text);
@@ -563,11 +589,8 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(
-    candidates,
-    'findings',
-    (entries) => parseFindingEntries(entries, role),
-    (parsed) => parsed.findings.length,
+  const choices = payloadChoices(candidates, 'findings', (entries) =>
+    parseFindingEntries(entries, role),
   );
   if (choices.length === 0) {
     return {
@@ -644,8 +667,8 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
  * A verdict without an id belongs to no finding, and a verdict without a
  * state is no verdict: both are invalid.
  *
- * An answer may carry more than one payload: the payload whose entries pass
- * the schema wins.
+ * An answer may carry more than one payload: the payload that carries the
+ * answer is the one that is read.
  */
 export function parseVerdicts(text: string): ParsedVerdicts {
   const { candidates, exhausted } = jsonCandidates(text);
@@ -654,12 +677,7 @@ export function parseVerdicts(text: string): ParsedVerdicts {
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(
-    candidates,
-    'verdicts',
-    (entries) => parseVerdictEntries(entries),
-    (parsed) => parsed.verdicts.length,
-  );
+  const choices = payloadChoices(candidates, 'verdicts', (entries) => parseVerdictEntries(entries));
   if (choices.length === 0) {
     return {
       verdicts: [],

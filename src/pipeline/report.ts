@@ -119,11 +119,15 @@ function html(value: string): string {
  * A reviewer is an untrusted source: its text may hold the markup of
  * Markdown, and a report that is opened in a viewer renders it — a link or an
  * image of the reviewer becomes a link or an image of the report, and a line
- * break of the reviewer becomes a line of the report.
+ * break of the reviewer becomes a line of the report. A bare URL is a link
+ * of the report as well, and the scheme of it is escaped for the same
+ * reason: the link of a reviewer never becomes a link of the report.
  */
 function literal(value: string): string {
   return html(plain(value))
-    .replace(/([\\`*_[\]!|])/g, '\\$1')
+    .replace(/([\\`*_[\]!|~])/g, '\\$1')
+    .replace(/\b(https?|ftp|mailto):/gi, '$1\\:')
+    .replace(/\b(www)\./gi, '$1\\.')
     .replace(/\r?\n/g, ' ')
     .trim();
 }

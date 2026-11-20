@@ -39,9 +39,9 @@ The reviewers answer with JSON; the answer is validated against that schema.
 An answer that is not JSON, or an entry that does not pass the schema, is
 **invalid** — it is reported in the step and never becomes a finding. The
 payload is read out of a fenced block, of a sentence, or of both: every
-balanced object and array of the answer is tried, and the one whose entries
-pass the schema wins — an example of the schema that a reviewer repeats in the
-prose of its answer is not the answer.
+balanced object and array of the answer is tried, and the one that carries the
+answer is the one that is read — an example of the schema that a reviewer
+repeats in the prose of its answer is not the answer.
 
 **A finding is not confirmed because it parsed.** A finding is `confirmed`
 only when the verification pass confirms it *with evidence* and the finding
@@ -74,13 +74,16 @@ back truncated is `failed`, and the run is incomplete.
 
 The payload of an answer is looked for in the whole answer: a model fences it,
 wraps it in a sentence, or repeats the format of the answer before the answer
-itself. The payload that carries more valid findings is the answer, and an
-empty payload is an example of the format: it must not hide a payload that
-carries something — not even a payload whose entries are malformed, because a
+itself. The payload that carries more entries is the answer, and an empty
+payload is an example of the format: it must not hide a payload that carries
+something — not even a payload whose entries are malformed, because a
 malformed answer is a failed step, not a review without findings. When two
-payloads carry the same number of valid findings, the bigger one is the answer
-and the answer comes last: an example of the format must not hide a malformed
-answer that carries a grave finding. A payload
+payloads carry the same number of entries, the answer comes last: a model that
+repeats the format of the answer puts the format first. The schema of an
+entry does not decide between them: a payload whose entries pass the schema is
+not the answer when a later payload carries the answer itself, and the
+malformed entries of that payload fail the step instead of being dropped
+without a word. A payload
 under the key of the format and a bare list are read into one pool: neither of
 them hides the other, so a bare list that carries the findings is never lost
 behind an empty payload. A bare list of strings is a list of the prose and a
@@ -93,7 +96,9 @@ the verifier is `failed` rather than "no findings".
 A fence of Markdown is three backticks or more, and it is closed by a run of
 backticks that is at least as long as the opening one: a block of four
 backticks holds a snippet of three — and the evidence of a finding is such a
-snippet. The name of the language (`json`, in any case) is not a part of the
+snippet. The closing run closes the block only on a line of its own, the way
+Markdown reads it: a run of backticks in the middle of a line belongs to the
+line. The name of the language (`json`, in any case) is not a part of the
 payload, and a block that is never closed is not a block: its text stays in
 the plain text of the answer.
 
@@ -115,7 +120,13 @@ bundle. A convention file is taken from the commit under review, not from the
 disk: an untracked `AGENTS.md` of the checkout is nobody's convention, and it
 would steer the reviewers away from the change. The names of the changed files
 are escaped before they become glob patterns: a name of a file is a name, not a
-pattern. The bundle does not follow a symlink: the file behind it is not a file
+pattern. The name of a file is rendered in the bundle as **escaped literal
+text**: a name of Git may hold a newline, and a name that writes a line of its
+own writes into the prompt of the backend — the text of the repository then
+looks like an instruction of the review. The language of a fence is restricted
+to the extension of the file, and an extension that is not a plain word is
+`txt`: the identifier of a fence is a part of the prompt too. The bundle does
+not follow a symlink: the file behind it is not a file
 of the revision, and it must not reach the backend.
 
 ## The report
@@ -266,7 +277,8 @@ revision under review:
   are cleared — the C0 range, the C1 range and the escape sequences — the
   markup of HTML is escaped and the markup of Markdown is escaped as well, so
   a tag or a link of a finding is shown as text and never becomes markup of
-  the report.
+  the report. A bare URL is a link of a viewer that opens the report: it is
+  escaped as well, and it stays text.
 - The identifier of a run is a **name, not a path**: it names the directory of
   the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
   a `..` is refused the way a name of a profile is refused.

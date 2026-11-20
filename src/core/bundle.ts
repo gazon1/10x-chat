@@ -48,6 +48,36 @@ export function fenceFor(content: string): string {
   return '`'.repeat(Math.max(3, longest + 1));
 }
 
+/**
+ * The name of a file, as a label of the bundle.
+ *
+ * A name of Git may hold a newline and a control character: a name that
+ * writes a line of its own writes into the prompt of the backend, and the
+ * text of the repository looks like an instruction of the review. The
+ * control characters are shown as they are, so that the name stays a name
+ * and stays readable.
+ */
+function label(name: string): string {
+  return [...name]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      const control = code < 0x20 || (code >= 0x7f && code <= 0x9f);
+      return control ? `\\u${code.toString(16).padStart(4, '0')}` : character;
+    })
+    .join('');
+}
+
+/**
+ * The language of a file, as the identifier of its fence.
+ *
+ * The identifier is a word: a name of Git may hold anything, and an
+ * identifier that carries a newline would close the fence of the content.
+ */
+function language(filePath: string): string {
+  const extension = path.extname(filePath).slice(1);
+  return /^[a-z0-9+#]{1,16}$/i.test(extension) ? extension.toLowerCase() : 'txt';
+}
+
 interface BundleOptions {
   prompt: string;
   files?: string[];
@@ -109,30 +139,33 @@ export async function buildBundle(opts: BundleOptions): Promise<string> {
 
   for (const filePath of resolvedFiles.sort()) {
     const relativePath = path.relative(cwd, filePath);
+    // The name is a label of the bundle: it is shown as it is, but it never
+    // writes a line of its own.
+    const name = label(relativePath);
     let content: string;
     if (opts.read) {
       const read = await opts.read(relativePath);
       if (read === undefined) {
-        parts.push(`## ${relativePath} (SKIPPED — not in the revision)\n`);
+        parts.push(`## ${name} (SKIPPED — not in the revision)\n`);
         continue;
       }
       if (Buffer.byteLength(read) > MAX_FILE_SIZE) {
-        parts.push(`## ${relativePath} (SKIPPED — exceeds 1 MB)\n`);
+        parts.push(`## ${name} (SKIPPED — exceeds 1 MB)\n`);
         continue;
       }
       content = read;
     } else {
       const fileStat = await stat(filePath);
       if (fileStat.size > MAX_FILE_SIZE) {
-        parts.push(`## ${relativePath} (SKIPPED — exceeds 1 MB)\n`);
+        parts.push(`## ${name} (SKIPPED — exceeds 1 MB)\n`);
         continue;
       }
       content = await readFile(filePath, 'utf-8');
     }
-    const ext = path.extname(filePath).slice(1) || 'txt';
+    const ext = language(filePath);
 
     const fence = fenceFor(content);
-    parts.push(`## ${relativePath}\n`);
+    parts.push(`## ${name}\n`);
     parts.push(`${fence}${ext}`);
     parts.push(content);
     parts.push(`${fence}\n`);
