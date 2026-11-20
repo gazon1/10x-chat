@@ -185,6 +185,18 @@ Two rules keep the baseline honest:
   ordered, and the stored snapshot is kept then — a tie never lets an
   observation that may be the older one overwrite the newer requirements.
 
+The stored snapshot is checked before it is read as a baseline: its version,
+every field and the agreement of its fields with each other. Its hash must
+be the hash of its own title and its own body, its moment of observation must
+be a timestamp, and it must be the snapshot of the Issue it is stored at. A
+snapshot that contradicts itself describes no version of an Issue, and it is
+refused — a run that compared it with the current Issue would call a changed
+Issue unchanged, and the drift of the requirements would go unnoticed.
+
+The Issue is read with a timeout of its own: `gh` reads it over the network,
+and a CLI that never answers must not hang the review. A command that had to
+be killed is a timeout, and the run says so.
+
 The Issue is read again after the reviewers ran (`check-requirements`). An
 Issue that changed in the meantime makes the run incomplete: a review of
 stale requirements is never an approval, and the report says that the

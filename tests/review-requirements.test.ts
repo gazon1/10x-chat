@@ -549,6 +549,79 @@ describe('the requirements of a review', () => {
     );
   });
 
+  it('fails the collection when the stored baseline contradicts itself', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    // A snapshot that is well formed but says the wrong thing: its hash
+    // belongs to another version of the Issue, it is the snapshot of another
+    // Issue, or its moment of observation is not a moment.
+    const broken: { name: string; snapshot: Record<string, unknown> }[] = [
+      {
+        name: 'the hash does not belong to the title and the body',
+        snapshot: {
+          version: 1,
+          repository: 'owner/name',
+          number: 7,
+          url: 'https://github.com/owner/name/issues/7',
+          title: ISSUE_TITLE,
+          body: ISSUE_BODY,
+          hash: hashRequirements('Another issue', 'Another body'),
+          observedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        name: 'it is the snapshot of another repository',
+        snapshot: {
+          version: 1,
+          repository: 'owner/other',
+          number: 7,
+          url: 'https://github.com/owner/other/issues/7',
+          title: ISSUE_TITLE,
+          body: ISSUE_BODY,
+          hash: hashRequirements(ISSUE_TITLE, ISSUE_BODY),
+          observedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        name: 'it is the snapshot of another issue',
+        snapshot: {
+          version: 1,
+          repository: 'owner/name',
+          number: 8,
+          url: 'https://github.com/owner/name/issues/8',
+          title: ISSUE_TITLE,
+          body: ISSUE_BODY,
+          hash: hashRequirements(ISSUE_TITLE, ISSUE_BODY),
+          observedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      {
+        name: 'its moment of observation is not a moment',
+        snapshot: {
+          version: 1,
+          repository: 'owner/name',
+          number: 7,
+          url: 'https://github.com/owner/name/issues/7',
+          title: ISSUE_TITLE,
+          body: ISSUE_BODY,
+          hash: hashRequirements(ISSUE_TITLE, ISSUE_BODY),
+          observedAt: 'not a moment',
+        },
+      },
+    ];
+
+    for (const { name, snapshot } of broken) {
+      await writeFile(baselineFile(), JSON.stringify(snapshot), 'utf-8');
+      // A snapshot that contradicts itself describes no version of an Issue: a
+      // run that compared it with the current Issue would call a changed
+      // Issue unchanged.
+      await expect(
+        collectReviewContext({ cwd: repo, pr: 42, issue: 7 }),
+        `${name} must not be read as a baseline`,
+      ).rejects.toThrow(/cannot be read/);
+    }
+  });
+
   it('makes the run incomplete when the issue cannot be read again', async () => {
     await fakeGh({ issueFailFromCall: 1 });
 

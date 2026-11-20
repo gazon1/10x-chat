@@ -225,9 +225,35 @@ export async function readBaseline(
       typeof parsed.repository !== 'string' ||
       typeof parsed.number !== 'number' ||
       typeof parsed.title !== 'string' ||
-      typeof parsed.body !== 'string'
+      typeof parsed.body !== 'string' ||
+      typeof parsed.url !== 'string'
     ) {
       throw new Error('it has another format');
+    }
+    // The fields of the snapshot must agree with each other: a snapshot whose
+    // hash does not belong to its title and its body describes no version of
+    // an Issue, and a run that compared it with the current Issue would call a
+    // changed Issue unchanged — the drift of the requirements would go
+    // unnoticed, and the baseline of the run would be a lie.
+    if (parsed.hash !== hashRequirements(parsed.title, parsed.body)) {
+      throw new Error('its hash does not belong to its title and its body');
+    }
+    // The moment of the observation is compared as a text: a moment that is
+    // not a timestamp cannot be ordered, and a snapshot that keeps itself
+    // forever would freeze the baseline of the Issue. The canonical form is
+    // the one of `toISOString()`: it is the only form in which the order of
+    // the texts is the order of the moments.
+    if (
+      Number.isNaN(Date.parse(parsed.observedAt)) ||
+      new Date(parsed.observedAt).toISOString() !== parsed.observedAt
+    ) {
+      throw new Error('its moment of observation is not a timestamp');
+    }
+    // The snapshot belongs to the Issue of the path it is stored at: a
+    // snapshot of another Issue or of another repository is not the baseline
+    // of this one.
+    if (parsed.repository !== repository || parsed.number !== number) {
+      throw new Error(`it is the snapshot of ${parsed.repository}#${parsed.number}`);
     }
     return parsed;
   } catch (error) {

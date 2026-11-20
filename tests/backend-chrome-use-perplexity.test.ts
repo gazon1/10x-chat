@@ -107,6 +107,23 @@ describe('chrome-use Perplexity backend (POC)', () => {
     expect(out.failure.submission).toBe('not_submitted');
   });
 
+  it('tears no session down when chrome-use could not be started at all', async () => {
+    const calls: string[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push(args[2] ?? '');
+        // The process could not be created — not the binary that is missing,
+        // but the permission to run it.
+        throw new Error('spawn chrome-use EACCES');
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner });
+    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
+    expect(out.ok).toBe(false);
+    // No session was created, so there is nothing to close.
+    expect(calls).not.toContain('done');
+  });
+
   it('reports connection loss after submit as unknown submission', async () => {
     let submitted = false;
     const runner: ProcessRunner = {
