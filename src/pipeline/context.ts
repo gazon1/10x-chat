@@ -501,8 +501,7 @@ async function carryingTheSecret(
       // The copy of a secret hides in a line that says more than the secret:
       // the line itself, and the value it holds.
       if (line.length >= 8) fragments.push(line);
-      const value = secretValue(line);
-      if (value !== undefined) fragments.push(value);
+      fragments.push(...secretValues(line));
     }
   }
   if (exact.size === 0) return [];
@@ -520,7 +519,7 @@ async function carryingTheSecret(
 }
 
 /**
- * The value of a line of a secret — the part after the first `=`.
+ * The values of a line of a secret.
  *
  * The value is the secret, the key is a name that the code of the repository
  * uses on purpose (`process.env.DATABASE_URL`). A value is looked for in the
@@ -529,20 +528,36 @@ async function carryingTheSecret(
  * more, with a letter and a digit in it (`s3cr3t`). A short value of letters
  * only (`changeme`) is an ordinary word: many files of a repository hold it,
  * and withholding all of them would leave the review nothing to read.
+ *
+ * A secret is not always a line of `KEY=value`: a credential of a JSON file
+ * is a pair of a key and a value, and the copy of it hides in a line of the
+ * code that holds the value alone. The value of a pair is a value too.
  */
-function secretValue(line: string): string | undefined {
+function secretValues(line: string): string[] {
+  const values: string[] = [];
   const at = line.indexOf('=');
-  if (at < 0) return undefined;
-  const value = line
-    .slice(at + 1)
-    .trim()
-    .replace(/^["']/, '')
-    .replace(/["']$/, '');
-  if (value.length >= 12) return value;
+  if (at >= 0) {
+    values.push(
+      line
+        .slice(at + 1)
+        .trim()
+        .replace(/^["']/, '')
+        .replace(/["']$/, ''),
+    );
+  }
+  for (const match of line.matchAll(/"[^"]*"\s*:\s*"([^"]*)"/g)) {
+    values.push(match[1]);
+  }
+  return values.filter(distinctive);
+}
+
+/** A value that is worth looking for in the files of the change. */
+function distinctive(value: string): boolean {
+  if (value.length >= 12) return true;
   const long = value.length >= 6;
   const letter = /[A-Za-z]/.test(value);
   const digit = /[0-9]/.test(value);
-  return long && letter && digit ? value : undefined;
+  return long && letter && digit;
 }
 
 /**

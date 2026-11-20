@@ -13,6 +13,7 @@ interface Call {
   command: string;
   args: string[];
   timeoutMs?: number;
+  input?: string;
 }
 
 /** A runner that answers with canned envelopes and records the calls. */
@@ -20,7 +21,7 @@ function fakeRunner(answers: (ProcessResult | Error)[]): { runner: ProcessRunner
   const calls: Call[] = [];
   const runner: ProcessRunner = {
     run: async (command, args, options) => {
-      calls.push({ command, args, timeoutMs: options?.timeoutMs });
+      calls.push({ command, args, timeoutMs: options?.timeoutMs, input: options?.input });
       const answer = answers.shift();
       if (answer instanceof Error) throw answer;
       return answer ?? { code: 0, stdout: '', stderr: '', timedOut: false };
@@ -375,6 +376,24 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     // The deadline of the CLI is the deadline of the chat, plus the backstop
     // for the parts around it.
     expect(calls[0]?.timeoutMs).toBe(150_000);
+  });
+
+  it('sends a prompt that does not fit into an argument through the stdin', async () => {
+    // The kernel of Linux limits one argument of a process to 128 KiB: a
+    // bigger prompt is refused with `E2BIG` before the CLI sees it. The
+    // bundle of a review of a big change is bigger than that.
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+    const prompt = 'x'.repeat(200_000);
+
+    const outcome = await backend.ask({ requestId: 'req-1', prompt });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls[0]?.args).toContain('--stdin');
+    expect(calls[0]?.args).not.toContain(prompt);
+    expect(calls[0]?.input).toBe(prompt);
   });
 
   it('gives two different requests two different receipts', async () => {

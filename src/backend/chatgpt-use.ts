@@ -42,7 +42,11 @@ export interface ProcessResult {
 
 /** How the adapter starts a process — the seam the unit tests replace. */
 export interface ProcessRunner {
-  run(command: string, args: string[], options?: { timeoutMs?: number }): Promise<ProcessResult>;
+  run(
+    command: string,
+    args: string[],
+    options?: { timeoutMs?: number; input?: string },
+  ): Promise<ProcessResult>;
 }
 
 /**
@@ -54,11 +58,18 @@ export interface ProcessRunner {
 export const nodeProcessRunner: ProcessRunner = {
   run(command, args, options = {}) {
     return new Promise((resolve, reject) => {
-      const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(command, args, {
+        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
       let killTimer: NodeJS.Timeout | undefined;
+      if (options.input !== undefined) {
+        // The stdin of the process is closed after the input: the CLI reads it
+        // until the end and then it has the whole of it.
+        child.stdin?.end(options.input);
+      }
       const timer = options.timeoutMs
         ? setTimeout(() => {
             timedOut = true;
@@ -68,10 +79,10 @@ export const nodeProcessRunner: ProcessRunner = {
             killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
           }, options.timeoutMs)
         : undefined;
-      child.stdout.on('data', (chunk) => {
+      child.stdout?.on('data', (chunk) => {
         stdout += chunk;
       });
-      child.stderr.on('data', (chunk) => {
+      child.stderr?.on('data', (chunk) => {
         stderr += chunk;
       });
       child.on('error', (error) => {
@@ -90,6 +101,21 @@ export const nodeProcessRunner: ProcessRunner = {
 
 /** The grace period between SIGTERM and SIGKILL. */
 const KILL_GRACE_MS = 2_000;
+
+/**
+ * The size of one argument of a process.
+ *
+ * The kernel of Linux limits one argument of a process to 128 KiB
+ * (`MAX_ARG_STRLEN`): a prompt that is bigger is refused with `E2BIG`
+ * before the CLI ever sees it. A prompt that does not fit travels through the
+ * stdin of the CLI instead — the bundle of a review of a big change is bigger
+ * than the limit.
+ */
+const MAX_ARGUMENT_BYTES = 100_000;
+
+/** The prompt that carries a request that travels through the stdin. */
+const CONTEXT_PROMPT =
+  'The request is in the context of this message. Follow it exactly: answer in the format it asks for, and nothing else.';
 
 /** What the ChatGPT backend of `chatgpt-use` supports. */
 export const CHATGPT_USE_CAPABILITIES: BackendCapabilities = Object.freeze({
@@ -206,12 +232,14 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
   const run = async (
     args: string[],
     timeoutMs?: number,
+    input?: string,
   ): Promise<{ stdout: string; stderr: string; timedOut: boolean; started: boolean }> => {
     try {
       const result = await runner.run(command, args, {
         // The CLI has its own timeout for the turn; this one is the backstop
         // for the parts around it (opening the browser).
         ...(timeoutMs ? { timeoutMs: timeoutMs + 60_000 } : {}),
+        ...(input !== undefined ? { input } : {}),
       });
       return {
         stdout: result.stdout,
@@ -361,6 +389,10 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
 
   const ask = async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
     const id = effectiveId(request.requestId);
+    // A prompt that does not fit into one argument of a process travels
+    // through the stdin of the CLI: the kernel refuses a bigger argument
+    // with `E2BIG` before the CLI sees it.
+    const throughStdin = Buffer.byteLength(request.prompt) > MAX_ARGUMENT_BYTES;
     const args = [
       'ask',
       '--json',
@@ -372,17 +404,18 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       // waiting for the window — the busy policy of this backend.
       '--busy',
       'fail',
-      // The prompt is an argument: the stdin is never read as a context.
-      '--no-stdin',
+      // The prompt is an argument: the stdin is never read as a context. A
+      // prompt that is too big for an argument is read from the stdin.
+      ...(throughStdin ? ['--stdin'] : ['--no-stdin']),
       ...(request.model ? ['--model', modelArg(request.model)] : []),
       ...(request.timeoutMs ? ['--timeout', String(Math.ceil(request.timeoutMs / 1000))] : []),
       ...attachmentArgs(request.attachments ?? []),
       // The prompt is a positional argument: `--` keeps a prompt that starts
       // with a dash out of the options.
       '--',
-      request.prompt,
+      throughStdin ? CONTEXT_PROMPT : request.prompt,
     ];
-    const result = await run(args, request.timeoutMs);
+    const result = await run(args, request.timeoutMs, throughStdin ? request.prompt : undefined);
     if (!result.started) {
       return { ok: false, failure: { ...UNAVAILABLE, message: result.stderr } };
     }

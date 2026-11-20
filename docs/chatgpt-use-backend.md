@@ -42,6 +42,12 @@ chatgpt-use ask --json --request-id <id> --busy fail [--model <level>] \
   a failure.
 - The prompt is the positional argument after `--`, so a prompt that starts
   with a dash is not read as an option.
+- A prompt that does not fit into one argument of a process travels through
+  the **stdin** of the CLI (`--stdin`): the kernel of Linux limits one
+  argument to 128 KiB (`MAX_ARG_STRLEN`) and refuses a bigger one with
+  `E2BIG` before the CLI sees it. The stdin is read as the context of the
+  request, and the positional argument asks for the answer of it. The stdin
+  is never read for a prompt that fits into an argument (`--no-stdin`).
 - The attachments of the request are `--file` (the contents become context);
   the images (png, jpg, jpeg, gif, webp) are `--image` (ChatGPT sees them).
 - The model of the request is the level of the composer of ChatGPT

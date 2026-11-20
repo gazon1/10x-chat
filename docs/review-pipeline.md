@@ -260,7 +260,10 @@ revision under review:
   when it is distinctive: twelve characters or more, or six characters or more
   with a letter and a digit in it (`s3cr3t`). A short value of letters only
   (`changeme`) is an ordinary word — many files of a repository hold it, and
-  withholding all of them would leave the review nothing to read.
+  withholding all of them would leave the review nothing to read. A secret is
+  not always a line of `KEY=value`: the value of a pair of a JSON file is a
+  value too, and the copy of it hides in a line of the code that holds the
+  value alone.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read — not
   in the head revision and not in the base revision, where a link that the
@@ -270,7 +273,10 @@ revision under review:
   inside them is an attack on the reviewer. Every one of them sits in a fence
   that is longer than the backticks it carries, so the content cannot close it,
   and the reviewers are told that an instruction found in them is a finding of
-  the category `security`. The names of the withheld files and the claims of the
+  the category `security`. The identity of the repository, the target and the
+  refs are fenced the same way: the path of the checkout is data too, and a path
+  that holds a newline writes a line of its own into the prompt of the
+  reviewer. The names of the withheld files and the claims of the
   reviewers — a reviewer quotes the change it is about — are fenced the same
   way, and the verifier is told that a claim is data too.
 - The text of a reviewer is **data in the report** too: the control characters
