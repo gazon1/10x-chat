@@ -136,11 +136,18 @@ The kind is required, like the severity of a finding: a decision that carries
 an unknown kind is malformed and fails the step of its role. A reviewer that
 writes the kind in the words of the report still says a kind.
 
-**The decisions are optional.** An answer that carries none reports no
-implicit decision, and that is not a malformed answer. An entry that does not
-pass the schema is invalid, like a malformed finding: it is reported in the
-step of the role and never becomes a decision. Two roles that name the same
-decision name it once — the id of a decision is a hash of its normalized text.
+**The decisions are part of the answer.** The answer of a reviewer must carry the
+key `decisions`, even when its list is empty: an answer without it did not do
+the audit, and the step of the role fails instead of passing by silence. A
+property of the decisions that is there and is not a list is malformed too, and
+it is reported even when another payload of the answer carries the decisions.
+The last payload that carries the key is the answer — a model that repeats the
+format of the answer puts the format first. An entry that does not pass the
+schema is invalid, like a malformed finding: it is reported in the step of the
+role and never becomes a decision. Two roles that name the same decision name
+it once — the id of a decision is a hash of its normalized text, and the
+normalization keeps the order of the words and the negation, so "A sends to B"
+and "B sends to A", or a decision and its opposite, stay two decisions.
 
 **A decision is not a defect.** The decisions are not verified against the
 source the way the findings are, and they never become findings: they are the
@@ -282,8 +289,8 @@ decisions of the reviewers: the decision, its kind, the previous behavior or
 the alternative, the evidence and the rationale, the consequence, the failure
 scenario or the unresolved risk, and whether a human has to confirm it. The
 decisions that need a human come first. When the roles reported none, the
-section says so in one line — and says that the audit is incomplete when the
-architecture pass did not finish.
+section says so in one line — and says that the audit is incomplete when a
+role pass did not finish.
 
 ## Running it
 

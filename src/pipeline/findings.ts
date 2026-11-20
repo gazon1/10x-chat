@@ -539,56 +539,73 @@ export function findingId(finding: { file?: string; line?: number; title: string
   return `f-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
 }
 
+/** The words of a text that carry no meaning of their own. */
+const STOPWORDS = new Set([
+  'a',
+  'an',
+  'the',
+  'is',
+  'are',
+  'to',
+  'of',
+  'in',
+  'on',
+  'and',
+  'or',
+  'not',
+  'no',
+  'with',
+  'for',
+  'this',
+  'that',
+  'it',
+  'be',
+  'can',
+  'will',
+  'does',
+  'do',
+  'from',
+  'by',
+  'at',
+  'as',
+  'if',
+  'then',
+  'than',
+  'but',
+  'has',
+  'have',
+  'when',
+  'into',
+  'its',
+  'their',
+]);
+
+/**
+ * The negation of a statement — the word that turns it around.
+ *
+ * A decision and the opposite of a decision are two decisions: "the retry is
+ * idempotent" and "the retry is not idempotent" disagree about the contract
+ * of the change, and a merge of the two hides the disagreement.
+ */
+const NEGATIONS = new Set(['not', 'no']);
+
+/**
+ * The words of a text.
+ *
+ * The letters and the numbers of every alphabet: a title written in another
+ * script carries its meaning too, and an empty title would give the same id
+ * to two different findings.
+ */
+function wordsOf(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word !== '');
+}
+
 /** The words of a title that carry its meaning. */
 function tokensOf(title: string): Set<string> {
-  const stopwords = new Set([
-    'a',
-    'an',
-    'the',
-    'is',
-    'are',
-    'to',
-    'of',
-    'in',
-    'on',
-    'and',
-    'or',
-    'not',
-    'no',
-    'with',
-    'for',
-    'this',
-    'that',
-    'it',
-    'be',
-    'can',
-    'will',
-    'does',
-    'do',
-    'from',
-    'by',
-    'at',
-    'as',
-    'if',
-    'then',
-    'than',
-    'but',
-    'has',
-    'have',
-    'when',
-    'into',
-    'its',
-    'their',
-  ]);
-  return new Set(
-    title
-      .toLowerCase()
-      // The letters and the numbers of every alphabet: a title written in
-      // another script carries its meaning too, and an empty title would give
-      // the same id to two different findings.
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => word !== '' && !stopwords.has(word)),
-  );
+  return new Set(wordsOf(title).filter((word) => !STOPWORDS.has(word)));
 }
 
 /** The comparable form of a title — the words of it, sorted. */
@@ -727,27 +744,44 @@ function decisionKindOf(value: unknown): DecisionKind | undefined {
 }
 
 /**
+ * The comparable form of a decision — the words of it, in their order.
+ *
+ * The order matters: "A sends messages to B" and "B sends messages to A"
+ * are two different contracts, and a form that sorts the words of them would
+ * read them as one. The negation matters too: a decision and its opposite
+ * disagree about the contract of the change.
+ */
+export function normalizeDecision(decision: string): string {
+  return wordsOf(decision)
+    .filter((word) => !STOPWORDS.has(word) || NEGATIONS.has(word))
+    .join(' ');
+}
+
+/**
  * The id of a decision.
  *
  * The id is a hash of the normalized text of the decision: two roles that
  * report the same decision report one decision.
  */
 export function decisionId(decision: string): string {
-  const key = JSON.stringify(normalizeTitle(decision) || decision.trim().toLowerCase());
+  const key = JSON.stringify(normalizeDecision(decision) || decision.trim().toLowerCase());
   return `d-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
 }
 
 /**
  * Parse the decisions of the answer of a reviewer.
  *
- * The decisions are optional: an answer that carries none reports no implicit
- * decision, and that is not a malformed answer. An entry that does not pass
- * the schema is invalid — it is reported, never silently dropped. A property
- * of the decisions that is there and is not a list is malformed too: the
- * answer does not report no decision, it reports a broken one.
+ * The answer must carry the key of the decisions: the list may be empty, but
+ * the key must be there — a reviewer that answered without it did not do the
+ * audit, and an audit that passes by silence is not an audit. An answer that
+ * carries the key with a broken list is malformed too: the answer does not
+ * report no decision, it reports a broken one. An entry that does not pass
+ * the schema is invalid — it is reported, never silently dropped.
  *
  * Only a payload that carries the key of the decisions is read: a bare list of
- * findings is not a list of decisions.
+ * findings is not a list of decisions. The last such payload is the answer —
+ * a model that repeats the format of the answer puts the format first, and
+ * the answer that follows is the one that counts.
  */
 export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDecisions {
   const { candidates } = jsonCandidates(text);
@@ -772,9 +806,18 @@ export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDe
       keyed: true,
     });
   }
-  if (choices.length === 0) return { decisions: [], invalid: malformed };
-  const best = choices.reduce(betterCandidate);
-  return { decisions: best.parsed.decisions, invalid: best.parsed.invalid };
+  if (choices.length === 0) {
+    return {
+      decisions: [],
+      invalid: [...malformed, 'the answer carries no decisions — the key is missing'],
+    };
+  }
+  // The answer comes last: the example of the format precedes it, and an
+  // example that carries more entries than the answer is still an example.
+  const best = choices.reduce((a, b) => (a.candidate.at >= b.candidate.at ? a : b));
+  // A broken payload is reported even when another payload answers: the answer
+  // carries a broken decisions list somewhere, and that is not nothing.
+  return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...malformed] };
 }
 
 /** The decisions of one payload of an answer. */

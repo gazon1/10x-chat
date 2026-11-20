@@ -308,7 +308,7 @@ CONSEQUENCE: <what changes because of it>
 RISK: <the failure scenario or the unresolved risk>
 CONFIRMATION: needed | not needed
 
-If you find nothing blocking, say so explicitly. Do not invent problems to fill the format. Do not rewrite the code."
+If the change decides nothing of consequence, say so explicitly — a decision that nobody reports is not the same as a change that decides nothing. If you find nothing blocking, say so explicitly. Do not invent problems to fill the format. Do not rewrite the code."
 
 # Role B — a separate command, its own conversation, no reference to A
 10x-chat chat --provider chatgpt --new-chat --timeout 1800000 \
@@ -346,7 +346,7 @@ CONFIRMATION: needed | not needed
 
 Also judge the approach: could the change have been solved by reusing what the repository already has, by a focused refactoring of the existing code, or by the standard library or a dependency the project already uses, instead of new custom code? Look at the repository before you judge, and name an external library only when it is a realistic fit. A missed reuse is a decision, not a defect.
 
-If you find nothing blocking, say so explicitly. Do not invent problems, and do not rewrite the code."
+If the change decides nothing of consequence, say so explicitly — a decision that nobody reports is not the same as a change that decides nothing. If you find nothing blocking, say so explicitly. Do not invent problems, and do not rewrite the code."
 ```
 
 **Both commands carry the same coordinates and the same relevant project context.** A placeholder that points at the other role is not a command: copied literally it sends a reviewer into the chat without the target, and the second pass becomes a review of nothing. Fill every placeholder of both commands with the coordinates of step 1 and the same relevant context claims/statuses from [project-context.md](project-context.md) when used — the two reviewers differ in their role and their instructions, not in what they read and not in the project context they receive. Keep their first passes independent.

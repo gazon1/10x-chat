@@ -105,7 +105,7 @@ const ANSWER_SCHEMA = `{ "findings": [ ${FINDING_SCHEMA} ], "decisions": [ ${DEC
  * list as a list of findings and the decisions as none.
  */
 const ANSWER_RULE =
-  'If you find nothing blocking, return "findings": [] and still report every consequential decision of the change — return "decisions": [] only when the change decides nothing of consequence. Do not invent problems to fill the schema. Do not rewrite the code.';
+  'If you find nothing blocking, return "findings": [] and still report every consequential decision of the change — return "decisions": [] only when the change decides nothing of consequence. The answer must carry the key "decisions", even when its list is empty: an answer without it fails the review. Do not invent problems to fill the schema. Do not rewrite the code.';
 
 /**
  * The audit of the implicit decisions — the same for every role.
@@ -1041,8 +1041,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     }
     const parsed = parseReviewerFindings(text, role);
     candidates.push(...parsed.findings);
-    // The decisions are optional: an answer that carries none reports no
-    // implicit decision, and that is not a malformed answer.
+    // The decisions are not optional: the answer must carry the key of the
+    // decisions, even when the list is empty. An answer without it did not do
+    // the audit, and the step of the role fails instead of passing by silence.
     const parsedDecisions = parseReviewerDecisions(text, role);
     reported.push(...parsedDecisions.decisions);
     const invalidEntries = [...parsed.invalid, ...parsedDecisions.invalid];
