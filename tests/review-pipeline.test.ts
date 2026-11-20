@@ -1142,6 +1142,65 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret behind a deleted symlink out of the evidence', async () => {
+    // The change removes the link, the file behind it is still a file of the
+    // base revision — and it may hold a secret.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-link-secret-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await symlink('../.env', path.join(cwd, 'src', 'link.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', 'src/link.ts');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/link.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(prompts.join('\n')).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('does not let an example hide a malformed answer that carries the same findings', () => {
+    // The example of the format comes first, the answer comes last: the answer
+    // is the payload that is read, even when one of its entries is malformed.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [{ ...FINDING, title: 'an example of the format' }] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING, { title: 'a malformed entry' }] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+    expect(parsed.invalid.length).toBeGreaterThan(0);
+  });
+
   it('keeps a secret out of the diff and out of the evidence', async () => {
     // A file that may hold a secret is never read: its content reaches
     // neither the diff of the bundle nor the evidence of a finding.

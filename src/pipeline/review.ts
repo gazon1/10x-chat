@@ -259,6 +259,17 @@ async function excerptOf(
       // there is no code to show.
       return { text: '', exists: false, lineInRange: false, deleted: true, withheld: false };
     }
+    // The file behind the link is the file that is read, so it is the one
+    // that decides whether its content may be read.
+    if (behindBase && secret.has(behindBase)) {
+      return {
+        text: '(the content of this file is withheld: it may hold a secret)',
+        exists: false,
+        lineInRange: false,
+        deleted: true,
+        withheld: true,
+      };
+    }
     const content = await fileAtRevision(repoRoot, baseSha, behindBase ?? name);
     if (content === undefined) {
       return { text: '', exists: false, lineInRange: false, deleted: true, withheld: false };

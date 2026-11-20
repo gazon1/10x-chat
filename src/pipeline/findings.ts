@@ -262,13 +262,15 @@ function betterCandidate<T extends { invalid: string[] }>(
   const aEmpty = a.count === 0;
   const bEmpty = b.count === 0;
   if (aEmpty !== bEmpty) return aEmpty ? b : a;
-  if (a.parsed.invalid.length !== b.parsed.invalid.length) {
-    return a.parsed.invalid.length < b.parsed.invalid.length ? a : b;
-  }
+  // The payload that carries more is the answer: a payload whose entries are
+  // malformed must not hide behind a smaller one, or the defect it carries
+  // disappears from the review without a word.
+  if (a.count !== b.count) return a.count > b.count ? a : b;
+  // The answer comes last: the example of the format precedes it.
+  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
   if (a.candidate.fenced !== b.candidate.fenced) {
     return a.candidate.fenced ? a : b;
   }
-  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
   return a.keyed ? a : b;
 }
 

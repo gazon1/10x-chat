@@ -77,7 +77,10 @@ wraps it in a sentence, or repeats the format of the answer before the answer
 itself. The payload that carries more valid findings is the answer, and an
 empty payload is an example of the format: it must not hide a payload that
 carries something — not even a payload whose entries are malformed, because a
-malformed answer is a failed step, not a review without findings. A payload
+malformed answer is a failed step, not a review without findings. When two
+payloads carry the same number of valid findings, the bigger one is the answer
+and the answer comes last: an example of the format must not hide a malformed
+answer that carries a grave finding. A payload
 under the key of the format and a bare list are read into one pool: neither of
 them hides the other, so a bare list that carries the findings is never lost
 behind an empty payload. A bare list of strings is a list of the prose and a
