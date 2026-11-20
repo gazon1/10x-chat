@@ -13,13 +13,16 @@ Use it when the user asks for a change to be built in a repository — feature, 
 ## 1. Understand before touching
 
 - Read the target repository's own instructions: `AGENTS.md`, `CLAUDE.md`, `README`, `CONTRIBUTING`, and the CI configuration. They define the conventions, the commands and the definition of done. They outrank your defaults.
+- Follow [project-context.md](project-context.md): reuse a current **Project Context Brief** when one exists, or prepare a temporary context summary from the repository's existing documentation and source if it does not (the workflow must still work). Before reuse, check referenced sources for existence and drift and mark stale/missing claims unverified; treat contradictions and `CONFIRMED`/`INFERRED`/`UNKNOWN` status as defined there. Do not rewrite project docs or the brief automatically.
 - Map the architecture: the entry points, the layers, where the change belongs, the neighbouring code that a change here would break.
 - Learn the **verification conventions**: the exact commands the repository documents for tests, lint, types and build — and how they are run in CI (working directory, flags, environment).
 - Restate the task in your own words, with the acceptance criteria the user implies. If the task is ambiguous in a way that changes the design, ask now — a wrong assumption here costs a whole checkpoint.
 
 ## 2. Split the work into ordered checkpoints
 
-A checkpoint is small enough to review in one pass and to revert in one step. Each checkpoint states five things:
+A checkpoint is small enough to review in one pass and to revert in one step. Reuse the project context (and its invariants, contracts and verification conventions) when planning checkpoints and when scoping their acceptance criteria; include only the relevant, status-marked context for the work at hand.
+
+Each checkpoint states five things:
 
 | Field | Content |
 |---|---|
@@ -134,7 +137,7 @@ Pushing the branch and opening the pull request are part of the pipeline, when t
 
 ## 6. Independent adversarial review of the checkpoint
 
-Ask 10x-chat for an adversarial review of *this checkpoint*, in a fresh conversation (`--new-chat`), pointing it at the repository:
+Ask 10x-chat for an adversarial review of *this checkpoint*, in a fresh conversation (`--new-chat`), pointing it at the repository. Give the reviewer the same relevant project context as defined in [project-context.md](project-context.md) (reused brief or temporary summary), with claims marked `CONFIRMED`/`INFERRED`/`UNKNOWN` or unverified/stale and sourced where possible — and no other reviewer's findings or conversation history:
 
 ```bash
 10x-chat chat --provider chatgpt --new-chat --timeout 900000 \
@@ -188,6 +191,8 @@ Proceed to the next checkpoint only when:
 
 If a gate fails, stop and report. Do not push the problem into the next checkpoint and do not keep going because "the next step might fix it". If the user explicitly accepts the exception, record it as a human decision — who accepted it, what was not verified, and what risk it carries.
 
+**Project context updates (only when material).** If an accepted change materially changes architecture, contracts, or constraints, the brief may be updated only with an explicit decision by the repository owner or coding agent: revalidate affected claims, record sources/status, and never rewrite ADRs, specifications, README/source files, or the brief automatically. Do not update it for ordinary implementation details.
+
 ## 9. Never merge or release autonomously
 
 Committing, pushing the branch and opening the pull request are part of the pipeline when the user asked for them (step 5) — a request to review is not a request to publish; without the user's word the checkpoint stays local and the independent review is `UNAVAILABLE`. **A pull request is never required**: a pushed branch without one is reviewed by its base and head SHA. Merging, tagging a release or deploying never happen without an explicit instruction from the user.
@@ -205,14 +210,15 @@ After the last checkpoint, run one review over the *combined* change — at the 
 
 ## Checklist
 
-- [ ] Repository instructions, architecture and verification conventions read.
-- [ ] Ordered checkpoints with goal, scope, acceptance criteria, verification, non-goals.
+- [ ] Repository instructions, architecture and verification conventions read; project context reused or temporarily summarized per [project-context.md](project-context.md) (with freshness/conflict checks as applicable).
+- [ ] Ordered checkpoints with goal, scope, acceptance criteria, verification, non-goals, planned against the relevant project context.
 - [ ] Only the current checkpoint implemented; no speculative refactoring.
 - [ ] Repository's own checks run, each recorded as PASSED / FAILED / SKIPPED / UNAVAILABLE with its command and output.
 - [ ] The checkpoint is committed and pushed to `origin` — with the user's word — and the reviewer read that SHA; no file was attached — neither `--file` nor `--attach`.
 - [ ] The review target identified: an existing pull request, or a pushed branch without one. A pull request was never required, and its absence was not treated as a blocker.
-- [ ] Independent adversarial review of the checkpoint; findings fixed, rejected with reason, or explicitly accepted.
+- [ ] Independent adversarial review of the checkpoint with the same relevant, status-marked project context and isolated first passes; findings fixed, rejected with reason, or explicitly accepted.
 - [ ] Every acceptance criterion has recorded evidence.
 - [ ] Proceeded only with the gates satisfied or an explicit human exception.
+- [ ] Project context updated only for a material architecture/contract/constraint change and only with an explicit decision; no automatic rewrites of docs or the brief.
 - [ ] Committed and pushed per checkpoint, with the user's word; nothing merged or released without an explicit instruction.
 - [ ] Integration review done; completion report written.
