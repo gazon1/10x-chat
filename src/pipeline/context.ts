@@ -283,9 +283,14 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     ...changed.renames.filter((pair) => baseSecret.includes(pair.from)).map((pair) => pair.to),
     ...(await carryingTheSecret(
       repoRoot,
-      baseSha,
       headSha,
-      baseSecret.filter((file) => !tracked.includes(file)),
+      [
+        // A secret of the base: the change may delete it and copy it.
+        ...baseSecret.map((file) => ({ file, sha: baseSha })),
+        // A secret that stays in the repository: the change may copy it under
+        // a name of its own, and the name of the secret does not follow it.
+        ...tracked.filter((file) => !readable.has(file)).map((file) => ({ file, sha: headSha })),
+      ],
       changed.added,
     )),
   ];
@@ -439,24 +444,25 @@ async function changedNames(
 }
 
 /**
- * The added files that carry the content of a secret file of the base.
+ * The added files that carry the content of a secret file.
  *
- * A secret that the change deletes may survive in a file it adds: the
- * rename detection of git cannot see it when the content was rewritten, and
- * the lines of the secret decide then. A file that carries a line of a
- * secret is a secret under its new name too.
+ * A secret may survive in a file the change adds: the rename detection of
+ * git cannot see it when the content was rewritten, and the lines of the
+ * secret decide then. A file that carries a line of a secret is a secret
+ * under its new name too — and the secret may be one that the change does not
+ * delete: a repository that keeps its `.env` may copy it into a file of its
+ * own, and the name of the secret does not follow the content.
  */
 async function carryingTheSecret(
   repoRoot: string,
-  baseSha: string,
   headSha: string,
-  deletedSecrets: string[],
+  secrets: { file: string; sha: string }[],
   added: string[],
 ): Promise<string[]> {
-  if (deletedSecrets.length === 0 || added.length === 0) return [];
+  if (secrets.length === 0 || added.length === 0) return [];
   const secretLines = new Set<string>();
-  for (const secret of deletedSecrets) {
-    for (const line of await meaningfulLines(repoRoot, baseSha, secret)) {
+  for (const secret of secrets) {
+    for (const line of await meaningfulLines(repoRoot, secret.sha, secret.file)) {
       secretLines.add(line);
     }
   }

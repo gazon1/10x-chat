@@ -705,6 +705,33 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret of a file that stays out of a file the change adds', async () => {
+    // The secret does not have to be deleted to be copied: a repository that
+    // keeps its `.env` may copy it into a file of its own, and the name of the
+    // secret does not follow the content.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-kept-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(
+        path.join(cwd, 'config.ts'),
+        `${Array.from({ length: 200 }, (_, index) => `const line${index} = ${index};`).join('\n')}\nTOKEN=SECRET_VALUE\n`,
+        'utf-8',
+      );
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a checkout that hides the deletion of a file behind a git flag', async () => {
     // The flag hides the deletion from the status: the file of the revision
     // is not on the disk, and the review must not read a code it does not have.

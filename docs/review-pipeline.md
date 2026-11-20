@@ -187,8 +187,11 @@ revision under review:
   it: the new name is not a secret by its own pattern, but the content is the
   content of the old one, so the new name is excluded from the diff and from
   the bundle as well. A file the change **adds** that carries a line of a
-  deleted secret keeps it too — the rename detection of git is a similarity,
-  and a secret that was copied into a file of its own is not a rename.
+  secret keeps it too — the rename detection of git is a similarity,
+  and a secret that was copied into a file of its own is not a rename. The
+  secret of the base and the secret that stays in the repository are both
+  read: a repository that keeps its `.env` may copy it into a file of its own,
+  and the name of the secret does not follow the content.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read.
 
