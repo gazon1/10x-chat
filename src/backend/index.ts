@@ -8,6 +8,12 @@ export {
   type ProcessRunner,
 } from './chatgpt-use.js';
 export {
+  CHROME_USE_PERPLEXITY_BACKEND_NAME,
+  CHROME_USE_PERPLEXITY_CAPABILITIES,
+  type ChromeUsePerplexityBackendOptions,
+  createChromeUsePerplexityBackend,
+} from './chrome-use-perplexity.js';
+export {
   type AiBackend,
   type BackendCapabilities,
   BackendError,

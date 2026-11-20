@@ -1,5 +1,6 @@
 import type { ProviderName } from '../types.js';
 import { createChatgptUseBackend } from './chatgpt-use.js';
+import { createChromeUsePerplexityBackend } from './chrome-use-perplexity.js';
 import type { AiBackend } from './contract.js';
 import { createFakeBackend } from './fake.js';
 
@@ -63,6 +64,7 @@ export function resetBackends(): void {
   providers.clear();
   registerBackend(createFakeBackend());
   registerBackend(createChatgptUseBackend(), 'chatgpt');
+  registerBackend(createChromeUsePerplexityBackend(), 'perplexity');
 }
 
 /**
@@ -75,3 +77,4 @@ export function resetBackends(): void {
  */
 registerBackend(createFakeBackend());
 registerBackend(createChatgptUseBackend(), 'chatgpt');
+registerBackend(createChromeUsePerplexityBackend(), 'perplexity');

@@ -41,7 +41,7 @@ export function createChatCommand(): Command {
     )
     .option(
       '--backend <name>',
-      'Backend to use instead of the browser: chatgpt-use (the chatgpt-use CLI)',
+      'Backend to use instead of the browser (chatgpt-use, chrome-use-perplexity)',
     )
     .option(
       '--new-chat',
