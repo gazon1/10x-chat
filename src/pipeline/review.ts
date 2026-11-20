@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend, BackendOutcome, BackendResponse } from '../backend/contract.js';
 import { buildBundle, fenceFor } from '../core/bundle.js';
@@ -255,7 +255,7 @@ async function excerptOf(
     // The line of a finding about a deleted file is the line it had in the
     // base revision — the diff of a deletion numbers the lines it removes.
     const line = finding.line;
-    const lineInRange = line === undefined || (line >= 1 && line <= lines.length);
+    const lineInRange = line === undefined || (line >= 1 && line <= lineCount(content));
     return {
       text: sliceWithNumbers(lines, line),
       exists: true,
@@ -284,7 +284,7 @@ async function excerptOf(
   }
   const lines = content.split('\n');
   const line = finding.line;
-  const lineInRange = line === undefined || (line >= 1 && line <= lines.length);
+  const lineInRange = line === undefined || (line >= 1 && line <= lineCount(content));
   if (line === undefined) {
     return {
       text: lines.slice(0, 40).join('\n'),
@@ -301,6 +301,19 @@ async function excerptOf(
     .map((contentLine, index) => `${from + index + 1}: ${contentLine}`)
     .join('\n');
   return { text, exists: true, lineInRange, deleted: false, withheld: false };
+}
+
+/**
+ * The number of lines of a file.
+ *
+ * A file that ends with a newline does not have a line after it: the split
+ * leaves an empty element behind, and a line that is not there is not a place
+ * where a defect may live.
+ */
+function lineCount(content: string): number {
+  if (content === '') return 0;
+  const lines = content.split('\n').length;
+  return content.endsWith('\n') ? lines - 1 : lines;
 }
 
 /** The files that mention a file — the callers of a change. */
@@ -825,13 +838,25 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
 /**
  * Write the run to its directory: the steps and the findings as JSON, the
  * report as markdown.
+ *
+ * A run holds excerpts of the code of the repository and the findings of the
+ * reviewers: the directory and the files belong to the owner alone, the way
+ * the store of the secrets does (see `src/secrets.ts`). The POSIX modes are
+ * ignored by the file system of Windows.
  */
 export async function persistRun(run: ReviewRun, dir: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
-  await writeFile(
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') await chmod(dir, 0o700);
+  await writePrivate(
     path.join(dir, 'review.json'),
     JSON.stringify({ ...run, report: undefined }, null, 2),
-    'utf-8',
   );
-  await writeFile(path.join(dir, 'report.md'), run.report, 'utf-8');
+  await writePrivate(path.join(dir, 'report.md'), run.report);
+}
+
+/** Write a file of the run, readable by its owner only. */
+async function writePrivate(file: string, content: string): Promise<void> {
+  await writeFile(file, content, { encoding: 'utf-8', mode: 0o600 });
+  // The mode of the file can be narrowed by the umask of the shell.
+  if (process.platform !== 'win32') await chmod(file, 0o600);
 }

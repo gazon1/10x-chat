@@ -139,7 +139,9 @@ and the *Checks* table carries the steps of the pipeline.
 ```
 
 The run is written to `~/.10x-chat/reviews/<run-id>/`: `review.json` (the
-steps, the findings and the context) and `report.md` (the report).
+steps, the findings and the context) and `report.md` (the report). The
+directory and the files belong to their owner alone (`0700` and `0600`): a run
+holds excerpts of the code of the repository.
 
 The exit code of the command is the verdict of the review: `0` when the
 verdict is `APPROVE`, `1` when the review is incomplete or asks for changes.
@@ -177,7 +179,9 @@ revision under review:
 - A file the change **deletes** is verified against its content in the base
   revision, not rejected because it is gone from the head: a deletion is a
   change, and a regression that comes with it must be seen. A path that is in
-  neither the head nor the base is still rejected.
+  neither the head nor the base is still rejected. A file that ends with a
+  newline has no line after its last line: a finding on a line that is not
+  there is rejected, in the head revision and in the base revision alike.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers

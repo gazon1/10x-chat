@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -570,6 +570,28 @@ describe('the review pipeline', () => {
     expect(run.report).toContain('Unchecked input');
   });
 
+  it('writes the run of the review for its owner only', async () => {
+    // A run holds excerpts of the code of the repository: another user of the
+    // machine may not read them.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+    if (process.platform === 'win32') return;
+
+    const dir = path.join(home, 'reviews', run.id);
+    expect((await stat(dir)).mode & 0o077).toBe(0);
+    expect((await stat(path.join(dir, 'review.json'))).mode & 0o077).toBe(0);
+    expect((await stat(path.join(dir, 'report.md'))).mode & 0o077).toBe(0);
+  });
+
   it('clears the markup of HTML of a reviewer from the report', async () => {
     // A reviewer is an untrusted source: a tag in its text would be the tag
     // of the report in a viewer that renders HTML.
@@ -610,6 +632,78 @@ describe('the review pipeline', () => {
 
       const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
       const finding = { ...FINDING, file: 'src/gone.ts', line: 999 };
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(run.findings[0].verification).toBe('rejected');
+      expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a finding on the line that follows the last line of a file', async () => {
+    // A file that ends with a newline has no line after its last line: the
+    // split of the content leaves an empty element behind, and it is not a
+    // place where a defect may live.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-lastline-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'one.ts'), 'export const one = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'one.ts'), 'export const one = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/one.ts', line: 2 };
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(run.findings[0].verification).toBe('rejected');
+      expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a finding on the line that follows the last line of a deleted file', async () => {
+    // The same boundary holds for a file the change removes: its content is
+    // read from the base revision, and the last line of it is the last line.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-lastline-gone-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'gone.ts'), 'export const gone = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', 'src/gone.ts');
+      await gitIn(cwd, 'commit', '-m', 'delete');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/gone.ts', line: 2 };
       const backend = createFakeBackend([
         { prompt: '# Role: correctness', answer: answerWith([finding]) },
         { prompt: '# Role: architecture', answer: answerWith([]) },
