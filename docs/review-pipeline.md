@@ -181,7 +181,12 @@ revision under review:
   change, and a regression that comes with it must be seen. A path that is in
   neither the head nor the base is still rejected. A file that ends with a
   newline has no line after its last line: a finding on a line that is not
-  there is rejected, in the head revision and in the base revision alike.
+  there is rejected, in the head revision and in the base revision alike. The
+  range of a finding is a place in the file too: a finding whose last line is
+  past the last line of the file is rejected as well.
+- The excerpt of a verification is read from the **commit under review**, not
+  from the disk: a file that changes while the reviewers run must not reach the
+  backend, and the evidence of a verdict must be the code of the head.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers
@@ -197,7 +202,9 @@ revision under review:
   read: a repository that keeps its `.env` may copy it into a file of its own,
   and the name of the secret does not follow the content. A file the change
   **modifies** counts as well: the copy of a secret hides as well in the line
-  that a change adds to a file that was already there. A file that changes its
+  that a change adds to a file that was already there. The **destination of a
+  rename** counts as well: a file that takes the name of another one may
+  carry a secret that the change moves into it. A file that changes its
   **type** counts too — a symlink that becomes a file of its own is a change
   of the type, and the copy may hide in the file the link turns into. A copy
   hides in a line

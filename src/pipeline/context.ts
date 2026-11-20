@@ -291,7 +291,10 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
         // a name of its own, and the name of the secret does not follow it.
         ...tracked.filter((file) => !readable.has(file)).map((file) => ({ file, sha: headSha })),
       ],
-      changed.added.concat(changed.modified),
+      changed.added.concat(
+        changed.modified,
+        changed.renames.map((pair) => pair.to),
+      ),
     )),
   ];
 

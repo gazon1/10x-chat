@@ -27,6 +27,7 @@ const SOURCE = ['export function run(input: string) {', '  return exec(input);',
 
 let home: string;
 let repo: string;
+let revision: string;
 let originalHome: string | undefined;
 
 beforeEach(async () => {
@@ -36,6 +37,12 @@ beforeEach(async () => {
   repo = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-repo-'));
   await mkdir(path.join(repo, 'src'), { recursive: true });
   await writeFile(path.join(repo, 'src', 'app.ts'), SOURCE, 'utf-8');
+  // The repository is a real one with a commit: the verification reads the
+  // files of the revision under review, not the files of the disk.
+  await gitIn(repo, 'init', '--initial-branch=main');
+  await gitIn(repo, 'add', '.');
+  await gitIn(repo, 'commit', '-m', 'first');
+  revision = await gitIn(repo, 'rev-parse', 'HEAD');
 });
 
 afterEach(async () => {
@@ -54,9 +61,9 @@ function contextOf(overrides: Partial<ReviewContext> = {}): ReviewContext {
     prUrl: 'https://github.com/owner/name/pull/42',
     title: 'Add the run function',
     baseRef: 'main',
-    baseSha: 'a'.repeat(40),
+    baseSha: revision,
     headRef: 'feature',
-    headSha: 'b'.repeat(40),
+    headSha: revision,
     changedFiles: ['src/app.ts'],
     trackedFiles: ['src/app.ts'],
     deletedFiles: [],
@@ -688,6 +695,42 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('rejects a finding whose range ends past the last line of a file', async () => {
+    // The range of a finding is a place in the file too: a finding that spans
+    // lines the file does not have points at nothing.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-endline-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'one.ts'), 'export const one = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'one.ts'), 'export const one = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/one.ts', line: 1, endLine: 42 };
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(run.findings[0].verification).toBe('rejected');
+      expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a finding on the line that follows the last line of a deleted file', async () => {
     // The same boundary holds for a file the change removes: its content is
     // read from the base revision, and the last line of it is the last line.
@@ -718,6 +761,53 @@ describe('the review pipeline', () => {
 
       expect(run.findings[0].verification).toBe('rejected');
       expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the excerpt of a verification from the commit, not from the disk', async () => {
+    // A file that changes while the reviewers run must not reach the backend:
+    // the evidence of the verification is the code of the commit under review.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-race-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      // The checkout changes under the running review.
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const secret = 3;\n', 'utf-8');
+
+      const finding = { ...FINDING, file: 'src/app.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('export const a = 2;');
+      expect(verification).not.toContain('export const secret = 3;');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -1629,6 +1719,9 @@ describe('the review pipeline', () => {
     // separator, and the name must not be read as another name.
     const name = 'weird\\name.ts';
     await writeFile(path.join(repo, name), 'export const a = 1;\n', 'utf-8');
+    await gitIn(repo, 'add', '-A');
+    await gitIn(repo, 'commit', '-m', 'weird');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
     const finding = { ...FINDING, file: name, line: 1 };
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([finding]) },
@@ -1651,7 +1744,7 @@ describe('the review pipeline', () => {
     const run = await runReviewPipeline({
       backend,
       target: { cwd: repo },
-      collect: async () => contextOf({ trackedFiles: [name] }),
+      collect: async () => contextOf({ trackedFiles: [name], headSha: head }),
     });
 
     expect(run.findings[0].verification).toBe('confirmed');

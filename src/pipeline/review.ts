@@ -214,6 +214,7 @@ async function excerptOf(
   deleted: Set<string>,
   secret: Set<string>,
   baseSha: string,
+  headSha: string,
 ): Promise<{
   text: string;
   exists: boolean;
@@ -255,7 +256,7 @@ async function excerptOf(
     // The line of a finding about a deleted file is the line it had in the
     // base revision — the diff of a deletion numbers the lines it removes.
     const line = finding.line;
-    const lineInRange = line === undefined || (line >= 1 && line <= lineCount(content));
+    const lineInRange = placeInFile(lineCount(content), line, finding.endLine);
     return {
       text: sliceWithNumbers(lines, line),
       exists: true,
@@ -276,15 +277,16 @@ async function excerptOf(
       withheld: true,
     };
   }
-  let content: string;
-  try {
-    content = await readFile(resolved, 'utf-8');
-  } catch {
+  let content: string | undefined;
+  // The content comes from the commit under review, not from the disk: a file
+  // that changes while the reviewers run must not reach the backend.
+  content = await fileAtRevision(repoRoot, headSha, behind ?? name);
+  if (content === undefined) {
     return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
   }
   const lines = content.split('\n');
   const line = finding.line;
-  const lineInRange = line === undefined || (line >= 1 && line <= lineCount(content));
+  const lineInRange = placeInFile(lineCount(content), line, finding.endLine);
   if (line === undefined) {
     return {
       text: lines.slice(0, 40).join('\n'),
@@ -314,6 +316,24 @@ function lineCount(content: string): number {
   if (content === '') return 0;
   const lines = content.split('\n').length;
   return content.endsWith('\n') ? lines - 1 : lines;
+}
+
+/**
+ * The place a finding points at is in the file.
+ *
+ * A finding names a line, and sometimes the last line of the range it covers.
+ * Both must be inside the file: a finding that spans lines the file does not
+ * have points at nothing, and it cannot be a defect of this change.
+ */
+function placeInFile(
+  lines: number,
+  line: number | undefined,
+  endLine: number | undefined,
+): boolean {
+  if (line !== undefined && (line < 1 || line > lines)) return false;
+  if (endLine !== undefined && (endLine < 1 || endLine > lines)) return false;
+  if (line !== undefined && endLine !== undefined && endLine < line) return false;
+  return true;
 }
 
 /** The files that mention a file — the callers of a change. */
@@ -357,13 +377,14 @@ async function verificationMaterial(
   deleted: Set<string>,
   secret: Set<string>,
   baseSha: string,
+  headSha: string,
 ): Promise<{
   material: string;
   exists: boolean;
   lineInRange: boolean;
   withheld: boolean;
 }> {
-  const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, secret, baseSha);
+  const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, secret, baseSha, headSha);
   const callers = finding.file
     ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : undefined)
     : [];
@@ -436,10 +457,13 @@ async function verifyCandidates(options: {
   secret: Set<string>;
   /** The commit of the base revision — the source of a deleted file. */
   baseSha: string;
+  /** The commit of the revision under review — the source of every other file. */
+  headSha: string;
   model?: string;
   timeoutMs?: number;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
-  const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha } = options;
+  const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha, headSha } =
+    options;
   const startedAt = Date.now();
   const material: string[] = [];
   const mechanical = new Map<
@@ -454,6 +478,7 @@ async function verifyCandidates(options: {
       deleted,
       secret,
       baseSha,
+      headSha,
     );
     mechanical.set(finding.id, {
       exists: prepared.exists,
@@ -792,6 +817,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       deleted: new Set(context?.deletedFiles ?? []),
       secret: new Set(context?.secretFiles ?? []),
       baseSha: context?.baseSha ?? '',
+      headSha: context?.headSha ?? '',
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
