@@ -868,6 +868,77 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret of a file that stays out of a file the change modifies', async () => {
+    // The copy of a secret hides as well in the line that a change adds to a
+    // file that was already there.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-modified-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await writeFile(path.join(cwd, 'config.ts'), 'export const a = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(
+        path.join(cwd, 'config.ts'),
+        `export const a = 1;\n${Array.from({ length: 200 }, (_, index) => `const line${index} = ${index};`).join('\n')}\nTOKEN=SECRET_VALUE\n`,
+        'utf-8',
+      );
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the secret of a file that stays out of a line that says more', async () => {
+    // The copy of a secret hides in a line that says more than the secret:
+    // the line of the secret, and its value.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-embedded-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'config.ts'), 'const token = "SECRET_VALUE";\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a file that uses the name of the secret but not its value', async () => {
+    // The key of a secret is a name that the code uses on purpose: a file
+    // that reads it is not a file that holds the secret.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-name-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'config.ts'), 'const token = process.env.TOKEN;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).not.toContain('config.ts');
+      expect(context.diff).toContain('process.env.TOKEN');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a checkout that hides the deletion of a file behind a git flag', async () => {
     // The flag hides the deletion from the status: the file of the revision
     // is not on the disk, and the review must not read a code it does not have.

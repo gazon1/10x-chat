@@ -291,7 +291,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
         // a name of its own, and the name of the secret does not follow it.
         ...tracked.filter((file) => !readable.has(file)).map((file) => ({ file, sha: headSha })),
       ],
-      changed.added,
+      changed.added.concat(changed.modified),
     )),
   ];
 
@@ -421,11 +421,12 @@ async function readableFiles(repoRoot: string, sha: string): Promise<string[]> {
 async function changedNames(
   repoRoot: string,
   range: string,
-): Promise<{ renames: { from: string; to: string }[]; added: string[] }> {
+): Promise<{ renames: { from: string; to: string }[]; added: string[]; modified: string[] }> {
   const listed = await gitRaw(['diff', '--name-status', '-M10%', '-z', range], repoRoot);
   const parts = listed.split('\0').filter((part) => part !== '');
   const renames: { from: string; to: string }[] = [];
   const added: string[] = [];
+  const modified: string[] = [];
   let index = 0;
   while (index < parts.length) {
     const status = parts[index];
@@ -438,45 +439,73 @@ async function changedNames(
       continue;
     }
     if (status.startsWith('A') && first) added.push(first);
+    if (status.startsWith('M') && first) modified.push(first);
     index += 2;
   }
-  return { renames, added };
+  return { renames, added, modified };
 }
 
 /**
- * The added files that carry the content of a secret file.
+ * The files of the change that carry the content of a secret file.
  *
- * A secret may survive in a file the change adds: the rename detection of
+ * A secret may survive in a file the change touches: the rename detection of
  * git cannot see it when the content was rewritten, and the lines of the
  * secret decide then. A file that carries a line of a secret is a secret
  * under its new name too — and the secret may be one that the change does not
  * delete: a repository that keeps its `.env` may copy it into a file of its
- * own, and the name of the secret does not follow the content.
+ * own, and the name of the secret does not follow the content. A file that
+ * was already there counts too: the copy of a secret hides as well in the
+ * line that a change adds to a file of the repository.
  */
 async function carryingTheSecret(
   repoRoot: string,
   headSha: string,
   secrets: { file: string; sha: string }[],
-  added: string[],
+  touched: string[],
 ): Promise<string[]> {
-  if (secrets.length === 0 || added.length === 0) return [];
-  const secretLines = new Set<string>();
+  if (secrets.length === 0 || touched.length === 0) return [];
+  const exact = new Set<string>();
+  const fragments: string[] = [];
   for (const secret of secrets) {
     for (const line of await meaningfulLines(repoRoot, secret.sha, secret.file)) {
-      secretLines.add(line);
+      exact.add(line);
+      // The copy of a secret hides in a line that says more than the secret:
+      // the line itself, and the value it holds.
+      if (line.length >= 8) fragments.push(line);
+      const value = secretValue(line);
+      if (value !== undefined) fragments.push(value);
     }
   }
-  if (secretLines.size === 0) return [];
+  if (exact.size === 0) return [];
   const carrying: string[] = [];
-  for (const file of added) {
+  for (const file of touched) {
     for (const line of await meaningfulLines(repoRoot, headSha, file)) {
-      if (secretLines.has(line)) {
+      const holds = exact.has(line) || fragments.some((fragment) => line.includes(fragment));
+      if (holds) {
         carrying.push(file);
         break;
       }
     }
   }
   return carrying;
+}
+
+/**
+ * The value of a line of a secret — the part after the first `=`.
+ *
+ * The value is the secret, the key is a name that the code of the repository
+ * uses on purpose (`process.env.DATABASE_URL`). A value of twelve characters
+ * or more is distinctive enough to be looked for in the files of the change.
+ */
+function secretValue(line: string): string | undefined {
+  const at = line.indexOf('=');
+  if (at < 0) return undefined;
+  const value = line
+    .slice(at + 1)
+    .trim()
+    .replace(/^["']/, '')
+    .replace(/["']$/, '');
+  return value.length >= 12 ? value : undefined;
 }
 
 /**

@@ -191,7 +191,13 @@ revision under review:
   and a secret that was copied into a file of its own is not a rename. The
   secret of the base and the secret that stays in the repository are both
   read: a repository that keeps its `.env` may copy it into a file of its own,
-  and the name of the secret does not follow the content.
+  and the name of the secret does not follow the content. A file the change
+  **modifies** counts as well: the copy of a secret hides as well in the line
+  that a change adds to a file that was already there. A copy hides in a line
+  that says more than the secret too — the line of the secret, and the value it
+  holds, which is the secret itself: the key is a name that the code of the
+  repository uses on purpose (`process.env.DATABASE_URL`), and a file that
+  reads the name is not a file that holds the secret.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read.
 - The title, the names of the files, the diff and the excerpts of the source are
