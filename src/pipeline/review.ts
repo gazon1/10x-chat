@@ -681,7 +681,7 @@ async function verifyCandidates(options: {
     // The callers of a finding are part of its material: a verdict that rests
     // on a search that failed rests on material that was never collected, so
     // the finding is not settled.
-    if (state && state.callersFailure) {
+    if (state?.callersFailure) {
       return {
         ...finding,
         verification: 'unverified' as const,
