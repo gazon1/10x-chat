@@ -277,7 +277,6 @@ export function jsonCandidates(text: string): JsonCandidates {
   sources.push({ text: plain.join(''), fenced: false, at: 0 });
 
   const candidates: JsonCandidate[] = [];
-  const seen = new Set<string>();
   let exhausted = false;
   for (const source of sources) {
     // The end of the last payload that was read: the delimiters inside it are
@@ -303,10 +302,10 @@ export function jsonCandidates(text: string): JsonCandidates {
       }
       try {
         const value: unknown = JSON.parse(slice);
-        const key = JSON.stringify(value);
         covered = Math.max(covered, index + slice.length);
-        if (seen.has(key)) continue;
-        seen.add(key);
+        // Two payloads that carry the same value are two payloads: the answer
+        // comes last, and an example that repeats the answer of the reviewer
+        // does not erase it.
         const at = source.at + index;
         candidates.push({
           value,

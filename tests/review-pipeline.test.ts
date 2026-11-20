@@ -3369,6 +3369,21 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
+  it('keeps an answer that repeats the example', () => {
+    // The example and the answer carry the same value: the example does not
+    // erase the answer, and the answer comes last.
+    const answer = [
+      'For example:',
+      JSON.stringify({ findings: [FINDING] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
   it('takes no answer from an answer that carries nothing but an example', () => {
     // The reviewer showed the format and answered nothing: the example is not
     // the answer, and the step of the reviewer fails instead of reporting the
