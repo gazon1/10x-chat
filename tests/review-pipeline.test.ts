@@ -111,6 +111,11 @@ function answerWithDecisions(decisions: unknown[]): string {
   return JSON.stringify({ findings: [], decisions });
 }
 
+/** The answer of a reviewer with a finding and a decision in one payload. */
+function answerWithBoth(findings: unknown[], decisions: unknown[]): string {
+  return JSON.stringify({ findings, decisions });
+}
+
 /** The decision a reviewer reports — what the change decided on its own. */
 const DECISION = {
   decision: 'The retry of a failed delivery is not idempotent',
@@ -263,11 +268,36 @@ describe('the review pipeline', () => {
     expect(run.decisions[0].reportedBy).toEqual(['architecture']);
     // A decision is not a defect: it is not a finding either.
     expect(run.findings).toHaveLength(0);
+    // And a decision that waits for a human never blocks the merge.
+    expect(run.verdict).toBe('APPROVE');
 
     const section = run.report.split('## Implicit decisions and trade-offs')[1] ?? '';
     expect(section).toContain(DECISION.decision);
     expect(section).toContain('Previous behavior or alternative');
     expect(section).toContain('Human confirmation: needed');
+  });
+
+  it('keeps the finding of an answer that carries a decision too', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWithBoth([FINDING], [DECISION]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    // The list of the decisions travels next to the list of the findings: it
+    // is not a list of findings, and it does not hide the finding either.
+    expect(run.findings).toHaveLength(1);
+    expect(run.findings[0].title).toBe(FINDING.title);
+    expect(run.decisions).toHaveLength(1);
+    expect(run.steps.find((candidate) => candidate.id === 'review-correctness')?.status).toBe(
+      'passed',
+    );
   });
 
   it('merges the decisions that two roles named alike', async () => {

@@ -152,6 +152,10 @@ it once — the id of a decision is a hash of its normalized text, and the
 normalization keeps the order of the words and the negation, so "A sends to B"
 and "B sends to A", or a decision and its opposite, stay two decisions.
 
+**The two lists never read each other.** The list of the decisions is not a
+list of findings: an answer that carries both keeps its finding and hands its
+decisions to the audit, and neither list hides the other.
+
 **A decision is not a defect.** The decisions are not verified against the
 source the way the findings are, and they never become findings: they are the
 reading of the reviewers, and the report says so. Only a proven defect blocks

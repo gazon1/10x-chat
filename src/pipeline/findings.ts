@@ -437,11 +437,17 @@ function payloadEntries(
  * would then be read as an empty review. A bare list is a list of entries only
  * when it carries objects that are not payloads themselves: a list of strings
  * is a list of the prose, and a list of payloads is a container of payloads.
+ *
+ * A list of another kind is no list of entries: the decisions of an answer
+ * travel next to the findings, and a bare list of them would otherwise be read
+ * as a list of findings and fail the step of the role. An entry that carries
+ * the key of the other list is an entry of that list, not of this one.
  */
 function payloadChoices<T extends { invalid: string[] }>(
   candidates: JsonCandidate[],
   key: string,
   parse: (entries: unknown[]) => T,
+  foreignKey = '',
 ): CandidateChoice<T>[] {
   const choices: CandidateChoice<T>[] = [];
   for (const candidate of candidates) {
@@ -452,7 +458,8 @@ function payloadChoices<T extends { invalid: string[] }>(
         entry !== null &&
         typeof entry === 'object' &&
         !Array.isArray(entry) &&
-        !(key in (entry as Record<string, unknown>)),
+        !(key in (entry as Record<string, unknown>)) &&
+        !(foreignKey !== '' && foreignKey in (entry as Record<string, unknown>)),
     );
     if (!payload.keyed && !carriesEntries) {
       // An empty list is an answer that carries no findings: the prompt asks
@@ -639,8 +646,13 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(candidates, 'findings', (entries) =>
-    parseFindingEntries(entries, role),
+  const choices = payloadChoices(
+    candidates,
+    'findings',
+    (entries) => parseFindingEntries(entries, role),
+    // The decisions of the answer travel next to the findings: a bare list of
+    // them is not a list of findings.
+    'needsHuman',
   );
   if (choices.length === 0) {
     return {
