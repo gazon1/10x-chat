@@ -120,6 +120,13 @@ export interface ReviewContext {
    * revision, not rejected because the file is gone.
    */
   deletedFiles: string[];
+  /**
+   * The files of the revision whose content is never read.
+   *
+   * A file of this list may hold a secret: its content reaches neither the
+   * diff of the bundle nor the evidence of a finding.
+   */
+  secretFiles: string[];
   /** The diff of the change, bounded. */
   diff: string;
   /** Whether the diff was cut — the bound of the bundle. */

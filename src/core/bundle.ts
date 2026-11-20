@@ -2,6 +2,22 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 
+/**
+ * The files that are never bundled — they may hold a secret.
+ *
+ * The patterns reach every directory: a name in the root and the same name
+ * in a subdirectory are the same secret.
+ */
+export const SECRET_EXCLUDES = [
+  '**/.env*',
+  '**/*.pem',
+  '**/*.key',
+  '**/id_rsa',
+  '**/id_ed25519',
+  '**/.credentials/**',
+  '**/secrets/**',
+];
+
 const DEFAULT_EXCLUDES = [
   'node_modules/**',
   'dist/**',
@@ -12,13 +28,7 @@ const DEFAULT_EXCLUDES = [
   '*.tgz',
   '.DS_Store',
   // Security: never bundle secrets
-  '.env*',
-  '*.pem',
-  '*.key',
-  '**/id_rsa',
-  '**/id_ed25519',
-  '**/.credentials/**',
-  '**/secrets/**',
+  ...SECRET_EXCLUDES,
 ];
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1 MB

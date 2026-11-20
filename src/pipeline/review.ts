@@ -114,6 +114,9 @@ function contextBlock(context: ReviewContext): string {
     ? `pull request #${context.pr}${context.prUrl ? ` — ${context.prUrl}` : ''}`
     : `branch ${context.headRef}`;
   const files = context.changedFiles.length > 0 ? context.changedFiles.join('\n') : '(none)';
+  // The files whose content is withheld are named: the reviewers must know
+  // that the change touches them, even though they cannot read them.
+  const withheld = context.changedFiles.filter((file) => context.secretFiles.includes(file));
   return `# Review context
 Repository: ${context.repository}
 Target: ${target}
@@ -122,7 +125,11 @@ Base: ${context.baseRef} (${context.baseSha})
 Head: ${context.headRef} (${context.headSha})
 Changed files:
 ${files}
-
+${
+  withheld.length > 0
+    ? `\nThe content of these files is withheld: they may hold a secret.\n${withheld.join('\n')}\n`
+    : ''
+}
 Conventions: read AGENTS.md, CONTRIBUTING.md and the README of the repository before you judge the change.
 ${
   context.diffTruncated
@@ -172,9 +179,30 @@ async function excerptOf(
   finding: Finding,
   tracked: Set<string>,
   deleted: Set<string>,
+  secret: Set<string>,
   baseSha: string,
-): Promise<{ text: string; exists: boolean; lineInRange: boolean; deleted: boolean }> {
-  if (!finding.file) return { text: '', exists: false, lineInRange: false, deleted: false };
+): Promise<{
+  text: string;
+  exists: boolean;
+  lineInRange: boolean;
+  deleted: boolean;
+  withheld: boolean;
+}> {
+  if (!finding.file) {
+    return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
+  }
+  const name = normalizeRepoPath(finding.file);
+  // A file that may hold a secret is never read: its content must not reach
+  // the backend, and a finding about it cannot be settled.
+  if (secret.has(name)) {
+    return {
+      text: '(the content of this file is withheld: it may hold a secret)',
+      exists: false,
+      lineInRange: false,
+      deleted: false,
+      withheld: true,
+    };
+  }
   // Only a file of the revision under review is read: a local file that was
   // never committed (a secret, a key) must not reach the backend.
   const resolved = await resolveTrackedFile(repoRoot, finding.file, tracked);
@@ -183,13 +211,12 @@ async function excerptOf(
     // content is read from the base revision: a deletion is a change, and a
     // finding about it must be judged on the code it removed, not on the
     // absence of the file.
-    const name = normalizeRepoPath(finding.file);
     if (!deleted.has(name)) {
-      return { text: '', exists: false, lineInRange: false, deleted: false };
+      return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
     }
     const content = await fileAtRevision(repoRoot, baseSha, name);
     if (content === undefined) {
-      return { text: '', exists: false, lineInRange: false, deleted: true };
+      return { text: '', exists: false, lineInRange: false, deleted: true, withheld: false };
     }
     const lines = content.split('\n');
     // The line of a finding about a deleted file is the line it had in the
@@ -201,19 +228,26 @@ async function excerptOf(
       exists: true,
       lineInRange,
       deleted: true,
+      withheld: false,
     };
   }
   let content: string;
   try {
     content = await readFile(resolved, 'utf-8');
   } catch {
-    return { text: '', exists: false, lineInRange: false, deleted: false };
+    return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
   }
   const lines = content.split('\n');
   const line = finding.line;
   const lineInRange = line === undefined || (line >= 1 && line <= lines.length);
   if (line === undefined) {
-    return { text: lines.slice(0, 40).join('\n'), exists: true, lineInRange: true, deleted: false };
+    return {
+      text: lines.slice(0, 40).join('\n'),
+      exists: true,
+      lineInRange: true,
+      deleted: false,
+      withheld: false,
+    };
   }
   const from = Math.max(0, line - 16);
   const to = Math.min(lines.length, line + 15);
@@ -221,7 +255,7 @@ async function excerptOf(
     .slice(from, to)
     .map((contentLine, index) => `${from + index + 1}: ${contentLine}`)
     .join('\n');
-  return { text, exists: true, lineInRange, deleted: false };
+  return { text, exists: true, lineInRange, deleted: false, withheld: false };
 }
 
 /** The files that mention a file — the callers of a change. */
@@ -260,9 +294,15 @@ async function verificationMaterial(
   finding: Finding,
   tracked: Set<string>,
   deleted: Set<string>,
+  secret: Set<string>,
   baseSha: string,
-): Promise<{ material: string; exists: boolean; lineInRange: boolean }> {
-  const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, baseSha);
+): Promise<{
+  material: string;
+  exists: boolean;
+  lineInRange: boolean;
+  withheld: boolean;
+}> {
+  const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, secret, baseSha);
   const callers = finding.file
     ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : undefined)
     : [];
@@ -286,7 +326,12 @@ async function verificationMaterial(
   ]
     .filter((part) => part !== '')
     .join('\n');
-  return { material, exists: excerpt.exists, lineInRange: excerpt.lineInRange };
+  return {
+    material,
+    exists: excerpt.exists,
+    lineInRange: excerpt.lineInRange,
+    withheld: excerpt.withheld,
+  };
 }
 
 /**
@@ -306,18 +351,34 @@ async function verifyCandidates(options: {
   tracked: Set<string>;
   /** The files the change removes — they are read from the base revision. */
   deleted: Set<string>;
+  /** The files that may hold a secret — their content is never read. */
+  secret: Set<string>;
   /** The commit of the base revision — the source of a deleted file. */
   baseSha: string;
   model?: string;
   timeoutMs?: number;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
-  const { backend, runId, candidates, repoRoot, tracked, deleted, baseSha } = options;
+  const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha } = options;
   const startedAt = Date.now();
   const material: string[] = [];
-  const mechanical = new Map<string, { exists: boolean; lineInRange: boolean }>();
+  const mechanical = new Map<
+    string,
+    { exists: boolean; lineInRange: boolean; withheld: boolean }
+  >();
   for (const finding of candidates) {
-    const prepared = await verificationMaterial(repoRoot, finding, tracked, deleted, baseSha);
-    mechanical.set(finding.id, { exists: prepared.exists, lineInRange: prepared.lineInRange });
+    const prepared = await verificationMaterial(
+      repoRoot,
+      finding,
+      tracked,
+      deleted,
+      secret,
+      baseSha,
+    );
+    mechanical.set(finding.id, {
+      exists: prepared.exists,
+      lineInRange: prepared.lineInRange,
+      withheld: prepared.withheld,
+    });
     material.push(prepared.material);
   }
 
@@ -386,6 +447,15 @@ async function verifyCandidates(options: {
   const findings = candidates.map((finding) => {
     const state = mechanical.get(finding.id);
     const verdict = verdicts.get(finding.id);
+    // The content of a file that may hold a secret is never read: a finding
+    // about it cannot be settled, and it is not dropped either.
+    if (finding.file && state && state.withheld) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: 'the content of the file is withheld: it may hold a secret',
+      };
+    }
     // A finding that points at a file or a line that is not in the checkout
     // cannot be a defect of this change.
     if (finding.file && state && (!state.exists || !state.lineInRange)) {
@@ -636,6 +706,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       repoRoot: context?.repoRoot ?? '',
       tracked: new Set(context?.trackedFiles ?? []),
       deleted: new Set(context?.deletedFiles ?? []),
+      secret: new Set(context?.secretFiles ?? []),
       baseSha: context?.baseSha ?? '',
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),

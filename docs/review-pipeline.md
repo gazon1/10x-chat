@@ -170,6 +170,11 @@ revision under review:
   revision, not rejected because it is gone from the head: a deletion is a
   change, and a regression that comes with it must be seen. A path that is in
   neither the head nor the base is still rejected.
+- A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
+  `.credentials` or a `secrets` directory — is never read: its content reaches
+  neither the diff of the bundle nor the evidence of a finding. The reviewers
+  are told that the change touches it, and a finding about it stays
+  `Unverified`: it cannot be settled without the content.
 
 ## The verdict of the report
 

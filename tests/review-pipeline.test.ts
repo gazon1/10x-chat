@@ -60,6 +60,7 @@ function contextOf(overrides: Partial<ReviewContext> = {}): ReviewContext {
     changedFiles: ['src/app.ts'],
     trackedFiles: ['src/app.ts'],
     deletedFiles: [],
+    secretFiles: [],
     diff: '--- a/src/app.ts\n+++ b/src/app.ts\n+export function run() {}',
     diffTruncated: false,
     ...overrides,
@@ -438,6 +439,53 @@ describe('the review pipeline', () => {
 
       expect(run.findings[0].verification).toBe('rejected');
       expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a secret out of the diff and out of the evidence', async () => {
+    // A file that may hold a secret is never read: its content reaches
+    // neither the diff of the bundle nor the evidence of a finding.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=first\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('.env');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+
+      const finding = { ...FINDING, file: '.env', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+      expect(verification).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

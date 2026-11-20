@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
+import { SECRET_EXCLUDES } from '../core/bundle.js';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
 /** The bound of the diff of the bundle — a bigger change is cut, not hidden. */
@@ -246,7 +247,16 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   // against them is a finding about the deletion, not about a missing file.
   const removed = await deletedFiles(repoRoot, baseSha, headSha);
 
-  const diffOutput = await git(['diff', range], cwd);
+  // The files that may hold a secret are never read: their content must not
+  // reach the backend — neither in the diff of the change nor in the
+  // evidence of a finding. The checkout is the head and it is clean, so the
+  // index of the repository is the tree of the head.
+  const readable = new Set(
+    await gitNames(['ls-files', '-z', '--', ':(top)**', ...secretPathspecs()], repoRoot),
+  );
+  const secretFiles = tracked.filter((file) => !readable.has(file));
+
+  const diffOutput = await git(['diff', range, '--', ':(top)**', ...secretPathspecs()], cwd);
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
     ? `${diffOutput.slice(0, MAX_DIFF_CHARS)}\n\n[the diff was cut here — ${diffOutput.length - MAX_DIFF_CHARS} characters are missing]`
@@ -265,6 +275,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     changedFiles,
     trackedFiles: tracked,
     deletedFiles: removed,
+    secretFiles,
     diff,
     diffTruncated,
   };
@@ -320,7 +331,16 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
 }
 
 /**
- * The files of a revision — the paths, relative to the root of the repository.
+ * The pathspecs of the files that may hold a secret.
+ *
+ * The patterns are the patterns of the bundle — git reads them as a glob.
+ */
+function secretPathspecs(): string[] {
+  return SECRET_EXCLUDES.map((pattern) => `:(exclude,glob)${pattern}`);
+}
+
+/**
+ * The files of the revision — the paths, relative to the root of the repository.
  *
  * The list comes from the commit, not from the disk: a file that is not
  * committed (a secret, a key, a local scratch file) is not a file of the
