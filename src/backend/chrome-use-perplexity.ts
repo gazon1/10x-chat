@@ -386,9 +386,10 @@ export function createChromeUsePerplexityBackend(
 
     let submitted = false;
     let partialText = '';
-    // The session is only closed when it can exist: a request whose deadline
-    // expired before the first command must not touch the browser at all, and a
-    // chrome-use that could not start created no session to tear down.
+    // A session exists only after the open command was issued and only when the
+    // process really started. A request whose deadline expired before the first
+    // command must not touch the browser at all, and a chrome-use that could not
+    // start created no session to tear down.
     let sessionStarted = false;
 
     const cleanup = async (): Promise<void> => {

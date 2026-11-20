@@ -14,7 +14,6 @@ import { type BrowserProxy, browserProcessEnv, proxyFromEnv, proxyLaunchOptions 
 
 let _chromium: BrowserType | undefined;
 let _engineName: 'cloakbrowser' | 'unknown' = 'unknown';
-let _loaded = false;
 
 /**
  * The launch options of the browser.
@@ -93,7 +92,6 @@ async function loadEngine(): Promise<BrowserType> {
       },
     } as unknown as BrowserType;
     _engineName = 'cloakbrowser';
-    _loaded = true;
     return _chromium;
   } catch (err) {
     throw new Error(
@@ -110,9 +108,4 @@ export async function getChromium(): Promise<BrowserType> {
 /** Which engine is active. Returns 'unknown' if not yet loaded. */
 export function getEngineName(): 'cloakbrowser' | 'unknown' {
   return _engineName;
-}
-
-/** Whether the engine has been loaded yet. */
-export function isEngineLoaded(): boolean {
-  return _loaded;
 }
