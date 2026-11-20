@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend, BackendOutcome, BackendResponse } from '../backend/contract.js';
 import { buildBundle, fenceFor } from '../core/bundle.js';
@@ -277,10 +277,9 @@ async function excerptOf(
       withheld: true,
     };
   }
-  let content: string | undefined;
   // The content comes from the commit under review, not from the disk: a file
   // that changes while the reviewers run must not reach the backend.
-  content = await fileAtRevision(repoRoot, headSha, behind ?? name);
+  const content = await fileAtRevision(repoRoot, headSha, behind ?? name);
   if (content === undefined) {
     return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
   }
@@ -337,18 +336,17 @@ function placeInFile(
 }
 
 /** The files that mention a file — the callers of a change. */
-async function callersOf(repoRoot: string, file: string, revision?: string): Promise<string[]> {
+async function callersOf(repoRoot: string, file: string, revision: string): Promise<string[]> {
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     execFile(
       'git',
-      // A deleted file is grepped in the revision it belongs to: the head does
-      // not have it any more, and the callers that matter are the ones of the
-      // code that was removed.
-      // The name of the file is the pattern, and `--` closes the options: the
-      // search runs over the whole tree, and the files that mention the file
-      // are its callers.
-      revision ? ['grep', '-l', '-F', file, revision] : ['grep', '-l', '-F', file, '--'],
+      // The search runs in the revision under review, not in the working tree:
+      // the callers of a change are the ones of the code that is reviewed, and
+      // a file that changes while the reviewers run must not reach the backend.
+      // The name of the file is the pattern, and the revision is the tree it
+      // is searched in.
+      ['grep', '-l', '-F', file, revision],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {
@@ -360,7 +358,7 @@ async function callersOf(repoRoot: string, file: string, revision?: string): Pro
             .split('\n')
             .map((line) => line.trim())
             .filter((line) => line !== '')
-            .map((line) => (revision ? line.replace(`${revision}:`, '') : line))
+            .map((line) => line.replace(`${revision}:`, ''))
             .filter((line) => line !== '')
             .slice(0, 20),
         );
@@ -386,7 +384,7 @@ async function verificationMaterial(
 }> {
   const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, secret, baseSha, headSha);
   const callers = finding.file
-    ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : undefined)
+    ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : headSha)
     : [];
   // The excerpt comes from the repository: a fence that it cannot close keeps
   // it data and not an instruction. The claim of the reviewer carries the
@@ -703,6 +701,10 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         prompt: contextBlock(context),
         files: [...changed, ...conventions],
         cwd: context.repoRoot,
+        // The content comes from the commit under review, not from the disk: a
+        // file that changes while the reviewers run must not reach the backend.
+        read: (file) =>
+          fileAtRevision(context.repoRoot, context.headSha, normalizeRepoPath(file)),
       });
       const withheld = context.changedFiles.filter((file) =>
         context.secretFiles.includes(file),

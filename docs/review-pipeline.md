@@ -156,7 +156,8 @@ A caller must not read a clean exit of an incomplete review as an approval.
 - The bundle holds at most 25 changed files; the omitted ones are named in the
   step.
 - The verification pass gets the excerpt around the line of a finding (32
-  lines) and the files that mention it — not the whole repository.
+  lines) and the files that mention it — not the whole repository. The excerpt,
+  the bundle and the callers all come from the commit under review.
 
 ## The rules of the collection
 
@@ -186,7 +187,11 @@ revision under review:
   past the last line of the file is rejected as well.
 - The excerpt of a verification is read from the **commit under review**, not
   from the disk: a file that changes while the reviewers run must not reach the
-  backend, and the evidence of a verdict must be the code of the head.
+  backend, and the evidence of a verdict must be the code of the head. The
+  **bundle** of the reviewers is read from the same commit — it is the context
+  of the change, and the context must be the context of the head. The **callers**
+  of a file are searched in the revision under review as well: the files that
+  mention it are the ones of the code that is reviewed.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers

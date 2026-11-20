@@ -813,6 +813,102 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('reads the bundle of the review from the commit, not from the disk', async () => {
+    // The bundle is the context of the reviewers: it must be the code of the
+    // commit under review, and not the code of a checkout that changes while
+    // the reviewers run.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-bundle-race-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      // The checkout changes under the running review.
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const secret = 3;\n', 'utf-8');
+
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+      const prompts: string[] = [];
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const review = prompts.find((prompt) => prompt.includes('# Role: correctness')) ?? '';
+      expect(review).toContain('export const a = 2;');
+      expect(review).not.toContain('export const secret = 3;');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('finds the callers of a finding in the revision under review', async () => {
+    // The callers of a change are the ones of the code that is reviewed: a
+    // file that changes while the reviewers run must not reach the backend.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-callers-race-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'src', 'main.ts'), "import './src/app.ts';\n", 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'app.ts'), 'export const a = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      // The checkout gains a caller that the commit under review does not have.
+      await writeFile(path.join(cwd, 'src', 'other.ts'), "import './src/app.ts';\n", 'utf-8');
+      await gitIn(cwd, 'add', '.');
+
+      const finding = { ...FINDING, file: 'src/app.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('src/main.ts');
+      expect(verification).not.toContain('src/other.ts');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('gives the verifier the files that mention the file of a finding', async () => {
     // The callers of a change are the files that mention it: the material of
     // the verification names them.

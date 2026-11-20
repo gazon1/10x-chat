@@ -49,6 +49,16 @@ interface BundleOptions {
   prompt: string;
   files?: string[];
   cwd?: string;
+  /**
+   * The reader of the content of a file — the disk by default.
+   *
+   * A review reads the files of the commit under review: the reader of the
+   * pipeline reads the commit, so a file that changes on the disk while the
+   * reviewers run does not reach the backend. The path is the one of the file
+   * relative to the working directory, and `undefined` means that the file is
+   * not there.
+   */
+  read?: (file: string) => Promise<string | undefined>;
 }
 
 /**
@@ -95,15 +105,28 @@ export async function buildBundle(opts: BundleOptions): Promise<string> {
   parts.push(`# Context Files (${resolvedFiles.length})\n`);
 
   for (const filePath of resolvedFiles.sort()) {
-    const fileStat = await stat(filePath);
-    if (fileStat.size > MAX_FILE_SIZE) {
-      parts.push(`## ${path.relative(cwd, filePath)} (SKIPPED — exceeds 1 MB)\n`);
-      continue;
-    }
-
-    const content = await readFile(filePath, 'utf-8');
-    const ext = path.extname(filePath).slice(1) || 'txt';
     const relativePath = path.relative(cwd, filePath);
+    let content: string;
+    if (opts.read) {
+      const read = await opts.read(relativePath);
+      if (read === undefined) {
+        parts.push(`## ${relativePath} (SKIPPED — not in the revision)\n`);
+        continue;
+      }
+      if (Buffer.byteLength(read) > MAX_FILE_SIZE) {
+        parts.push(`## ${relativePath} (SKIPPED — exceeds 1 MB)\n`);
+        continue;
+      }
+      content = read;
+    } else {
+      const fileStat = await stat(filePath);
+      if (fileStat.size > MAX_FILE_SIZE) {
+        parts.push(`## ${relativePath} (SKIPPED — exceeds 1 MB)\n`);
+        continue;
+      }
+      content = await readFile(filePath, 'utf-8');
+    }
+    const ext = path.extname(filePath).slice(1) || 'txt';
 
     const fence = fenceFor(content);
     parts.push(`## ${relativePath}\n`);
