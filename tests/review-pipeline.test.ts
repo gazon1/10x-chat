@@ -2791,6 +2791,16 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid).toEqual([]);
   });
 
+  it('does not let a reviewer that is not the architecture pass answer with decisions only', () => {
+    // The decisions are the answer of the architecture pass. The other
+    // reviewers have one question to answer, and a payload without their
+    // findings is not their answer.
+    const parsed = parseReviewerFindings(JSON.stringify({ decisions: [] }), 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('the decisions of the change and no findings');
+  });
+
   it('reads the payload of an answer that carries prose around it', () => {
     const answer = [
       'Here is what I found [note].',

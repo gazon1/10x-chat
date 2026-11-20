@@ -671,14 +671,30 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
       invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
     };
   }
+  // The decisions are the answer of the architecture pass. An answer of another
+  // pass that carries them and no findings is an answer to the wrong question:
+  // the empty list of the decisions must not pass as an empty list of findings.
+  if (
+    role !== 'architecture' &&
+    candidates.some((candidate) => answersTheDecisionQuestion(candidate.value))
+  ) {
+    return {
+      findings: [],
+      invalid: ['the answer carries the decisions of the change and no findings', ...notes],
+    };
+  }
   const choices = payloadChoices(candidates, 'findings', (entries) =>
     parseFindingEntries(entries, role),
   );
   if (choices.length === 0) {
     // An answer that carries the decisions of the change and no finding is an
     // answer of the architecture pass: it has nothing to report, and that is
-    // not a malformed answer.
-    if (candidates.some((candidate) => keyedEntries(candidate.value, 'decisions') !== undefined)) {
+    // not a malformed answer. The other reviewers have one question to
+    // answer, and a payload without their findings is not their answer.
+    if (
+      role === 'architecture' &&
+      candidates.some((candidate) => keyedEntries(candidate.value, 'decisions') !== undefined)
+    ) {
       return { findings: [], invalid: [...notes] };
     }
     return {
@@ -701,6 +717,20 @@ function carriesMalformedFindings(value: unknown): boolean {
   const record = value as Record<string, unknown>;
   if (!('findings' in record)) return false;
   return !Array.isArray(record.findings);
+}
+
+/**
+ * Whether a payload carries the decisions of the change and no findings.
+ *
+ * The answer of the architecture pass carries both keys. An answer of another
+ * pass that carries the decisions answers a question it was not asked: the
+ * empty list of the decisions must not pass as an empty list of findings.
+ */
+function answersTheDecisionQuestion(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!('decisions' in record)) return false;
+  return !('findings' in record);
 }
 
 /** The findings of one payload of an answer. */
