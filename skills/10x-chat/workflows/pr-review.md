@@ -332,7 +332,7 @@ When the approach materially affects the complexity or the long-term maintenance
 
 When the review context carries an implementation plan or a governing Issue, compare the change with it and say where the plan should have considered a refactoring or a reuse.
 
-**A trivial change skips the audit.** A rename, a typo fix, a comment, a version bump: one line in the report — *Not applicable — <why>* — and no audit. The check is proportional to the change.
+**A trivial change skips the audit.** A rename, a typo fix, a comment, a version bump: one line in the report — *Not applicable — <why>* — and no audit. The check is proportional to the change. This exception belongs to this manual workflow: the automated pipeline (`10x-chat review`) has no trivial-change detection and asks for the decisions of every change it reviews — an empty list of decisions is the answer that says there is none.
 
 ## 3. Read the findings against a common schema
 

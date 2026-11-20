@@ -60,6 +60,13 @@ run the audit, and it fails the pass: a review that says "no material
 decision" because nobody asked is not a review. An empty list is the answer
 that says there is none.
 
+The audit runs for every change this pipeline reviews: there is no
+trivial-change exception here, and there is no detection of one — the empty
+list of the decisions is the answer that says there is none. The
+trivial-change exception of the manual workflow
+([skills/10x-chat/workflows/pr-review.md](../../skills/10x-chat/workflows/pr-review.md))
+belongs to that workflow alone.
+
 An audit that lost an entry did not finish, and the report says so. The
 decisions that were read are kept — they are evidence of what the reviewer
 named — but the section states that the audit is incomplete whenever the
