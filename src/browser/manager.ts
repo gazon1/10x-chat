@@ -94,9 +94,10 @@ export async function closeOwnedBrowserSessions(): Promise<void> {
  */
 export async function cleanupBrowserOnProcessExit(): Promise<void> {
   if (ownedSessions.size === 0 && pendingLaunches === 0) return;
-  // Wait for in-flight launches so a session created for this process can be
-  // registered and closed; unrelated commands never reach this point.
-  const deadline = Date.now() + 15_000;
+  // Wait for in-flight launches so any session created for this process is
+  // registered before we snapshot and close; a launch decrements pending after
+  // registration, so pending==0 means all launches have settled.
+  const deadline = Date.now() + 120_000;
   while (pendingLaunches > 0 && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 50));
   }
