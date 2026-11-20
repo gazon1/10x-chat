@@ -24,9 +24,6 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 /** The largest deadline Node.js can wait for — a bigger one fires at once. */
 export const MAX_TIMEOUT_MS = 2_147_483_647;
 
-/** The failures of a process that never started — the operation never ran. */
-const SPAWN_FAILURES = new Set(['ENOENT', 'EACCES', 'EPERM']);
-
 /** The options of the provider. */
 export interface NotebookLmOptions {
   /** The command of the CLI — the one on the PATH by default. */
@@ -115,11 +112,16 @@ function failureFromEnvelope(
  * Did the process fail before it started?
  *
  * The runner rejects when the executable is not there or cannot be started.
- * Every other failure happens while the process was running.
+ * Every other failure happens while the process was running — a process that
+ * cannot be killed is such a failure, and its code (`EPERM`) is the same one
+ * a denied spawn has. The syscall of the error tells the two apart.
  */
 function isSpawnFailure(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  if (typeof code === 'string' && SPAWN_FAILURES.has(code)) return true;
+  const details = error as { code?: unknown; syscall?: unknown } | null;
+  if (typeof details?.syscall === 'string') {
+    return details.syscall.startsWith('spawn');
+  }
+  if (details?.code === 'ENOENT') return true;
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('ENOENT');
 }

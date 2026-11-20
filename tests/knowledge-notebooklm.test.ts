@@ -483,7 +483,13 @@ describe('the NotebookLM provider', () => {
   it('reports a process that failed while it was running as a failure that may have run', async () => {
     const runner: ProcessRunner = {
       run() {
-        return Promise.reject(new Error('kill EPERM'));
+        // A kill that the operating system refuses: the same code a denied
+        // spawn has, but the syscall tells the two apart.
+        const error = Object.assign(new Error('kill EPERM'), {
+          code: 'EPERM',
+          syscall: 'kill',
+        });
+        return Promise.reject(error);
       },
     };
     const provider = createNotebookLmProvider({ runner });
@@ -501,7 +507,10 @@ describe('the NotebookLM provider', () => {
   it('reports an executable that is not there as a failure that did not run', async () => {
     const runner: ProcessRunner = {
       run() {
-        const error = new Error('spawn notebooklm ENOENT');
+        const error = Object.assign(new Error('spawn notebooklm ENOENT'), {
+          code: 'ENOENT',
+          syscall: 'spawn notebooklm',
+        });
         return Promise.reject(error);
       },
     };
