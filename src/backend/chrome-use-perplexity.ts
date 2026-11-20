@@ -311,7 +311,7 @@ export function createChromeUsePerplexityBackend(
 
     const session = sessionName(sessionPrefix, request.requestId);
     known.set(request.requestId, { submission: 'not_submitted' });
-    const deadline = request.timeoutMs ? nowMs() + request.timeoutMs : undefined;
+    const deadline = request.timeoutMs !== undefined ? nowMs() + request.timeoutMs : undefined;
     const remaining = (): number | undefined =>
       deadline === undefined ? undefined : Math.max(0, deadline - nowMs());
     const ensureTime = (submitted: boolean): FailureOutcome | undefined => {

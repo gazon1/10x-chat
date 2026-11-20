@@ -74,6 +74,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
     const fill = calls.find((c) => c.args[2] === 'fill');
     expect(fill?.args).toContain('--stdin');
     expect(fill?.input).toBe('Capital of France?');
+    expect(calls.filter((c) => c.args[2] === 'click')).toHaveLength(1);
     expect(calls.some((c) => c.args[2] === 'done')).toBe(true);
 
     const status = await backend.status('req-1');
@@ -185,14 +186,17 @@ describe('chrome-use Perplexity backend (POC)', () => {
       },
     };
     const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
-    // Negative timeout => deadline already passed before any submit attempt.
-    const out = await backend.ask({ requestId: 'req-timeout', prompt: 'hi', timeoutMs: -1 });
-    expect(out.ok).toBe(false);
-    if (out.ok) return;
-    expect(out.failure.kind).toBe('unavailable');
-    expect(out.failure.submission).toBe('not_submitted');
-    expect(out.failure.message).toMatch(/before the prompt was sent/);
-    expect(calls).toHaveLength(0);
+    // 0 or negative timeout => deadline already passed before any submit attempt.
+    for (const timeoutMs of [0, -1]) {
+      calls.length = 0;
+      const out = await backend.ask({ requestId: `req-timeout-${timeoutMs}`, prompt: 'hi', timeoutMs });
+      expect(out.ok).toBe(false);
+      if (out.ok) return;
+      expect(out.failure.kind).toBe('unavailable');
+      expect(out.failure.submission).toBe('not_submitted');
+      expect(out.failure.message).toMatch(/before the prompt was sent/);
+      expect(calls).toHaveLength(0);
+    }
   });
 
   it('reports pre-submit deadline expiry before click without submitting', async () => {
