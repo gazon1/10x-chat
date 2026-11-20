@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,7 +31,7 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
-import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
+import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { ReviewContext } from '../src/pipeline/types.js';
 
 const SOURCE = ['export function run(input: string) {', '  return exec(input);', '}'].join('\n');
@@ -3432,5 +3442,86 @@ describe('the context of a review', () => {
 
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0]?.evidence).toEqual(finding.evidence);
+  });
+});
+
+describe('the identity of a finding', () => {
+  it('tells two places apart when the name of one holds the place of the other', () => {
+    // The name of a file may hold a colon: the file "src/app.ts:12" and the
+    // file "src/app.ts" on the line 12 are two places, and a key that joins
+    // the parts with a colon reads the name of one as the name of the other.
+    const one = findingId({ file: 'src/app.ts', line: 12, title: ':the' });
+    const other = findingId({ file: 'src/app.ts:12', title: 'the' });
+
+    expect(one).not.toBe(other);
+  });
+
+  it('gives one id to two findings of one place', () => {
+    const one = findingId({ file: 'src/app.ts', line: 12, title: 'The value escapes' });
+    const other = findingId({ file: 'src/app.ts', line: 12, title: 'the value escapes' });
+
+    expect(one).toBe(other);
+  });
+});
+
+describe('the search for the callers of a finding', () => {
+  it('tells a search that found nothing from a search that failed', async () => {
+    const found = await callersOf(repo, 'src/app.ts', revision);
+    expect(found.callers).toEqual([]);
+    expect(found.failure).toBeUndefined();
+
+    const missing = await callersOf(repo, 'nothing-mentions-this.txt', revision);
+    expect(missing.callers).toEqual([]);
+    expect(missing.failure).toBeUndefined();
+  });
+
+  it('reports a failure when the search cannot read a file of the revision', async () => {
+    // A blob that is not there: git cannot read the file, and it says so on
+    // stderr while it exits with 1 — the same code it uses for "nothing
+    // matches".
+    await writeFile(path.join(repo, 'other.txt'), 'other\n', 'utf-8');
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'second');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
+    const blob = await gitIn(repo, 'rev-parse', `${head}:other.txt`);
+    await unlink(path.join(repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+
+    const search = await callersOf(repo, 'src/app.ts', head);
+
+    expect(search.failure).toBeTruthy();
+    expect(search.failure).toContain('unable to read');
+  });
+
+  it('leaves a finding unverified when the search for its callers failed', async () => {
+    await writeFile(path.join(repo, 'other.txt'), 'other\n', 'utf-8');
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'second');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
+    const blob = await gitIn(repo, 'rev-parse', `${head}:other.txt`);
+    await unlink(path.join(repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+
+    const id = findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title });
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [{ id, verdict: 'confirmed', evidence: 'the code shows it' }],
+        }),
+      },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf({ baseSha: head, headSha: head }),
+    });
+
+    // The material of the finding is incomplete: the verdict of the verifier
+    // rests on a search that failed, so the finding is not settled.
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.findings[0].verificationNote).toContain('could not be found');
   });
 });

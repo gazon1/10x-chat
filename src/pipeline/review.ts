@@ -365,8 +365,23 @@ function placeInFile(
   return true;
 }
 
-/** The files that mention a file — the callers of a change. */
-async function callersOf(repoRoot: string, file: string, revision: string): Promise<string[]> {
+/**
+ * The files that mention a file — the callers of a change.
+ *
+ * A search that failed is not a search that found nothing. `git grep` exits
+ * with 1 when nothing matches, but it can also fail with another code (a
+ * revision that is not there, an output that does not fit into the buffer),
+ * and it can report a failure on stderr while it still exits with 0 — the
+ * answer of such a search is missing the files it could not read. The two
+ * answers are told apart, because a verifier that is told "no other file
+ * mentions it" on the strength of a failed search judges a finding on
+ * material that was never collected.
+ */
+export async function callersOf(
+  repoRoot: string,
+  file: string,
+  revision: string,
+): Promise<{ callers: string[]; failure?: string }> {
   const { execFile } = await import('node:child_process');
   return new Promise((resolve) => {
     execFile(
@@ -381,20 +396,46 @@ async function callersOf(repoRoot: string, file: string, revision: string): Prom
       // space is a name of a file, and the quoting of git would hide it.
       ['grep', '-z', '-l', '-F', '-e', file, revision],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          resolve([]);
+      (error, stdout, stderr) => {
+        const reason = String(stderr).trim();
+        // Git reports a failure on stderr, and it may do so while it exits
+        // with 0: the answer of such a search is missing the files it could
+        // not read.
+        const reported = /^(error|fatal):/m.test(reason);
+        const code =
+          error && typeof (error as { code?: unknown }).code === 'number'
+            ? (error as { code: number }).code
+            : undefined;
+        const prefix = `${revision}:`;
+        const callers = stdout
+          .split('\0')
+          .filter((name) => name !== '')
+          .map((name) => (name.startsWith(prefix) ? name.slice(prefix.length) : name))
+          .filter((name) => name !== '')
+          .slice(0, 20);
+        if (reported || (code !== undefined && code !== 0 && code !== 1)) {
+          resolve({
+            callers,
+            failure:
+              reason ||
+              (error instanceof Error ? error.message : String(error)) ||
+              'git grep failed',
+          });
           return;
         }
-        const prefix = `${revision}:`;
-        resolve(
-          stdout
-            .split('\0')
-            .filter((name) => name !== '')
-            .map((name) => (name.startsWith(prefix) ? name.slice(prefix.length) : name))
-            .filter((name) => name !== '')
-            .slice(0, 20),
-        );
+        // Exit code 1 is the answer of git: nothing matches.
+        if (code === 1) {
+          resolve({ callers: [] });
+          return;
+        }
+        if (error) {
+          resolve({
+            callers,
+            failure: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+        resolve({ callers });
       },
     );
   });
@@ -414,11 +455,13 @@ async function verificationMaterial(
   exists: boolean;
   lineInRange: boolean;
   withheld: boolean;
+  callersFailure?: string;
 }> {
   const excerpt = await excerptOf(repoRoot, finding, tracked, deleted, secret, baseSha, headSha);
-  const callers = finding.file
+  const search = finding.file
     ? await callersOf(repoRoot, finding.file, excerpt.deleted ? baseSha : headSha)
-    : [];
+    : { callers: [] as string[] };
+  const callers = search.callers;
   // The excerpt comes from the repository: a fence that it cannot close keeps
   // it data and not an instruction. The claim of the reviewer carries the
   // text of the repository too — a reviewer that quotes the change quotes an
@@ -439,6 +482,10 @@ async function verificationMaterial(
   // repository: they are data too.
   const callersText = callers.join('\n');
   const callersFence = fenceFor(callersText);
+  // The message of a failed search names the files of the repository: it is
+  // data too, and a fence that it cannot close keeps it data.
+  const failureText = search.failure ?? '';
+  const failureFence = fenceFor(failureText);
   const material = [
     `## ${finding.id}`,
     `Severity: ${finding.severity} | Category: ${finding.category}`,
@@ -455,7 +502,12 @@ async function verificationMaterial(
       : '',
     callers.length > 0
       ? `Files that mention it:\n${callersFence}text\n${callersText}\n${callersFence}`
-      : 'No other file mentions it.',
+      : '',
+    search.failure
+      ? `The files that mention it could not be searched: the search failed.\n${failureFence}text\n${failureText}\n${failureFence}`
+      : callers.length === 0
+        ? 'No other file mentions it.'
+        : '',
   ]
     .filter((part) => part !== '')
     .join('\n');
@@ -464,6 +516,7 @@ async function verificationMaterial(
     exists: excerpt.exists,
     lineInRange: excerpt.lineInRange,
     withheld: excerpt.withheld,
+    ...(search.failure ? { callersFailure: search.failure } : {}),
   };
 }
 
@@ -499,7 +552,7 @@ async function verifyCandidates(options: {
   const material: string[] = [];
   const mechanical = new Map<
     string,
-    { exists: boolean; lineInRange: boolean; withheld: boolean }
+    { exists: boolean; lineInRange: boolean; withheld: boolean; callersFailure?: string }
   >();
   for (const finding of candidates) {
     const prepared = await verificationMaterial(
@@ -515,6 +568,7 @@ async function verifyCandidates(options: {
       exists: prepared.exists,
       lineInRange: prepared.lineInRange,
       withheld: prepared.withheld,
+      ...(prepared.callersFailure ? { callersFailure: prepared.callersFailure } : {}),
     });
     material.push(prepared.material);
   }
@@ -609,6 +663,16 @@ async function verifyCandidates(options: {
         ...finding,
         verification: 'unverified' as const,
         verificationNote: 'the verifier answered with contradictory verdicts',
+      };
+    }
+    // The callers of a finding are part of its material: a verdict that rests
+    // on a search that failed rests on material that was never collected, so
+    // the finding is not settled.
+    if (state && state.callersFailure) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: `the files that mention it could not be found: ${state.callersFailure}`,
       };
     }
     if (!verdict) return { ...finding, verification: 'unverified' as const };

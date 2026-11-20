@@ -499,10 +499,15 @@ function evidenceOf(value: unknown): string[] {
  * A title of stopwords alone carries no word: it normalizes to nothing, and
  * two such findings of one place would share one id. The raw title keeps them
  * apart.
+ *
+ * The parts of the key are encoded, not joined: a name of a file may hold a
+ * colon, and a key that joins the parts with a colon reads the name of one
+ * file as the name of another — two findings of two places would share one
+ * id, and the verdict of the verifier of one would settle the other.
  */
 export function findingId(finding: { file?: string; line?: number; title: string }): string {
   const title = normalizeTitle(finding.title) || finding.title.trim().toLowerCase();
-  const key = `${finding.file ?? ''}:${finding.line ?? ''}:${title}`;
+  const key = JSON.stringify([finding.file ?? '', finding.line ?? '', title]);
   return `f-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
 }
 
