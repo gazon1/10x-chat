@@ -22,6 +22,10 @@ export function createReviewCommand(): Command {
       'Run a review pipeline over a pull request, a branch or a diff — the pipeline never publishes to GitHub',
     )
     .option('--pr <number>', 'The pull request to review (the metadata comes from the gh CLI)')
+    .option(
+      '--issue <number>',
+      'The Issue that governs the change (with --pr: its requirements are read from the gh CLI)',
+    )
     .option('--base <ref>', 'The base of the comparison (default: the default branch of origin)')
     .option('--head <ref>', 'The head of the comparison (default: HEAD)')
     .option('--backend <name>', 'The backend that answers (default: chatgpt-use)')
@@ -65,12 +69,29 @@ export function createReviewCommand(): Command {
       const backend = getBackend(backendName);
       const provider = providerOfBackend(backendName);
 
+      const issue = (() => {
+        if (options.issue === undefined) return undefined;
+        const value = positiveInteger(options.issue as string);
+        if (value === undefined) {
+          console.error(chalk.red(`Invalid --issue value: ${options.issue} (expected a number)`));
+          process.exit(1);
+        }
+        // The Issue is the requirements of a pull request: without a pull
+        // request there is nothing for it to govern.
+        if (pr === undefined) {
+          console.error(chalk.red('The --issue option is supported together with --pr.'));
+          process.exit(1);
+        }
+        return value;
+      })();
+
       try {
         const run = await runReviewPipeline({
           backend,
           target: {
             cwd: process.cwd(),
             ...(pr !== undefined ? { pr } : {}),
+            ...(issue !== undefined ? { issue } : {}),
             ...(options.base ? { base: options.base as string } : {}),
             ...(options.head ? { head: options.head as string } : {}),
           },

@@ -350,6 +350,20 @@ it('refuses a timeout that is not a number', async () => {
   });
 });
 
+it('refuses an issue without a pull request and an issue that is not a number', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    // The Issue is the requirements of a pull request: without one there is
+    // nothing for it to govern.
+    const alone = await runCli(['review', '--issue', '57'], env);
+    expect(alone.code).toBe(1);
+    expect(alone.output).toContain('--issue option is supported together with --pr');
+    const garbage = await runCli(['review', '--pr', '42', '--issue', '57garbage'], env);
+    expect(garbage.code).toBe(1);
+    expect(garbage.output).toContain('Invalid --issue value');
+  });
+});
+
 /**
  * A `chatgpt-use` that answers with the envelope of the CLI: one finding for
  * the reviewers, a verdict for every candidate of the verification.

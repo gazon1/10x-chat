@@ -72,12 +72,47 @@ export interface StepOutcome {
   durationMs?: number;
 }
 
+/**
+ * The requirements of a review — the governing GitHub Issue.
+ *
+ * The snapshot is a version: the hash is the content of the Issue, and the
+ * status says whether that content is the one of the last completed review.
+ */
+export interface IssueRequirements {
+  /** The repository of the Issue — `owner/name`. */
+  repository: string;
+  /** The number of the Issue. */
+  number: number;
+  /** The URL of the Issue. */
+  url: string;
+  /** The title of the Issue. */
+  title: string;
+  /** The complete body of the Issue. */
+  body: string;
+  /** The SHA-256 of the title and the body — the version of the requirements. */
+  hash: string;
+  /**
+   * How the version relates to the last completed review of the Issue:
+   * `initial` — the Issue is seen for the first time, `unchanged` — the
+   * requirements did not drift, `changed` — they did.
+   */
+  status: 'initial' | 'unchanged' | 'changed';
+  /** When this version was observed — the order of two runs. */
+  observedAt: string;
+  /** The hash of the last completed review — absent when the Issue is new. */
+  previousHash?: string;
+  /** The title of the last completed review — absent when the Issue is new. */
+  previousTitle?: string;
+}
+
 /** What is reviewed. */
 export interface ReviewTarget {
   /** The directory of the repository. */
   cwd: string;
   /** The pull request to review — its metadata comes from `gh`. */
   pr?: number;
+  /** The Issue that governs the change — its requirements come from `gh`. */
+  issue?: number;
   /** The base of the comparison — the default branch of `origin` when absent. */
   base?: string;
   /** The head of the comparison — `HEAD` when absent. */
@@ -94,6 +129,8 @@ export interface ReviewContext {
   pr?: number;
   /** The URL of the pull request. */
   prUrl?: string;
+  /** The requirements of the change — the governing Issue, when there is one. */
+  requirements?: IssueRequirements;
   /** The subject of the change. */
   title?: string;
   /** The base ref and its commit. */

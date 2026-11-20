@@ -30,6 +30,10 @@ function commandOf(step: StepOutcome, run: ReviewRun): string {
       return 'backend.ask(verify)';
     case 'normalize-findings':
       return 'dedupeFindings(findings)';
+    case 'check-requirements':
+      return 'gh issue view <number> --json number,url,title,body';
+    case 'update-requirements':
+      return 'writeSnapshot(requirements)';
     default:
       return '—';
   }
@@ -258,6 +262,20 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
       : '- Base → Head: unknown — the context could not be collected',
   );
   lines.push(`- Reviewed at: ${run.finishedAt}`);
+  // The version of the requirements: the Issue the reviewers judged, and the
+  // version of it they judged.
+  const requirements = context?.requirements;
+  if (requirements) {
+    const state =
+      requirements.status === 'initial'
+        ? 'the first version the pipeline has seen'
+        : requirements.status === 'unchanged'
+          ? 'unchanged since the last completed review'
+          : `changed since the last completed review (was: ${requirements.previousTitle ?? 'unknown'})`;
+    lines.push(
+      `- Requirements: issue #${requirements.number} of ${literal(requirements.repository)} — ${literal(requirements.title)} — version ${requirements.hash.slice(0, 12)} (${state})`,
+    );
+  }
   lines.push(
     `- Scope: ${context?.changedFiles.length ?? 0} changed file(s) — the diff and the changed files of the bundle`,
   );
@@ -295,7 +313,9 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   lines.push('| Criterion | Status | Evidence |');
   lines.push('|---|---|---|');
   lines.push(
-    "| The acceptance criteria of the change | UNVERIFIED | The pipeline does not know them — they are the caller's. |",
+    requirements
+      ? `| The acceptance criteria of the issue #${requirements.number} (version ${requirements.hash.slice(0, 12)}) | UNVERIFIED | The reviewers judged the change against the complete description of the Issue — the pipeline does not check the criteria one by one. |`
+      : "| The acceptance criteria of the change | UNVERIFIED | The pipeline does not know them — they are the caller's. |",
   );
   lines.push('');
 

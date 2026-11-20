@@ -28,6 +28,11 @@ Every step has a stable id. The outcome of every step is reported in the
 The three reviewer passes are isolated: each one is its own request to the
 backend and none of them ever sees the findings of another.
 
+A review with a governing Issue has two more steps, and only then:
+`check-requirements` reads the Issue again after the reviewers ran, and
+`update-requirements` moves the baseline of the Issue. A review without an
+Issue has neither — its steps are exactly the ones above.
+
 ## The finding model
 
 A finding carries a stable id, a title, a severity, a category, a file and an
@@ -132,6 +137,57 @@ to the extension of the file, and an extension that is not a plain word is
 not follow a symlink: the file behind it is not a file
 of the revision, and it must not reach the backend.
 
+## The requirements of the change
+
+A review may name the Issue that governs the change:
+
+```bash
+10x-chat review --pr 3065 --issue 2888
+```
+
+The Issue is read through the `gh` CLI, in the repository of the checkout
+(`gh issue view <number> --repo <owner/name> --json number,url,title,body`).
+The pipeline never guesses it: it is never inferred from the title of the
+pull request, from the name of the branch or from the text of a commit, and
+several Issues are never reduced to one. `--issue` is supported with `--pr`.
+
+The **complete** description of the Issue is the requirement, and it reaches
+every reviewer and the verification through the same bundle: one Issue, one
+version, the same text for all of them. The Issue is untrusted data like the
+diff: it sits in a fence that it cannot close, and an instruction inside it
+is a finding of the category `security`, not an order.
+
+The version of the requirements is the **SHA-256 of the title and the body**
+(`sha256(JSON.stringify([title, body]))`). The comments, the labels, the
+reactions and the milestones are not requirements, and the metadata of the
+Issue can change without the requirements changing — the hash is the content
+and nothing else.
+
+The baseline of the Issue — the version of the last successfully completed
+review — lives in `~/.10x-chat/requirements/<owner>/<name>/<issue>.json`, a
+small private file (`0600`, in a directory of `0700`). It says whether the
+Issue is seen for the first time (`initial`), whether the requirements did not
+drift (`unchanged`) or whether they did (`changed`). A changed Issue is named
+as changed in the context and in the report, and the reviewers get its
+complete current body.
+
+Two rules keep the baseline honest:
+
+- **A run that did not finish does not advance it.** The baseline moves only
+  when every step of the review passed. A run that asked for changes did
+  judge the requirements, and it advances the baseline; a run whose reviewer
+  failed, whose verification was incomplete or whose Issue changed in the
+  meantime did not.
+- **An older run does not overwrite a newer one.** The snapshot carries the
+  moment the Issue was observed, and the write happens under the lock of the
+  directory: a run that observed the Issue earlier than the stored snapshot
+  keeps the newer one.
+
+The Issue is read again after the reviewers ran (`check-requirements`). An
+Issue that changed in the meantime makes the run incomplete: a review of
+stale requirements is never an approval, and the report says that the
+requirements drifted.
+
 ## The report
 
 The report is the one of
@@ -152,12 +208,15 @@ onto it like this:
 
 Two fields of the report have no counterpart in a pipeline run and say so:
 the *Acceptance criteria* of the change are the caller's, not the pipeline's,
-and the *Checks* table carries the steps of the pipeline.
+and the *Checks* table carries the steps of the pipeline. A review with a
+governing Issue names that Issue and its version in the header of the report,
+and its *Acceptance criteria* row names the criteria of the Issue.
 
 ## Running it
 
 ```bash
 10x-chat review --pr 49                     # a pull request (the metadata comes from `gh`)
+10x-chat review --pr 49 --issue 2888        # with the Issue that governs the change
 10x-chat review --base main --head feature  # a branch of the current repository
 10x-chat review --pr 49 --out review.md     # the report also as a file
 ```
@@ -299,6 +358,10 @@ revision under review:
 - The identifier of a run is a **name, not a path**: it names the directory of
   the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
   a `..` is refused the way a name of a profile is refused.
+- The governing Issue is read through the `gh` CLI of the repository of the
+  checkout, and a failure to read it — a missing Issue, an inaccessible one,
+  a failed command or an answer that is not an Issue — fails the collection.
+  A review never continues without the requirements it was asked for.
 
 ## The verdict of the report
 

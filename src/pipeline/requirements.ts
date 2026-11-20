@@ -1,0 +1,340 @@
+import { execFile } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { acquireLock } from '../core/lock.js';
+import { getRequirementsDir } from '../paths.js';
+import type { IssueRequirements } from './types.js';
+
+/**
+ * The requirements of a review — the governing GitHub Issue and the version
+ * of it that the review judges.
+ *
+ * The Issue is read through the `gh` CLI, hashed by its content and kept as a
+ * small private snapshot: the next review of the same Issue compares its
+ * version with the one of the last completed review, and the reviewers always
+ * get the complete current description.
+ */
+
+/** The format of the stored snapshot — it changes when the format changes. */
+const SNAPSHOT_VERSION = 1;
+
+/** The name of the lock of the snapshots — one lock for the whole directory. */
+const LOCK_NAME = 'requirements.lock';
+
+/** How long a run waits for the lock of the snapshots. */
+const LOCK_TIMEOUT_MS = 5_000;
+
+/** The Issue as `gh` answers it. */
+export interface IssueData {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+}
+
+/** The snapshot of an Issue on the disk. */
+interface StoredSnapshot {
+  version: number;
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  hash: string;
+  observedAt: string;
+}
+
+/**
+ * The hash of the requirements — the version of the Issue.
+ *
+ * The hash covers the title and the body, and nothing else: the comments, the
+ * labels and the milestones are not requirements, and the metadata of the
+ * Issue can change without the requirements changing. The serialization is
+ * unambiguous — an array of the two strings — so that two different Issues
+ * cannot share a hash.
+ */
+export function hashRequirements(title: string, body: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([title, body]))
+    .digest('hex');
+}
+
+/**
+ * The Issue out of the answer of `gh`.
+ *
+ * The answer is data of another program: a value that is not an object, an
+ * answer about another Issue and an answer without a title or a body are all
+ * refused. A review that omits the requirements it was asked for is worse
+ * than a review that fails.
+ */
+export function parseIssue(payload: unknown, expected: number): IssueData {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('gh answered with no issue');
+  }
+  const value = payload as Record<string, unknown>;
+  const number = typeof value.number === 'number' ? value.number : Number.NaN;
+  if (!Number.isSafeInteger(number)) {
+    throw new Error('it has no number');
+  }
+  if (number !== expected) {
+    throw new Error(`gh answered with the issue #${number}, not with the issue #${expected}`);
+  }
+  const title = typeof value.title === 'string' ? value.title : undefined;
+  const body = typeof value.body === 'string' ? value.body : undefined;
+  if (title === undefined || body === undefined) {
+    throw new Error('it has no title or no body');
+  }
+  const url = typeof value.url === 'string' ? value.url : '';
+  return { number, url, title, body };
+}
+
+/** Run `gh` and capture what it says. */
+function runGh(
+  args: string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve) => {
+    execFile('gh', args, { cwd, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const code =
+        error && typeof (error as { code?: unknown }).code === 'number'
+          ? (error as { code: number }).code
+          : error
+            ? 1
+            : 0;
+      resolve({ stdout: String(stdout), stderr: String(stderr), code });
+    });
+  });
+}
+
+/**
+ * The Issue of the repository — the `gh` CLI is the only way to it.
+ *
+ * The repository is named: the Issue must belong to the repository of the
+ * pull request, and a repository that is not named is a repository that is
+ * not known.
+ */
+export async function fetchIssue(
+  number: number,
+  repository: string,
+  cwd: string,
+): Promise<IssueData> {
+  const result = await runGh(
+    ['issue', 'view', String(number), '--repo', repository, '--json', 'number,url,title,body'],
+    cwd,
+  );
+  if (result.code !== 0) {
+    const reason = result.stderr.trim() || result.stdout.trim() || 'gh is not available';
+    throw new Error(`Cannot read the issue #${number}: ${reason}`);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`Cannot read the issue #${number}: gh answered with no JSON.`);
+  }
+  try {
+    return parseIssue(payload, number);
+  } catch (error) {
+    throw new Error(
+      `Cannot read the issue #${number}: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  }
+}
+
+/** The repository of an Issue — `owner/name`, and nothing else. */
+export function assertRepository(repository: string): void {
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repository)) {
+    throw new Error(
+      `The repository of the issue is unknown (${repository}) — the checkout must have an origin remote of the form owner/name.`,
+    );
+  }
+}
+
+/** A part of a path — a name of a directory that is safe to write. */
+function safePart(part: string): string {
+  return part.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+/** The file of the snapshot of an Issue. */
+function snapshotPath(repository: string, number: number): string {
+  const [owner, name] = repository.split('/');
+  return path.join(
+    getRequirementsDir(),
+    safePart(owner ?? ''),
+    safePart(name ?? ''),
+    `${number}.json`,
+  );
+}
+
+/**
+ * The snapshot of the last completed review of an Issue.
+ *
+ * A file that is not there is no snapshot — the Issue is seen for the first
+ * time. A file that is there and cannot be read is an error: a snapshot that
+ * nobody can read is a baseline that nobody may advance, and the review says
+ * so instead of pretending the Issue is new.
+ */
+export async function readBaseline(
+  repository: string,
+  number: number,
+): Promise<StoredSnapshot | undefined> {
+  const file = snapshotPath(repository, number);
+  let content: string;
+  try {
+    content = await readFile(file, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new Error(`Cannot read the snapshot of the issue #${number}: ${String(error)}`);
+  }
+  try {
+    const parsed = JSON.parse(content) as StoredSnapshot;
+    if (parsed.version !== SNAPSHOT_VERSION || typeof parsed.hash !== 'string') {
+      throw new Error('it has another format');
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(
+      `The snapshot of the issue #${number} cannot be read: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  }
+}
+
+/**
+ * The requirements of a review — the current Issue and its version.
+ *
+ * The Issue is read now, not remembered: the reviewers get the complete
+ * current description, and the hash says whether it is the version of the
+ * last completed review.
+ */
+export async function collectRequirements(
+  number: number,
+  repository: string,
+  cwd: string,
+): Promise<IssueRequirements> {
+  assertRepository(repository);
+  const issue = await fetchIssue(number, repository, cwd);
+  const hash = hashRequirements(issue.title, issue.body);
+  const observedAt = new Date().toISOString();
+  const baseline = await readBaseline(repository, number);
+  const status = !baseline ? 'initial' : baseline.hash === hash ? 'unchanged' : 'changed';
+  return {
+    repository,
+    number,
+    url: issue.url,
+    title: issue.title,
+    body: issue.body,
+    hash,
+    status,
+    observedAt,
+    ...(baseline ? { previousHash: baseline.hash, previousTitle: baseline.title } : {}),
+  };
+}
+
+/**
+ * Whether the Issue is still the version the review judged.
+ *
+ * The Issue is read again after the reviewers ran: a requirement that changed
+ * in the meantime is a requirement the review did not judge, and a review on
+ * stale requirements is not an approval.
+ */
+export async function checkFreshness(
+  requirements: IssueRequirements,
+  cwd: string,
+): Promise<{ fresh: boolean; detail: string }> {
+  let issue: IssueData;
+  try {
+    issue = await fetchIssue(requirements.number, requirements.repository, cwd);
+  } catch (error) {
+    return {
+      fresh: false,
+      detail: `the issue #${requirements.number} could not be read again: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const hash = hashRequirements(issue.title, issue.body);
+  if (hash !== requirements.hash) {
+    return {
+      fresh: false,
+      detail:
+        `the issue #${requirements.number} changed while the review was running — ` +
+        `the review judged the version ${requirements.hash.slice(0, 12)}, the current version is ${hash.slice(0, 12)}`,
+    };
+  }
+  return {
+    fresh: true,
+    detail: `the issue #${requirements.number} is still the version ${hash.slice(0, 12)}`,
+  };
+}
+
+/**
+ * Advance the baseline of an Issue — after a review that finished.
+ *
+ * The snapshot is written under the lock of the directory, and a snapshot
+ * that was observed later than this one is kept: a run that is older must not
+ * overwrite the requirements of a newer one.
+ */
+export async function advanceBaseline(
+  requirements: IssueRequirements,
+): Promise<{ advanced: boolean; detail: string }> {
+  const dir = getRequirementsDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') await chmod(dir, 0o700);
+  // shortcut: the lock of the project is Linux only — the comparison of the
+  // observations is the guard on the other platforms, the lock closes the
+  // window between the comparison and the write.
+  const lock =
+    process.platform === 'linux'
+      ? await acquireLock(dir, LOCK_NAME, { timeoutMs: LOCK_TIMEOUT_MS })
+      : undefined;
+  try {
+    const stored = await readBaseline(requirements.repository, requirements.number);
+    if (stored && stored.observedAt > requirements.observedAt) {
+      return {
+        advanced: false,
+        detail: `another review advanced the baseline of the issue #${requirements.number} — the newer version was kept`,
+      };
+    }
+    const file = snapshotPath(requirements.repository, requirements.number);
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') await chmod(path.dirname(file), 0o700);
+    await writeSnapshot(file, requirements);
+    return {
+      advanced: true,
+      detail: `the baseline of the issue #${requirements.number} is the version ${requirements.hash.slice(0, 12)}`,
+    };
+  } finally {
+    await lock?.release();
+  }
+}
+
+/**
+ * Write the snapshot — atomically, and readable by its owner only.
+ *
+ * The snapshot holds the requirements of a change: the file belongs to the
+ * owner alone, the way the files of a run do (see `src/pipeline/review.ts`).
+ */
+async function writeSnapshot(file: string, requirements: IssueRequirements): Promise<void> {
+  const snapshot: StoredSnapshot = {
+    version: SNAPSHOT_VERSION,
+    repository: requirements.repository,
+    number: requirements.number,
+    url: requirements.url,
+    title: requirements.title,
+    body: requirements.body,
+    hash: requirements.hash,
+    observedAt: requirements.observedAt,
+  };
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, `${JSON.stringify(snapshot, null, 2)}\n`, {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
+    // The mode of the file can be narrowed by the umask of the shell.
+    if (process.platform !== 'win32') await chmod(tmp, 0o600);
+    await rename(tmp, file);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
+}

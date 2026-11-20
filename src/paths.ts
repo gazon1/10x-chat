@@ -37,6 +37,11 @@ export function getReviewsDir(): string {
   return path.join(getAppDir(), 'reviews');
 }
 
+/** Requirements root: ~/.10x-chat/requirements */
+export function getRequirementsDir(): string {
+  return path.join(getAppDir(), 'requirements');
+}
+
 /**
  * The identifier of a run — a single name, not a path.
  *

@@ -3,6 +3,7 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { SECRET_EXCLUDES } from '../core/bundle.js';
+import { collectRequirements } from './requirements.js';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
 /** The bound of the diff of the bundle — a bigger change is cut, not hidden. */
@@ -219,6 +220,14 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   const remoteUrl = await git(['remote', 'get-url', 'origin'], cwd).catch(() => '');
   const repository = repositoryOf(remoteUrl) || repoRoot;
 
+  // The requirements of the change: the governing Issue is read now, and a
+  // failure to read it fails the collection — a review that silently omits
+  // the requirements it was asked for is not a review of the change.
+  const requirements =
+    target.issue !== undefined
+      ? await collectRequirements(target.issue, repository, cwd)
+      : undefined;
+
   let baseRef: string;
   let baseSha: string;
   let headRef: string;
@@ -350,6 +359,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     repository,
     ...(pr !== undefined ? { pr } : {}),
     ...(prUrl ? { prUrl } : {}),
+    ...(requirements ? { requirements } : {}),
     ...(title ? { title } : {}),
     baseRef,
     baseSha,
