@@ -52,6 +52,22 @@ const FAILURE_KIND_OF: Record<string, KnowledgeFailureKind> = {
   NOTEBOOKLM_ERROR: 'rejected',
 };
 
+/**
+ * The codes that prove the operation never reached the server.
+ *
+ * Every other code — and every answer without a code — leaves the state of a
+ * mutation unknown: the request may have been executed before the answer went
+ * wrong.
+ */
+const DEFINITE_REFUSALS = new Set([
+  'AUTH_ERROR',
+  'VALIDATION_ERROR',
+  'CONFIG_ERROR',
+  'NOTEBOOK_LIMIT',
+  'NOT_FOUND',
+  'RATE_LIMITED',
+]);
+
 /** Is the value a JSON object? */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,14 +79,24 @@ function str(record: Record<string, unknown>, key: string): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
-/** The failure of an error envelope of the CLI. */
-function failureFromEnvelope(envelope: Record<string, unknown>): KnowledgeFailure {
+/**
+ * The failure of an error envelope of the CLI.
+ *
+ * A mutation whose answer does not prove that the operation never ran keeps
+ * the unknown state: it must not be sent again blind.
+ */
+function failureFromEnvelope(
+  envelope: Record<string, unknown>,
+  mayHaveRun = false,
+): KnowledgeFailure {
   const code = str(envelope, 'code');
   const message = str(envelope, 'message') ?? 'The provider refused the operation.';
+  const unknown = !code || !DEFINITE_REFUSALS.has(code);
   return {
     kind: (code ? FAILURE_KIND_OF[code] : undefined) ?? 'rejected',
     message,
     ...(code ? { code } : {}),
+    ...(mayHaveRun && unknown ? { mayHaveRun: true } : {}),
   };
 }
 
@@ -136,7 +162,7 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       }
     }
     if (isRecord(decoded) && decoded.error === true) {
-      return { ok: false, failure: failureFromEnvelope(decoded) };
+      return { ok: false, failure: failureFromEnvelope(decoded, mayHaveRun) };
     }
     if (result.code !== 0 && options_.tolerateExit !== true) {
       const diagnostics = result.stderr.trim() || text;
@@ -162,10 +188,16 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
     return { ok: true, value: decoded };
   };
 
-  /** The failure of an answer that is not the shape we expect. */
-  const invalid = (what: string): KnowledgeFailure => ({
+  /**
+   * The failure of an answer that is not the shape we expect.
+   *
+   * A mutation that answered with garbage may have run: the state of the
+   * operation is unknown, and the failure says so.
+   */
+  const invalid = (what: string, mayHaveRun = false): KnowledgeFailure => ({
     kind: 'invalid_output',
     message: `The provider did not answer with ${what}.`,
+    ...(mayHaveRun ? { mayHaveRun: true } : {}),
   });
 
   /** A notebook of the JSON of the CLI. */
@@ -275,7 +307,7 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       if (!outcome.ok) return outcome;
       const raw = outcome.value;
       const parsed = notebook(isRecord(raw) ? raw.notebook : undefined);
-      if (!parsed) return { ok: false, failure: invalid('a notebook') };
+      if (!parsed) return { ok: false, failure: invalid('a notebook', true) };
       return { ok: true, value: parsed };
     },
 
@@ -286,7 +318,7 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       if (!outcome.ok) return outcome;
       const raw = outcome.value;
       const parsed = source(isRecord(raw) ? raw.source : undefined);
-      if (!parsed) return { ok: false, failure: invalid('a source') };
+      if (!parsed) return { ok: false, failure: invalid('a source', true) };
       return { ok: true, value: parsed };
     },
 
@@ -315,9 +347,9 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       );
       if (!outcome.ok) return outcome;
       const raw = outcome.value;
-      if (!isRecord(raw)) return { ok: false, failure: invalid('a refreshed source') };
+      if (!isRecord(raw)) return { ok: false, failure: invalid('a refreshed source', true) };
       const id = str(raw, 'source_id');
-      if (!id) return { ok: false, failure: invalid('a refreshed source') };
+      if (!id) return { ok: false, failure: invalid('a refreshed source', true) };
       const title = str(raw, 'title');
       const status = str(raw, 'status');
       return {
@@ -345,9 +377,9 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       const outcome = await invoke(args, { mutating: true });
       if (!outcome.ok) return outcome;
       const raw = outcome.value;
-      if (!isRecord(raw)) return { ok: false, failure: invalid('an answer') };
+      if (!isRecord(raw)) return { ok: false, failure: invalid('an answer', true) };
       const answer = str(raw, 'answer');
-      if (!answer) return { ok: false, failure: invalid('an answer') };
+      if (!answer) return { ok: false, failure: invalid('an answer', true) };
       const conversationId = str(raw, 'conversation_id');
       const rawReferences = raw.references;
       const references: KnowledgeReference[] = [];

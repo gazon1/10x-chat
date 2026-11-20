@@ -13,7 +13,7 @@ must stay untouched by it. The knowledge integration has its own seam:
 |--------|---------------|
 | `src/knowledge/contract.ts` | The `KnowledgeProvider` contract, the failure kinds and the outcome |
 | `src/knowledge/notebooklm.ts` | The provider that drives the `notebooklm` CLI |
-| `src/knowledge/registry.ts` | The name → provider map |
+| `src/knowledge/registry.ts` | The name → provider factory map — the seam the command resolves the provider in |
 | `src/cli/knowledge.ts` | The command group |
 
 ## The CLI of NotebookLM
@@ -55,7 +55,7 @@ Every operation takes the same options:
 |------|-------------|
 | `--json` | Machine-readable output — the envelope below and nothing else |
 | `--profile <name>` | The profile of `notebooklm-py` to use (passed explicitly) |
-| `--timeout <ms>` | The deadline of the operation (default: 120000) |
+| `--timeout <ms>` | The deadline of the operation — a positive integer (default: 120000) |
 
 `knowledge ask` also takes `--source <id>` (repeatable) to limit the answer to
 some sources of the notebook.
@@ -109,8 +109,10 @@ The kinds of a failure:
 | `rejected` | The provider refused the operation (no such notebook, a quota, a bad request) |
 
 A failure that carries `mayHaveRun: true` is an operation that may have reached
-NotebookLM — a mutation that timed out, for example. It must not be sent again
-blind: the provider never retries a mutation by itself.
+NotebookLM — a mutation that timed out, or one that answered with something
+unexpected. It must not be sent again blind: the provider never retries a
+mutation by itself. A refusal that never reached the server (no session, a bad
+request, a quota) carries no such flag — the operation can be sent again.
 
 ## The state of the provider
 

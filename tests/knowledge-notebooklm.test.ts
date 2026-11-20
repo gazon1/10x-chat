@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ProcessResult, ProcessRunner } from '../src/backend/process-runner.js';
-import { createNotebookLmProvider } from '../src/knowledge/notebooklm.js';
+import type { KnowledgeProvider } from '../src/knowledge/contract.js';
+import { createNotebookLmProvider, NOTEBOOKLM_PROVIDER_NAME } from '../src/knowledge/notebooklm.js';
+import {
+  getKnowledgeProvider,
+  listKnowledgeProviders,
+  registerKnowledgeProvider,
+  resetKnowledgeProviders,
+} from '../src/knowledge/registry.js';
 
 /** A call of the runner of the tests. */
 interface Call {
@@ -380,5 +387,76 @@ describe('the NotebookLM provider', () => {
     await provider.ask('nb1', 'hello');
 
     expect(calls[0]?.timeoutMs).toBe(1000);
+  });
+
+  it('reports a mutation that answered with garbage as a failure that may have run', async () => {
+    const { runner } = fakeRunner([ok({ notebook: { title: 'no id' } })]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.createNotebook('Notes');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('invalid_output');
+      // The notebook may have been created: it must not be created again blind.
+      expect(outcome.failure.mayHaveRun).toBe(true);
+    }
+  });
+
+  it('reports a mutation that failed with an unknown state as a failure that may have run', async () => {
+    const { runner } = fakeRunner([
+      ok({ error: true, code: 'NETWORK_ERROR', message: 'The network went away.' }),
+    ]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.addSource('nb1', 'https://example.com');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('unavailable');
+      expect(outcome.failure.mayHaveRun).toBe(true);
+    }
+  });
+
+  it('does not mark a refusal that never reached the server as a failure that may have run', async () => {
+    const { runner } = fakeRunner([
+      ok({ error: true, code: 'AUTH_ERROR', message: 'Authentication error: expired' }),
+    ]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.createNotebook('Notes');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('unauthorized');
+      // The notebook was never created: the operation can be sent again.
+      expect(outcome.failure.mayHaveRun).toBeUndefined();
+    }
+  });
+});
+
+describe('the registry of the knowledge providers', () => {
+  it('resolves the provider of the command', () => {
+    resetKnowledgeProviders();
+
+    const provider = getKnowledgeProvider(NOTEBOOKLM_PROVIDER_NAME);
+
+    expect(provider.name).toBe(NOTEBOOKLM_PROVIDER_NAME);
+    expect(listKnowledgeProviders()).toContain(NOTEBOOKLM_PROVIDER_NAME);
+  });
+
+  it('lets a caller replace a provider', () => {
+    resetKnowledgeProviders();
+
+    registerKnowledgeProvider('fake', () => ({ name: 'fake' }) as KnowledgeProvider);
+
+    expect(getKnowledgeProvider('fake').name).toBe('fake');
+    resetKnowledgeProviders();
+  });
+
+  it('throws for an unknown provider', () => {
+    resetKnowledgeProviders();
+
+    expect(() => getKnowledgeProvider('nope')).toThrow(/Unknown knowledge provider/);
   });
 });

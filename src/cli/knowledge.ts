@@ -8,7 +8,8 @@ import type {
   KnowledgeSource,
   KnowledgeStatus,
 } from '../knowledge/contract.js';
-import { createNotebookLmProvider } from '../knowledge/notebooklm.js';
+import { NOTEBOOKLM_PROVIDER_NAME } from '../knowledge/notebooklm.js';
+import { getKnowledgeProvider } from '../knowledge/registry.js';
 
 /** The version of the JSON contract of the commands. */
 const SCHEMA = '10x-chat/knowledge/v1';
@@ -23,8 +24,8 @@ interface CommonOptions {
 /** The deadline of an operation — the default of the provider when it is not given. */
 function timeoutOf(options: CommonOptions): number | undefined {
   if (options.timeout === undefined) return undefined;
-  const value = Number.parseInt(options.timeout, 10);
-  if (!Number.isFinite(value) || value <= 0) {
+  const value = Number(options.timeout);
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`);
   }
   return value;
@@ -79,7 +80,8 @@ async function execute<T>(
     process.exitCode = 1;
     return;
   }
-  const provider = createNotebookLmProvider({
+  // The provider comes from the registry: it is the seam the CLI resolves.
+  const provider = getKnowledgeProvider(NOTEBOOKLM_PROVIDER_NAME, {
     ...(options.profile ? { profile: options.profile } : {}),
     ...(timeoutMs ? { timeoutMs } : {}),
   });

@@ -78,4 +78,14 @@ describe('the knowledge command (CLI)', () => {
     expect(envelope.ok).toBe(false);
     expect(envelope.error.kind).toBe('unavailable');
   });
+
+  it('refuses a timeout that is not a positive integer', async () => {
+    const res = await runCli(
+      ['knowledge', 'notebooks', 'list', '--json', '--timeout', '100abc'],
+      await stubEnv('{"notebooks":[],"count":0}'),
+    );
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/Invalid --timeout value/);
+  });
 });

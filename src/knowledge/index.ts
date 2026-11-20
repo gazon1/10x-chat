@@ -6,6 +6,7 @@ export {
   type KnowledgeNotebook,
   type KnowledgeOutcome,
   type KnowledgeProvider,
+  type KnowledgeProviderOptions,
   type KnowledgeReference,
   type KnowledgeSource,
   type KnowledgeStatus,
@@ -17,6 +18,7 @@ export {
 } from './notebooklm.js';
 export {
   getKnowledgeProvider,
+  type KnowledgeProviderFactory,
   listKnowledgeProviders,
   registerKnowledgeProvider,
   resetKnowledgeProviders,

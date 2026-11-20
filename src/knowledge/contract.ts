@@ -103,6 +103,14 @@ export interface KnowledgeStatus {
   message?: string;
 }
 
+/** The options every knowledge provider accepts. */
+export interface KnowledgeProviderOptions {
+  /** The profile of the session of the provider to use. */
+  profile?: string;
+  /** The deadline of an operation in milliseconds. */
+  timeoutMs?: number;
+}
+
 /** What a knowledge provider can do. */
 export interface KnowledgeProvider {
   /** The name of the provider — the key of the registry. */

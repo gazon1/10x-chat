@@ -41,6 +41,8 @@ export {
   type KnowledgeNotebook,
   type KnowledgeOutcome,
   type KnowledgeProvider,
+  type KnowledgeProviderFactory,
+  type KnowledgeProviderOptions,
   type KnowledgeReference,
   type KnowledgeSource,
   type KnowledgeStatus,
