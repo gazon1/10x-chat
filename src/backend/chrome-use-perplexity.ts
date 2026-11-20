@@ -255,6 +255,16 @@ export function createChromeUsePerplexityBackend(
     if (!started || !result) {
       const detail = startError ?? 'failed to start chrome-use';
       if (/ENOENT/i.test(detail)) {
+        if (submitted) {
+          return {
+            ok: false,
+            outcome: failure(
+              'unknown_submission',
+              'unknown',
+              `chrome-use could not be started after submission (prompt may have been submitted): ${detail}`,
+            ),
+          };
+        }
         return { ok: false, outcome: unavailable(`chrome-use could not be started: ${detail}`) };
       }
       return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
@@ -270,9 +280,15 @@ export function createChromeUsePerplexityBackend(
       const detail = typeof json.error === 'string' ? json.error : JSON.stringify(json.error ?? json);
       return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
     }
-    if (result.code !== 0 && !json) {
-      const detail = (result.stderr || result.stdout || `exit ${result.code}`).trim();
+    if (result.code !== 0) {
+      const detail =
+        (typeof json?.error === 'string' ? json.error : undefined) ||
+        (result.stderr || result.stdout || `exit ${result.code}`).trim();
       return { ok: false, outcome: classifyCommandError(detail || 'chrome-use failed', submitted, false) };
+    }
+    if (!json || json.success !== true) {
+      const detail = (result.stderr || result.stdout || 'invalid chrome-use JSON envelope').trim();
+      return { ok: false, outcome: classifyCommandError(detail || 'invalid chrome-use JSON envelope', submitted, false) };
     }
     return { ok: true, json, result };
   };
@@ -321,9 +337,9 @@ export function createChromeUsePerplexityBackend(
 
     const cleanup = async (): Promise<void> => {
       try {
-        const left = remaining();
-        const budget = left === undefined ? 5_000 : Math.min(Math.max(left, 1), 5_000);
-        await run(['--session', session, 'done', '--json'], budget);
+        // Cleanup is lifecycle management: give it its own bounded budget so a
+        // request timeout cannot starve tab/session teardown.
+        await run(['--session', session, 'done', '--json'], 5_000);
       } catch {
         // best effort
       }

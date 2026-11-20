@@ -103,20 +103,22 @@ describe('chrome-use Perplexity backend (POC)', () => {
         if (sub === 'open' || sub === 'wait' || sub === 'fill' || sub === 'press') return ok();
         if (sub === 'eval') {
           const script = args[3] ?? '';
+          // Baseline count before submit.
           if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
-          return ok({ result: 0 });
+          // Polling snapshot after submit: simulate relay loss.
+          if (submitted) return failJson('not connected to Chrome extension relay');
+          return ok({ result: { count: 0, text: '', html: '' } });
         }
         if (sub === 'click') {
           submitted = true;
           return ok();
         }
         if (sub === 'done') return ok();
-        if (submitted) return failJson('not connected to Chrome extension relay');
         return ok();
       },
     };
     const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
-    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
+    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi', timeoutMs: 5_000 });
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.failure.kind).toBe('unknown_submission');
