@@ -10,10 +10,9 @@ import {
   contextFiles,
   conventionFiles,
   fileAtRevision,
+  fileBehindLink,
   MAX_DIFF_CHARS,
   normalizeRepoPath,
-  repoNameOf,
-  resolveTrackedFile,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
@@ -238,9 +237,11 @@ async function excerptOf(
     };
   }
   // Only a file of the revision under review is read: a local file that was
-  // never committed (a secret, a key) must not reach the backend.
-  const resolved = await resolveTrackedFile(repoRoot, finding.file, tracked);
-  if (!resolved) {
+  // never committed (a secret, a key) must not reach the backend. The links
+  // are followed in the revision as well: the target of a symlink is a part
+  // of the revision, not a property of the checkout.
+  const behind = await fileBehindLink(repoRoot, headSha, name, tracked);
+  if (!behind) {
     // The file is not in the head — it may be a file the change removed. Its
     // content is read from the base revision: a deletion is a change, and a
     // finding about it must be judged on the code it removed, not on the
@@ -267,8 +268,7 @@ async function excerptOf(
   }
   // A tracked symlink may point at a file that may hold a secret: the file
   // behind the link is the file that is read, so it is the one that decides.
-  const behind = await repoNameOf(repoRoot, resolved);
-  if (behind && secret.has(behind)) {
+  if (secret.has(behind)) {
     return {
       text: '(the content of this file is withheld: it may hold a secret)',
       exists: false,
@@ -279,7 +279,7 @@ async function excerptOf(
   }
   // The content comes from the commit under review, not from the disk: a file
   // that changes while the reviewers run must not reach the backend.
-  const content = await fileAtRevision(repoRoot, headSha, behind ?? name);
+  const content = await fileAtRevision(repoRoot, headSha, behind);
   if (content === undefined) {
     return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
   }

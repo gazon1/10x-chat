@@ -577,6 +577,31 @@ describe('the review pipeline', () => {
     expect(run.report).toContain('Unchecked input');
   });
 
+  it('clears the C1 control characters of a reviewer from the report', async () => {
+    // The 8-bit introducers drive a terminal as well: the CSI of U+009B moves
+    // the cursor of the reader of the report.
+    const loud = {
+      ...FINDING,
+      title: '\u009B31mUnchecked input',
+      problem: '\u009D0;the input of run() reaches exec() without a check.',
+    };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([loud]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).not.toContain('\u009B');
+    expect(run.report).not.toContain('\u009D');
+    expect(run.report).toContain('Unchecked input');
+  });
+
   it('writes the run of the review for its owner only', async () => {
     // A run holds excerpts of the code of the repository: another user of the
     // machine may not read them.
@@ -855,6 +880,57 @@ describe('the review pipeline', () => {
       const review = prompts.find((prompt) => prompt.includes('# Role: correctness')) ?? '';
       expect(review).toContain('export const a = 2;');
       expect(review).not.toContain('export const secret = 3;');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the file behind a symlink from the commit, not from the disk', async () => {
+    // A symlink of the revision points at a file of the revision: the checkout
+    // may retarget the link while the reviewers run, and the evidence must
+    // still be the code of the commit under review.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-link-race-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'actual.ts'), 'export const actual = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'src', 'other.ts'), 'export const other = 1;\n', 'utf-8');
+      await symlink('actual.ts', path.join(cwd, 'src', 'link.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'actual.ts'), 'export const actual = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      // The checkout retargets the link at another file of the repository.
+      await rm(path.join(cwd, 'src', 'link.ts'));
+      await symlink('other.ts', path.join(cwd, 'src', 'link.ts'));
+
+      const finding = { ...FINDING, file: 'src/link.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('export const actual = 2;');
+      expect(verification).not.toContain('export const other = 1;');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -2046,6 +2122,18 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid).toEqual([]);
     expect(parsed.findings).toHaveLength(1);
     expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('reads a payload that follows a character outside the Basic Multilingual Plane', () => {
+    // The offsets of a match are the offsets of the code units of the string:
+    // a fence behind an emoji must not shift the mask of the fence, or the
+    // list that follows it in the prose loses its payload.
+    const second = { ...FINDING, title: 'The second defect of the same file', line: 3 };
+    const third = { ...FINDING, title: 'The third defect of the same file', line: 4 };
+    const answer = `👋${'```json\n'}${JSON.stringify({ findings: [] })}\n${'```'}${JSON.stringify([second, third])}`;
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(2);
+    expect(parsed.findings.map((finding) => finding.title)).toContain(second.title);
   });
 
   it('reads a payload that carries a brace inside a string value', () => {

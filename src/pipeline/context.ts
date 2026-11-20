@@ -683,39 +683,72 @@ export async function resolveInRepo(repoRoot: string, file: string): Promise<str
 }
 
 /**
- * The path of a file of the revision under review — `undefined` when the file
- * is not part of it.
+ * The entry of a file in a revision — whether it is a symlink, and where it
+ * points at.
  *
- * Both names must be files of the revision: the name a finding names, and the
- * file behind it. A tracked symlink may point at a local file that was never
- * committed — that file is not read either.
+ * The entry comes from the tree of Git: a symlink of a revision is a blob that
+ * holds the path it points at, and that path belongs to the revision — the
+ * link of the checkout may point elsewhere while the reviewers run.
  */
-export async function resolveTrackedFile(
+export async function revisionEntry(
   repoRoot: string,
+  sha: string,
   file: string,
-  tracked: Set<string>,
-): Promise<string | undefined> {
-  if (!tracked.has(normalizeRepoPath(file))) return undefined;
-  const resolved = await resolveInRepo(repoRoot, file);
-  if (!resolved) return undefined;
-  const realRoot = await realpath(repoRoot).catch(() => repoRoot);
-  if (!tracked.has(normalizeRepoPath(path.relative(realRoot, resolved)))) return undefined;
-  return resolved;
+): Promise<{ symlink: boolean; target?: string } | undefined> {
+  const listed = await git(['ls-tree', sha, '--', file], repoRoot).catch(() => '');
+  const entry = listed.split('\n').find((line) => line.includes('\t'));
+  if (!entry) return undefined;
+  const mode = entry.slice(0, entry.indexOf(' '));
+  if (mode !== '120000') return { symlink: false };
+  const blob = await fileAtRevision(repoRoot, sha, file);
+  if (blob === undefined) return { symlink: true };
+  return { symlink: true, target: blob.replace(/\n$/, '') };
 }
 
 /**
- * The name of a file of the repository — the path of the real file, relative
- * to the root of the repository.
+ * The file a symlink points at — the name of the file, relative to the root of
+ * the repository.
  *
- * A symlink has two names: the name of the link and the name of the file
- * behind it. The file behind it is the one whose content is read, so it is
- * the one that decides whether the content may be read.
+ * The target is joined the way the tree of Git joins it: the directory of the
+ * link and the path of the target. A target that leaves the repository is no
+ * file of it.
  */
-export async function repoNameOf(repoRoot: string, absolute: string): Promise<string | undefined> {
-  const realRoot = await realpath(repoRoot).catch(() => repoRoot);
-  const relative = path.relative(realRoot, absolute);
-  if (escapesRoot(relative)) return undefined;
-  return normalizeRepoPath(relative);
+export function symlinkTarget(link: string, target: string): string | undefined {
+  if (!target || path.posix.isAbsolute(target)) return undefined;
+  const directory = path.posix.dirname(link);
+  const joined = directory === '.' ? target : `${directory}/${target}`;
+  const normalized = path.posix.normalize(joined);
+  if (normalized === '..' || normalized.startsWith('../')) return undefined;
+  return normalized;
+}
+
+/**
+ * The file of the revision that a name of the revision leads to — the name
+ * itself, or the file behind a symlink.
+ *
+ * The links are followed in the revision, not on the disk: a symlink that
+ * points at a file that was never committed leads to no file of the
+ * revision, and a link that the checkout retargeted while the reviewers ran
+ * still leads to the file of the revision.
+ */
+export async function fileBehindLink(
+  repoRoot: string,
+  sha: string,
+  file: string,
+  tracked: Set<string>,
+): Promise<string | undefined> {
+  let current = file;
+  for (let step = 0; step < 16; step += 1) {
+    if (!tracked.has(current)) return undefined;
+    const entry = await revisionEntry(repoRoot, sha, current);
+    if (!entry) return undefined;
+    if (!entry.symlink) return current;
+    if (entry.target === undefined) return undefined;
+    const target = symlinkTarget(current, entry.target);
+    if (!target) return undefined;
+    current = target;
+  }
+  return undefined;
 }
 
 /**

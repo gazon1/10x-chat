@@ -53,8 +53,14 @@ function plain(value: string): string {
       index = endOfSequence(characters, index + 1);
       continue;
     }
-    // A control character, a line break and a tab excepted.
-    if ((code < 0x20 && code !== 0x0a && code !== 0x09) || code === 0x7f) {
+    // A control character, a line break and a tab excepted. The C1 range is
+    // a control range too: its CSI and OSC introducers drive a terminal as
+    // well.
+    if (
+      (code < 0x20 && code !== 0x0a && code !== 0x09) ||
+      code === 0x7f ||
+      (code >= 0x80 && code <= 0x9f)
+    ) {
       kept.push(' ');
       index += 1;
       continue;

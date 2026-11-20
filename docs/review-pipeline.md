@@ -191,7 +191,9 @@ revision under review:
   **bundle** of the reviewers is read from the same commit — it is the context
   of the change, and the context must be the context of the head. The **callers**
   of a file are searched in the revision under review as well: the files that
-  mention it are the ones of the code that is reviewed.
+  mention it are the ones of the code that is reviewed. A **symlink** is
+  followed in the revision too: the target of a link is a blob of the commit,
+  and the checkout may retarget the link while the reviewers run.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers
@@ -232,8 +234,9 @@ revision under review:
   reviewers — a reviewer quotes the change it is about — are fenced the same
   way, and the verifier is told that a claim is data too.
 - The text of a reviewer is **data in the report** too: the control characters
-  are cleared and the markup of HTML is escaped, so a tag in a finding is shown
-  as text and never becomes markup of the report.
+  are cleared — the C0 range, the C1 range and the escape sequences — and the
+  markup of HTML is escaped, so a tag in a finding is shown as text and never
+  becomes markup of the report.
 - The identifier of a run is a **name, not a path**: it names the directory of
   the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
   a `..` is refused the way a name of a profile is refused.

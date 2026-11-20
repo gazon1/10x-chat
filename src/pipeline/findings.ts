@@ -140,7 +140,10 @@ export function jsonCandidates(text: string): JsonCandidates {
   }));
   // The plain text of the answer carries the fences as well: they are blanked
   // out, so that the delimiters of a fenced payload are not counted twice.
-  const plain = [...text];
+  // The offsets of a match are the offsets of the code units of the string:
+  // the copy is split the same way, or a character outside the Basic
+  // Multilingual Plane before a fence blanks the wrong places.
+  const plain = text.split('');
   for (const match of fences) {
     const from = match.index ?? 0;
     for (let index = from; index < from + match[0].length; index += 1) plain[index] = ' ';
