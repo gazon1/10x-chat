@@ -175,6 +175,12 @@ revision under review:
   neither the diff of the bundle nor the evidence of a finding. The reviewers
   are told that the change touches it, and a finding about it stays
   `Unverified`: it cannot be settled without the content.
+- A file that may hold a secret keeps the secret when the change **renames**
+  it: the new name is not a secret by its own pattern, but the content is the
+  content of the old one, so the new name is excluded from the diff and from
+  the bundle as well.
+- The file behind a **tracked symlink** decides what may be read: the content
+  of a link that points at a file that may hold a secret is never read.
 
 ## The verdict of the report
 

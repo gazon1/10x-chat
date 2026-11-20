@@ -611,14 +611,17 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         files: [...changed, ...conventions],
         cwd: context.repoRoot,
       });
-      const omitted = context.changedFiles.length - changed.length;
+      const withheld = context.changedFiles.filter((file) =>
+        context.secretFiles.includes(file),
+      ).length;
+      const omitted = context.changedFiles.length - changed.length - withheld;
       steps.push(
         step(
           'build-bundle',
           'passed',
-          `${changed.length} changed files and ${conventions.length} convention file(s) in the bundle${
-            omitted > 0 ? `, ${omitted} omitted — the bound of the bundle` : ''
-          }`,
+          `${changed.length} changed files and ${conventions.length} convention file(s) in the bundle` +
+            (withheld > 0 ? `, ${withheld} withheld — they may hold a secret` : '') +
+            (omitted > 0 ? `, ${omitted} omitted — the bound of the bundle` : ''),
           bundleStart,
         ),
       );

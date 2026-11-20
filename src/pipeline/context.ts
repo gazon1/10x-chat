@@ -268,14 +268,23 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   const readable = new Set(readableHead);
   const readableOfBase = new Set(readableBase);
   const baseTracked = await trackedFiles(repoRoot, baseSha);
+  const baseSecret = baseTracked.filter((file) => !readableOfBase.has(file));
+
+  // A file that the change renames away from a name that may hold a secret
+  // keeps the secret under its new name: the content of the old file is the
+  // content of the new one, and the pathspec of the old name does not keep
+  // it out of the diff.
+  const renamed = await renames(repoRoot, range);
+  const inherited = renamed.filter((pair) => baseSecret.includes(pair.from)).map((pair) => pair.to);
+
   const secretFiles = [
-    ...new Set([
-      ...tracked.filter((file) => !readable.has(file)),
-      ...baseTracked.filter((file) => !readableOfBase.has(file)),
-    ]),
+    ...new Set([...tracked.filter((file) => !readable.has(file)), ...baseSecret, ...inherited]),
   ];
 
-  const diffOutput = await git(['diff', range, '--', ':(top)**', ...secretPathspecs()], cwd);
+  const diffOutput = await git(
+    ['diff', range, '--', ':(top)**', ...secretPathspecs(), ...literalExcludes(inherited)],
+    cwd,
+  );
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
     ? `${diffOutput.slice(0, MAX_DIFF_CHARS)}\n\n[the diff was cut here — ${diffOutput.length - MAX_DIFF_CHARS} characters are missing]`
@@ -304,9 +313,14 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
  * The files of the bundle: the changed files, bounded.
  *
  * The diff already carries the change — the files are the context around it.
+ *
+ * The content of a file that may hold a secret is never in the bundle: the
+ * name of such a file is in the changed files, but the file itself is not.
  */
 export function contextFiles(context: ReviewContext): string[] {
-  return context.changedFiles.slice(0, MAX_CONTEXT_FILES);
+  return context.changedFiles
+    .filter((file) => !context.secretFiles.includes(file))
+    .slice(0, MAX_CONTEXT_FILES);
 }
 
 /**
@@ -374,6 +388,38 @@ async function readableFiles(repoRoot: string, sha: string): Promise<string[]> {
     ['diff', '--name-only', '-z', EMPTY_TREE, sha, '--', ':(top)**', ...secretPathspecs()],
     repoRoot,
   );
+}
+
+/**
+ * The renames of the change — the old path and the new one.
+ *
+ * The pathspecs of the diff hide a renamed file: git reports the rename
+ * under the new name, and the exclusion of the old name does not apply to
+ * it. The rename is the one thing that says where the content came from.
+ */
+async function renames(repoRoot: string, range: string): Promise<{ from: string; to: string }[]> {
+  const listed = await gitRaw(['diff', '--name-status', '-M', '-z', range], repoRoot);
+  const parts = listed.split('\0').filter((part) => part !== '');
+  const pairs: { from: string; to: string }[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    // A rename carries two names, every other change carries one.
+    if (!parts[index].startsWith('R')) continue;
+    const from = parts[index + 1];
+    const to = parts[index + 2];
+    if (from && to) pairs.push({ from, to });
+    index += 2;
+  }
+  return pairs;
+}
+
+/**
+ * The pathspecs that keep the given names out of the diff.
+ *
+ * The names are taken literally: a name of a file may hold a character that
+ * a glob would read as something else.
+ */
+function literalExcludes(files: string[]): string[] {
+  return files.map((file) => `:(exclude,literal)${file}`);
 }
 
 /**

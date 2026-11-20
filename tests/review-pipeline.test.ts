@@ -561,6 +561,53 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps a renamed secret out of the diff and out of the bundle', async () => {
+    // The pathspec of the old name does not hide the rename: git reports the
+    // file under its new name, and the content of the secret comes with it.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-moved-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'mv', '.env', 'config.ts');
+      await gitIn(cwd, 'commit', '-m', 'rename');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+
+      const finding = { ...FINDING, file: 'config.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      // Neither the bundle of the reviewers nor the evidence of the
+      // verification carries the content of the secret.
+      expect(prompts.join('\n')).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the file behind a tracked symlink out of the evidence', async () => {
     // The link is a file of the revision, but the file behind it is the one
     // that is read — and it may hold a secret.
