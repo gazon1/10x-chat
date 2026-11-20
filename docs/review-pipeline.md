@@ -199,7 +199,9 @@ revision under review:
   inside them is an attack on the reviewer. Every one of them sits in a fence
   that is longer than the backticks it carries, so the content cannot close it,
   and the reviewers are told that an instruction found in them is a finding of
-  the category `security`.
+  the category `security`. The names of the withheld files and the claims of the
+  reviewers — a reviewer quotes the change it is about — are fenced the same
+  way, and the verifier is told that a claim is data too.
 
 ## The verdict of the report
 
