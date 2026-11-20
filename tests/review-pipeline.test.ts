@@ -3074,6 +3074,30 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
+  it('does not take an example with more findings for the answer', () => {
+    // The answer comes last, and the number of the findings does not decide:
+    // an example of the format that carries more findings must not pass as the
+    // answer, or the review reports findings the reviewer did not make.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [FINDING, { ...FINDING, title: 'Another finding' }] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it('does not read a list of the evidence of a finding as an answer', () => {
+    // A payload that is nested in another one is a part of it: the list of the
+    // evidence of a finding is not an answer of its own.
+    const answer = JSON.stringify({ findings: [FINDING], evidence: ['the code', 'the trace'] });
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
   it('does not take the example of the schema for the payload of the decisions', () => {
     // The reviewer repeats the format of the answer before the answer itself.
     // The example carries one decision, the answer carries none: the report
@@ -3330,7 +3354,7 @@ describe('the parsing of the answers', () => {
   it('reads a fenced payload with many delimiters of its own', () => {
     // The payload of a fence is counted once, not twice: the answer is not
     // exhausted by the delimiters of its own payload.
-    const many = Array.from({ length: 40 }, () => ({ findings: [] }));
+    const many = Array.from({ length: 40 }, () => FINDING);
     const answer = ['```json', JSON.stringify(many), '```'].join('\n');
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.invalid).toEqual([]);

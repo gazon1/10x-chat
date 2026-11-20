@@ -73,8 +73,8 @@ an empty list of findings, and the findings of that pass would be lost — the
 review would approve the change without them. Such an answer fails the pass
 like a missing list of decisions does.
 
-The decisions are read with a different rule than the findings. The answer
-comes last, and the number of the entries does not decide: a decision is not a
+The decisions are read with the same rule as the findings: the place of the
+payload decides, and the number of the entries does not. A decision is not a
 defect, and an earlier payload of one decision must not hide the empty list
 that says there is none. A model that repeats the format of its answer before
 the answer itself would otherwise put a decision of the format into the report
@@ -102,12 +102,17 @@ balanced object and array of the answer is tried, and the one that carries the
 answer is the one that is read — an example of the schema that a reviewer
 repeats in the prose of its answer is not the answer.
 
-The position decides which payload is the answer, and it decides it for the
-malformed payloads as well. A findings field that is there and is not a list
-of findings is a malformed answer, and only a payload that comes after it may
-hide it: an example of the format precedes the answer, and the answer that
-follows is the one that carries the findings. An earlier example of the format
-must never pass a malformed answer as an answer without findings.
+The place of the payload decides which one is the answer, and the number of
+the findings does not. The answer is the last payload of the answer: an
+example of the format that precedes it carries findings that the reviewer did
+not make, and it must not pass as the answer — neither when it carries more
+findings than the answer nor when it carries fewer. Only the payloads of the
+top level are read: a payload that is nested in another one is a part of it —
+the list of the evidence of a finding, a decision of the example of the format
+— and not an answer of its own.
+
+A findings field that is there and is not a list of findings is a malformed
+answer, and it fails the step: a missing list is not an empty list.
 
 **A finding is not confirmed because it parsed.** A finding is `confirmed`
 only when the verification pass confirms it *with evidence* and the finding

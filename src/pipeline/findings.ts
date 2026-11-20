@@ -146,6 +146,8 @@ interface Fence {
   text: string;
   /** The offset of the opening fence in the answer. */
   at: number;
+  /** The offset of the start of the content in the answer. */
+  contentAt: number;
   /** The offset after the closing fence in the answer. */
   end: number;
 }
@@ -184,6 +186,7 @@ function fencesOf(text: string): Fence[] {
     fences.push({
       text: content.trim() === '' ? text.slice(start, close.start) : content,
       at: open,
+      contentAt: content.trim() === '' ? start : contentStart,
       end: close.end,
     });
     index = close.end;
@@ -246,13 +249,19 @@ function lineStart(text: string, at: number): number {
  * object and array of the answer is therefore read. A fence is read on its
  * own and is blanked out of the plain text, so that the delimiters of a
  * payload are counted once.
+ *
+ * Only the payloads of the top level are read: a payload that is nested in
+ * another one is a part of it — the list of the evidence of a finding, a
+ * decision of the example of the format — and not an answer of its own. The
+ * place of a payload is where it starts in the answer, and it decides which
+ * payload is the answer.
  */
 export function jsonCandidates(text: string): JsonCandidates {
   const fences = fencesOf(text);
   const sources: { text: string; fenced: boolean; at: number }[] = fences.map((fence) => ({
     text: fence.text,
     fenced: true,
-    at: fence.at,
+    at: fence.contentAt,
   }));
   // The plain text of the answer carries the fences as well: they are blanked
   // out, so that the delimiters of a fenced payload are not counted twice.
@@ -276,10 +285,11 @@ export function jsonCandidates(text: string): JsonCandidates {
     for (let index = 0; index < source.text.length; index += 1) {
       const character = source.text[index];
       if (character !== '{' && character !== '[') continue;
-      const inside = index < covered;
+      // A payload that is nested in another one is a part of it, not an
+      // answer: the answer of a reviewer is the payload of the top level.
+      if (index < covered) continue;
       const slice = balancedSlice(source.text, index);
       if (!slice) {
-        if (inside) continue;
         broken += 1;
         if (broken > MAX_JSON_CANDIDATES) {
           // The payload of the answer may lie behind this delimiter: the
@@ -297,7 +307,6 @@ export function jsonCandidates(text: string): JsonCandidates {
         seen.add(key);
         candidates.push({ value, fenced: source.fenced, at: source.at + index });
       } catch {
-        if (inside) continue;
         broken += 1;
         if (broken > MAX_JSON_CANDIDATES) {
           exhausted = true;
@@ -656,53 +665,39 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  // A findings field that is there and is not a list of findings is a
-  // malformed answer: it must not pass as an answer without findings, not
-  // even behind an empty payload of another shape. Only a payload that comes
-  // after it may hide it: an example of the format precedes the answer, and
-  // the answer that follows is the one that carries the findings.
-  const malformed = candidates.filter((candidate) => carriesMalformedFindings(candidate.value));
-  if (malformed.length > 0) {
-    const lastMalformed = malformed.reduce((a, b) => (a.at >= b.at ? a : b));
-    const later = candidates.some(
-      (candidate) => candidate.at > lastMalformed.at && carriesAListOfFindings(candidate.value),
-    );
-    if (!later) {
-      return {
-        findings: [],
-        invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
-      };
-    }
-  }
-  // The decisions are the answer of the architecture pass. An answer of another
-  // pass that carries them and no findings is an answer to the wrong question:
-  // the empty list of the decisions must not pass as an empty list of findings.
-  if (
-    role !== 'architecture' &&
-    candidates.some((candidate) => answersTheDecisionQuestion(candidate.value))
-  ) {
+  // The payload of the answer is the last payload of the answer: the answer
+  // comes last, and the number of the entries does not decide. An example of
+  // the schema that precedes the answer carries findings that the reviewer did
+  // not make, and it must not pass as the answer.
+  const answer = answerCandidate(candidates);
+  if (!answer) {
     return {
       findings: [],
-      invalid: ['the answer carries the decisions of the change and no findings', ...notes],
+      invalid: ['the answer contains no JSON payload of findings', ...notes],
     };
   }
-  const choices = payloadChoices(candidates, 'findings', (entries) =>
-    parseFindingEntries(entries, role),
-  );
-  if (choices.length === 0) {
-    // The architecture pass answers two questions: the findings and the
-    // decisions. An answer that carries the decisions and no findings has
-    // answered one of them: the key of the findings is missing, and a missing
-    // key is not an empty list. The findings of that pass would be lost, and
-    // the review would approve the change without them.
-    if (
-      role === 'architecture' &&
-      candidates.some((candidate) => keyedEntries(candidate.value, 'decisions') !== undefined)
-    ) {
+  // A bare list is the answer of a reviewer that answered without the key.
+  if (Array.isArray(answer.value)) {
+    const parsed = parseFindingEntries(answer.value, role);
+    return { findings: parsed.findings, invalid: [...parsed.invalid, ...notes] };
+  }
+  const record = answer.value as Record<string, unknown>;
+  if (!('findings' in record)) {
+    // The decisions are the answer of the architecture pass. An answer of
+    // another pass that carries them and no findings is an answer to the wrong
+    // question: the empty list of the decisions must not pass as an empty list
+    // of findings. The architecture pass answers two questions, and an answer
+    // that carries the decisions and no findings has answered one of them:
+    // the key of the findings is missing, and a missing key is not an empty
+    // list. The findings of that pass would be lost, and the review would
+    // approve the change without them.
+    if ('decisions' in record) {
       return {
         findings: [],
         invalid: [
-          'the answer carries the decisions of the change and no findings key — the architecture pass answers two questions and must carry both keys',
+          role === 'architecture'
+            ? 'the answer carries the decisions of the change and no findings key — the architecture pass answers two questions and must carry both keys'
+            : 'the answer carries the decisions of the change and no findings',
           ...notes,
         ],
       };
@@ -712,48 +707,16 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
       invalid: ['the answer contains no JSON payload of findings', ...notes],
     };
   }
-  const best = choices.reduce(betterCandidate);
-  return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
-}
-
-/**
- * Whether a payload carries a findings field that is not a list of findings.
- *
- * The field of the format is there and it does not hold what it must hold: the
- * answer is malformed, and it must not pass as an answer without findings.
- */
-function carriesMalformedFindings(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (!('findings' in record)) return false;
-  return !Array.isArray(record.findings);
-}
-
-/**
- * Whether a payload carries a list of findings that may hide a malformed
- * answer.
- *
- * A list under the key is the format of the answer. A bare list counts only
- * when it carries entries: an empty list is the shape of the answer of the
- * format, and it must not hide a malformed answer that follows it.
- */
-function carriesAListOfFindings(value: unknown): boolean {
-  if (keyedEntries(value, 'findings') !== undefined) return true;
-  return Array.isArray(value) && value.length > 0;
-}
-
-/**
- * Whether a payload carries the decisions of the change and no findings.
- *
- * The answer of the architecture pass carries both keys. An answer of another
- * pass that carries the decisions answers a question it was not asked: the
- * empty list of the decisions must not pass as an empty list of findings.
- */
-function answersTheDecisionQuestion(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (!('decisions' in record)) return false;
-  return !('findings' in record);
+  // A findings field that is there and is not a list of findings is a
+  // malformed answer: it must not pass as an answer without findings.
+  if (!Array.isArray(record.findings)) {
+    return {
+      findings: [],
+      invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
+    };
+  }
+  const parsed = parseFindingEntries(record.findings, role);
+  return { findings: parsed.findings, invalid: [...parsed.invalid, ...notes] };
 }
 
 /** The findings of one payload of an answer. */
@@ -891,7 +854,9 @@ function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined
 
 /** Whether a payload carries the shape of an answer of a reviewer. */
 function carriesTheShapeOfAnAnswer(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  // A bare list is the answer of a reviewer that answered without the key.
+  if (Array.isArray(value)) return true;
+  if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   // The presence of the key marks the payload of the answer, not its value:
   // an answer whose findings are malformed is still the answer, and the
