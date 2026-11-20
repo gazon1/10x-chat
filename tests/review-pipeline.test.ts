@@ -3077,6 +3077,34 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid).toEqual([]);
   });
 
+  it('does not take an example of the decisions for an answer that omits them', () => {
+    // The reviewer repeats the format of the answer before the answer itself,
+    // and the answer carries no decisions: the example is not the answer. The
+    // report must not show a decision that the reviewer did not make, and the
+    // audit must not pass.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({
+        decisions: [
+          {
+            kind: 'Implicit decision',
+            decision: 'what the implementation decided',
+            previous: 'the behavior of the base revision',
+            evidence: 'the code',
+            consequence: 'the guarantee',
+            risk: 'the failure scenario',
+            confirmation: 'yes',
+          },
+        ],
+      }),
+      'And here is my answer:',
+      JSON.stringify({ findings: [] }),
+    ].join('\n');
+    const parsed = parseReviewerDecisions(answer);
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid[0]).toContain('no decisions');
+  });
+
   it('does not let an empty example hide the malformed findings of the answer', () => {
     // An empty example must not turn a malformed answer into an empty review:
     // a malformed answer is a failed step, not a review without findings.

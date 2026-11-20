@@ -807,6 +807,12 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
  * payload that carries the key counts — a bare list of findings is not a list
  * of decisions.
  *
+ * The payload of the answer is found by its position, not by its shape: the
+ * answer comes last, and an answer that carries no decisions is still the
+ * answer. An example of the format that precedes it is never read as the
+ * answer — the model would report a decision it did not make, and the audit
+ * would pass.
+ *
  * An answer without the key has not run the audit: the architecture pass must
  * answer the question, and an empty list of decisions is the answer that says
  * there is none — not the answer that omits it.
@@ -818,43 +824,45 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices: CandidateChoice<ParsedDecisions>[] = [];
-  for (const candidate of candidates) {
-    const entries = keyedEntries(candidate.value, 'decisions');
-    if (entries === undefined) continue;
-    const parsed = parseDecisionEntries(entries);
-    choices.push({ candidate, parsed, count: entries.length, keyed: true });
-  }
-  if (choices.length === 0) {
+  const answer = answerCandidate(candidates);
+  const entries = answer ? keyedEntries(answer.value, 'decisions') : undefined;
+  if (entries === undefined) {
     return {
       decisions: [],
       invalid: [
         'the answer carries no decisions — the audit of the implicit decisions did not run',
+        ...notes,
       ],
     };
   }
-  const best = choices.reduce(laterCandidate);
-  return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...notes] };
+  const parsed = parseDecisionEntries(entries);
+  return { decisions: parsed.decisions, invalid: [...parsed.invalid, ...notes] };
 }
 
 /**
- * The later of two candidates.
+ * The payload of the answer — the last payload of the text.
  *
- * The answer comes last: a model that repeats the format of the answer puts
- * the format first, and the answer that follows is the one that counts. A
- * decision that the model did not make is not a decision of the change: an
- * earlier payload of one decision must not hide an empty list that says there
- * is none. The count of the entries does not decide here — the payload of the
- * findings needs it, because a malformed answer must not hide behind a
- * smaller one, and the decisions of the change are not defects.
+ * The answer comes last: a model that repeats the format of its answer puts
+ * the format first, and the answer that follows is the one that counts. The
+ * payload of the answer is found by its position and not by the shape it has:
+ * an answer without the decisions is the answer, and it must not be replaced
+ * by the example of the format that precedes it.
  */
-function laterCandidate<T extends { invalid: string[] }>(
-  a: CandidateChoice<T>,
-  b: CandidateChoice<T>,
-): CandidateChoice<T> {
-  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
-  if (a.count !== b.count) return a.count > b.count ? a : b;
-  return a.candidate.fenced ? a : b;
+function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined {
+  let answer: JsonCandidate | undefined;
+  for (const candidate of candidates) {
+    if (!carriesTheShapeOfAnAnswer(candidate.value)) continue;
+    if (!answer || candidate.at > answer.at) answer = candidate;
+  }
+  return answer;
+}
+
+/** Whether a payload carries the shape of an answer of a reviewer. */
+function carriesTheShapeOfAnAnswer(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return (
+    keyedEntries(value, 'findings') !== undefined || keyedEntries(value, 'decisions') !== undefined
+  );
 }
 
 /** The decisions of one payload of an answer. */

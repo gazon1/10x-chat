@@ -74,6 +74,13 @@ that says there is none. A model that repeats the format of its answer before
 the answer itself would otherwise put a decision of the format into the report
 of a change that has none.
 
+The payload of the answer is found by its position, not by its shape: it is the
+last payload of the answer, and it has to carry the decisions. An answer that
+carries no decisions is the answer that omits them — the example of the format
+that precedes it is never read in its place. A model that shows the format and
+then answers without the decisions would otherwise report a decision it did not
+make, and the audit would pass on the example instead of failing on the answer.
+
 ## The finding model
 
 A finding carries a stable id, a title, a severity, a category, a file and an
