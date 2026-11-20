@@ -234,9 +234,10 @@ revision under review:
   reviewers — a reviewer quotes the change it is about — are fenced the same
   way, and the verifier is told that a claim is data too.
 - The text of a reviewer is **data in the report** too: the control characters
-  are cleared — the C0 range, the C1 range and the escape sequences — and the
-  markup of HTML is escaped, so a tag in a finding is shown as text and never
-  becomes markup of the report.
+  are cleared — the C0 range, the C1 range and the escape sequences — the
+  markup of HTML is escaped and the markup of Markdown is escaped as well, so
+  a tag or a link of a finding is shown as text and never becomes markup of
+  the report.
 - The identifier of a run is a **name, not a path**: it names the directory of
   the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
   a `..` is refused the way a name of a profile is refused.

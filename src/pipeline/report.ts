@@ -113,15 +113,26 @@ function html(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * The text of an untrusted source, as literal text of a Markdown report.
+ *
+ * A reviewer is an untrusted source: its text may hold the markup of
+ * Markdown, and a report that is opened in a viewer renders it — a link or an
+ * image of the reviewer becomes a link or an image of the report, and a line
+ * break of the reviewer becomes a line of the report.
+ */
+function literal(value: string): string {
+  return html(plain(value))
+    .replace(/([\\`*_[\]!|])/g, '\\$1')
+    .replace(/\r?\n/g, ' ')
+    .trim();
+}
+
 /** A cell of a table — a pipe or a newline would break the table. */
 function cell(value: string): string {
   // A backslash is escaped before a pipe: the escape of a pipe in a table
   // eats the backslash in front of it, and a name of a path has backslashes.
-  return html(plain(value))
-    .replace(/\\/g, '\\\\')
-    .replace(/\|/g, '\\|')
-    .replace(/\r?\n/g, ' ')
-    .trim();
+  return literal(value);
 }
 
 /**
@@ -233,7 +244,7 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const reason = run.verdictReason;
 
   const lines: string[] = [];
-  lines.push(`# PR review — ${subject}`);
+  lines.push(`# PR review — ${literal(subject)}`);
   lines.push('');
   lines.push(`- Repository: ${context?.repository ?? 'unknown'}`);
   lines.push(`- Target: ${target}`);
@@ -288,12 +299,12 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const notVerified = run.findings.filter((finding) => finding.verification === 'unverified');
   for (const finding of notVerified) {
     lines.push(
-      `- ${html(plain(finding.title))} — ${html(plain(finding.verificationNote ?? 'the verification did not settle it'))}`,
+      `- ${literal(finding.title)} — ${literal(finding.verificationNote ?? 'the verification did not settle it')}`,
     );
   }
   for (const step of run.steps) {
     if (step.status === 'failed' || step.status === 'skipped') {
-      lines.push(`- ${step.id} — ${html(plain(step.detail ?? step.status))}`);
+      lines.push(`- ${step.id} — ${literal(step.detail ?? step.status)}`);
     }
   }
   if (
@@ -336,7 +347,7 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   } else {
     for (const finding of risks) {
       lines.push(
-        `- ${html(plain(finding.title))} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
+        `- ${literal(finding.title)} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
       );
     }
   }

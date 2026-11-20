@@ -577,6 +577,32 @@ describe('the review pipeline', () => {
     expect(run.report).toContain('Unchecked input');
   });
 
+  it('clears the markup of Markdown of a reviewer from the report', async () => {
+    // A reviewer is an untrusted source: the markup of Markdown of its text
+    // would render in a viewer of the report — a link or an image of the
+    // reviewer becomes a link or an image of the report.
+    const loud = {
+      ...FINDING,
+      title: '![pixel](https://attacker.example/pixel)',
+      problem: '[Open](https://attacker.example) the input reaches exec().',
+    };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([loud]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).not.toContain('![pixel]');
+    expect(run.report).not.toContain('[Open]');
+    expect(run.report).toContain('\\!\\[pixel\\]');
+  });
+
   it('clears the C1 control characters of a reviewer from the report', async () => {
     // The 8-bit introducers drive a terminal as well: the CSI of U+009B moves
     // the cursor of the reader of the report.
