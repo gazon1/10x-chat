@@ -410,6 +410,30 @@ describe('the review pipeline', () => {
     expect(row).toContain('<code>src/a`b.ts:2</code>');
   });
 
+  it('clears the control characters of a reviewer from the report', async () => {
+    // A reviewer is an untrusted source: an escape sequence in its text
+    // would drive the terminal of the reader of the report.
+    const loud = {
+      ...FINDING,
+      title: '\u001B[31mUnchecked input\u001B[0m',
+      problem: '\u001B[2JThe input of run() reaches exec() without a check.',
+    };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([loud]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).not.toContain('\u001B');
+    expect(run.report).toContain('Unchecked input');
+  });
+
   it('rejects a finding about a deleted file whose line is outside it', async () => {
     // The line of a deleted file is the line it had in the base revision.
     const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-deleted-'));
@@ -463,6 +487,98 @@ describe('the review pipeline', () => {
       expect(context.diff).not.toContain('SECRET_VALUE');
 
       const finding = { ...FINDING, file: '.env', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+      expect(verification).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a secret that the change deletes out of the evidence', async () => {
+    // A deleted secret is a secret: its content is read from the base
+    // revision, and it must not reach the backend.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-gone-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', '.env');
+      await gitIn(cwd, 'commit', '-m', 'delete');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('.env');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+
+      const finding = { ...FINDING, file: '.env', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.startsWith('# Verification')) ?? '';
+      expect(verification).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the file behind a tracked symlink out of the evidence', async () => {
+    // The link is a file of the revision, but the file behind it is the one
+    // that is read — and it may hold a secret.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-link-secret-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await symlink('../.env', path.join(cwd, 'src', 'link.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'src', 'app.ts'), SOURCE, 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/link.ts', line: 1 };
       const prompts: string[] = [];
       const backend = createFakeBackend([
         { prompt: '# Role: correctness', answer: answerWith([finding]) },

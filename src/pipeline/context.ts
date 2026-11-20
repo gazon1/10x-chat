@@ -257,12 +257,23 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
 
   // The files that may hold a secret are never read: their content must not
   // reach the backend — neither in the diff of the change nor in the
-  // evidence of a finding. The checkout is the head and it is clean, so the
-  // index of the repository is the tree of the head.
-  const readable = new Set(
-    await gitNames(['ls-files', '-z', '--', ':(top)**', ...secretPathspecs()], repoRoot),
-  );
-  const secretFiles = tracked.filter((file) => !readable.has(file));
+  // evidence of a finding.
+  //
+  // The base counts too: a file that the change deletes is read from the
+  // base revision, and a secret that the change deletes is a secret.
+  const [readableHead, readableBase] = await Promise.all([
+    readableFiles(repoRoot, headSha),
+    readableFiles(repoRoot, baseSha),
+  ]);
+  const readable = new Set(readableHead);
+  const readableOfBase = new Set(readableBase);
+  const baseTracked = await trackedFiles(repoRoot, baseSha);
+  const secretFiles = [
+    ...new Set([
+      ...tracked.filter((file) => !readable.has(file)),
+      ...baseTracked.filter((file) => !readableOfBase.has(file)),
+    ]),
+  ];
 
   const diffOutput = await git(['diff', range, '--', ':(top)**', ...secretPathspecs()], cwd);
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
@@ -345,6 +356,24 @@ export async function conventionFiles(repoRoot: string, headSha: string): Promis
  */
 function secretPathspecs(): string[] {
   return SECRET_EXCLUDES.map((pattern) => `:(exclude,glob)${pattern}`);
+}
+
+/** The empty tree — the tree of a commit without a parent. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * The files of a revision whose content may be read — the tree of the
+ * revision without the files that may hold a secret.
+ *
+ * The list comes from a diff against the empty tree: `git ls-tree` reads no
+ * pathspec with magic, and the tree of the base must be listed the same way
+ * as the tree of the head.
+ */
+async function readableFiles(repoRoot: string, sha: string): Promise<string[]> {
+  return gitNames(
+    ['diff', '--name-only', '-z', EMPTY_TREE, sha, '--', ':(top)**', ...secretPathspecs()],
+    repoRoot,
+  );
 }
 
 /**
@@ -476,6 +505,21 @@ export async function resolveTrackedFile(
   const realRoot = await realpath(repoRoot).catch(() => repoRoot);
   if (!tracked.has(normalizeRepoPath(path.relative(realRoot, resolved)))) return undefined;
   return resolved;
+}
+
+/**
+ * The name of a file of the repository — the path of the real file, relative
+ * to the root of the repository.
+ *
+ * A symlink has two names: the name of the link and the name of the file
+ * behind it. The file behind it is the one whose content is read, so it is
+ * the one that decides whether the content may be read.
+ */
+export async function repoNameOf(repoRoot: string, absolute: string): Promise<string | undefined> {
+  const realRoot = await realpath(repoRoot).catch(() => repoRoot);
+  const relative = path.relative(realRoot, absolute);
+  if (escapesRoot(relative)) return undefined;
+  return normalizeRepoPath(relative);
 }
 
 /**

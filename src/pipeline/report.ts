@@ -35,11 +35,72 @@ function commandOf(step: StepOutcome, run: ReviewRun): string {
   }
 }
 
+/**
+ * The text of a reviewer, without the characters that drive a terminal.
+ *
+ * A reviewer is an untrusted source: its text may hold an ANSI escape
+ * sequence, and a report that prints it moves the cursor of the reader and
+ * hides the text behind it.
+ */
+function plain(value: string): string {
+  const characters = [...value];
+  const kept: string[] = [];
+  let index = 0;
+  while (index < characters.length) {
+    const character = characters[index];
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x1b) {
+      index = endOfSequence(characters, index + 1);
+      continue;
+    }
+    // A control character, a line break and a tab excepted.
+    if ((code < 0x20 && code !== 0x0a && code !== 0x09) || code === 0x7f) {
+      kept.push(' ');
+      index += 1;
+      continue;
+    }
+    kept.push(character);
+    index += 1;
+  }
+  return kept.join('');
+}
+
+/**
+ * The place where a control sequence ends — the character after it.
+ *
+ * A sequence is either a CSI (`ESC [ … final`) or an OSC (`ESC ] … BEL`).
+ * Both are dropped as a whole: the text behind them is the text of the
+ * reviewer, not a command of a terminal.
+ */
+function endOfSequence(characters: string[], start: number): number {
+  const introducer = characters[start];
+  if (introducer === '[') {
+    let cursor = start + 1;
+    while (cursor < characters.length) {
+      const code = characters[cursor].codePointAt(0) ?? 0;
+      if (code >= 0x40 && code <= 0x7e) return cursor + 1;
+      cursor += 1;
+    }
+    return cursor;
+  }
+  if (introducer === ']') {
+    let cursor = start + 1;
+    while (cursor < characters.length) {
+      const code = characters[cursor].codePointAt(0) ?? 0;
+      if (code === 0x07) return cursor + 1;
+      if (code === 0x1b && characters[cursor + 1] === '\\') return cursor + 2;
+      cursor += 1;
+    }
+    return cursor;
+  }
+  return start + 1;
+}
+
 /** A cell of a table — a pipe or a newline would break the table. */
 function cell(value: string): string {
   // A backslash is escaped before a pipe: the escape of a pipe in a table
   // eats the backslash in front of it, and a name of a path has backslashes.
-  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+  return plain(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
 /**
@@ -52,7 +113,7 @@ function cell(value: string): string {
  */
 function locationOf(finding: Finding): string {
   if (!finding.file) return '—';
-  const location = `${finding.file}${finding.line ? `:${finding.line}` : ''}`
+  const location = plain(`${finding.file}${finding.line ? `:${finding.line}` : ''}`)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -206,12 +267,12 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const notVerified = run.findings.filter((finding) => finding.verification === 'unverified');
   for (const finding of notVerified) {
     lines.push(
-      `- ${finding.title} — ${finding.verificationNote ?? 'the verification did not settle it'}`,
+      `- ${plain(finding.title)} — ${plain(finding.verificationNote ?? 'the verification did not settle it')}`,
     );
   }
   for (const step of run.steps) {
     if (step.status === 'failed' || step.status === 'skipped') {
-      lines.push(`- ${step.id} — ${step.detail ?? step.status}`);
+      lines.push(`- ${step.id} — ${plain(step.detail ?? step.status)}`);
     }
   }
   if (
@@ -254,7 +315,7 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   } else {
     for (const finding of risks) {
       lines.push(
-        `- ${finding.title} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
+        `- ${plain(finding.title)} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
       );
     }
   }

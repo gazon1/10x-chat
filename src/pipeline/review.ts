@@ -12,6 +12,7 @@ import {
   fileAtRevision,
   MAX_DIFF_CHARS,
   normalizeRepoPath,
+  repoNameOf,
   resolveTrackedFile,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
@@ -229,6 +230,18 @@ async function excerptOf(
       lineInRange,
       deleted: true,
       withheld: false,
+    };
+  }
+  // A tracked symlink may point at a file that may hold a secret: the file
+  // behind the link is the file that is read, so it is the one that decides.
+  const behind = await repoNameOf(repoRoot, resolved);
+  if (behind && secret.has(behind)) {
+    return {
+      text: '(the content of this file is withheld: it may hold a secret)',
+      exists: false,
+      lineInRange: false,
+      deleted: false,
+      withheld: true,
     };
   }
   let content: string;
