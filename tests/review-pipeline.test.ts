@@ -1008,6 +1008,30 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret of a file that stays out of a file that changes its type', async () => {
+    // A symlink that becomes a file of its own is a change of the type (`T`):
+    // the copy of a secret hides in the file the link turns into.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-type-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=s3cr3t\n', 'utf-8');
+      await symlink('.env', path.join(cwd, 'config.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await rm(path.join(cwd, 'config.ts'));
+      await writeFile(path.join(cwd, 'config.ts'), 'const token = "s3cr3t";\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('s3cr3t');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a checkout that hides the deletion of a file behind a git flag', async () => {
     // The flag hides the deletion from the status: the file of the revision
     // is not on the disk, and the review must not read a code it does not have.

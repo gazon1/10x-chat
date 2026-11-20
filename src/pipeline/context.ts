@@ -439,7 +439,9 @@ async function changedNames(
       continue;
     }
     if (status.startsWith('A') && first) added.push(first);
-    if (status.startsWith('M') && first) modified.push(first);
+    // A type change (`T`) is a modification of its own: a symlink that becomes
+    // a file of its own may carry a secret that the symlink pointed at.
+    if ((status.startsWith('M') || status.startsWith('T')) && first) modified.push(first);
     index += 2;
   }
   return { renames, added, modified };

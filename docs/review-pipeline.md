@@ -193,7 +193,10 @@ revision under review:
   read: a repository that keeps its `.env` may copy it into a file of its own,
   and the name of the secret does not follow the content. A file the change
   **modifies** counts as well: the copy of a secret hides as well in the line
-  that a change adds to a file that was already there. A copy hides in a line
+  that a change adds to a file that was already there. A file that changes its
+  **type** counts too — a symlink that becomes a file of its own is a change
+  of the type, and the copy may hide in the file the link turns into. A copy
+  hides in a line
   that says more than the secret too — the line of the secret, and the value it
   holds, which is the secret itself: the key is a name that the code of the
   repository uses on purpose (`process.env.DATABASE_URL`), and a file that
