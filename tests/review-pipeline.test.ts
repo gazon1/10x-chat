@@ -2728,6 +2728,30 @@ describe('the implicit decisions of a review', () => {
     expect(run.verdict).toBe('REQUEST CHANGES');
   });
 
+  it('tells the reader that an audit with a lost entry did not finish', async () => {
+    // One decision is read and one is malformed: the decisions that were read
+    // are kept as evidence, but the section must not pass them as a complete
+    // audit.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([], [DECISION, { decision: 'a decision without a kind' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.report).toContain('The audit did not finish');
+    expect(run.report).toContain('The audit of the decisions lives in the architecture pass.');
+  });
+
   it('fails the architecture pass when the findings of the answer are malformed', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([]) },
@@ -3099,6 +3123,33 @@ describe('the parsing of the answers', () => {
       }),
       'And here is my answer:',
       JSON.stringify({ findings: [] }),
+    ].join('\n');
+    const parsed = parseReviewerDecisions(answer);
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid[0]).toContain('no decisions');
+  });
+
+  it('does not take an example of the decisions for an answer with malformed findings', () => {
+    // The answer carries the findings and they are malformed: it is still the
+    // answer, and the parser of the findings is the one that reports it. The
+    // example of the format must not be read as the answer of the decisions.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({
+        decisions: [
+          {
+            kind: 'Implicit decision',
+            decision: 'what the implementation decided',
+            previous: 'the behavior of the base revision',
+            evidence: 'the code',
+            consequence: 'the guarantee',
+            risk: 'the failure scenario',
+            confirmation: 'yes',
+          },
+        ],
+      }),
+      'And here is my answer:',
+      JSON.stringify({ findings: 'malformed' }),
     ].join('\n');
     const parsed = parseReviewerDecisions(answer);
     expect(parsed.decisions).toEqual([]);

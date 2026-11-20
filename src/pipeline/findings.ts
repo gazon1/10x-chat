@@ -860,9 +860,11 @@ function answerCandidate(candidates: JsonCandidate[]): JsonCandidate | undefined
 /** Whether a payload carries the shape of an answer of a reviewer. */
 function carriesTheShapeOfAnAnswer(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return (
-    keyedEntries(value, 'findings') !== undefined || keyedEntries(value, 'decisions') !== undefined
-  );
+  const record = value as Record<string, unknown>;
+  // The presence of the key marks the payload of the answer, not its value:
+  // an answer whose findings are malformed is still the answer, and the
+  // parser of the findings is the one that has to report it.
+  return 'findings' in record || 'decisions' in record;
 }
 
 /** The decisions of one payload of an answer. */

@@ -60,6 +60,12 @@ run the audit, and it fails the pass: a review that says "no material
 decision" because nobody asked is not a review. An empty list is the answer
 that says there is none.
 
+An audit that lost an entry did not finish, and the report says so. The
+decisions that were read are kept — they are evidence of what the reviewer
+named — but the section states that the audit is incomplete whenever the
+architecture pass did not pass, so that a partial table is never read as a
+complete audit.
+
 The symmetry holds the other way round as well. The architecture pass answers
 two questions, and its answer must carry both keys: an answer that carries the
 decisions and no findings has answered one of the two. The missing key is not

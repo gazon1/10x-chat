@@ -320,6 +320,15 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
         : 'Not applicable — the reviewers named no material decision.',
     );
   } else {
+    if (architecture && architecture.status !== 'passed') {
+      // The audit that lost an entry did not finish: the decisions below are
+      // the ones that were read, and the section must not pass them as a
+      // complete audit.
+      lines.push(
+        `The audit did not finish: ${literal(architecture.detail ?? architecture.status)}. The decisions below are the ones that were read — the audit is incomplete.`,
+      );
+      lines.push('');
+    }
     lines.push(
       '| Kind | Decision | Previous behavior or alternative | Evidence and rationale | Consequence | Failure scenario or unresolved risk | Human confirmation |',
     );
