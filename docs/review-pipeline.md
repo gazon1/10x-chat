@@ -163,6 +163,9 @@ revision under review:
   the disk.
 - It fails when the difference of the commits cannot be computed (a diff that
   cannot be computed is an error, never an empty change that looks clean).
+- It fails when a file of the revision is not on the disk and a git flag
+  (`skip-worktree`, `assume-unchanged`) hides its deletion from the status: the
+  review reads the files of the disk, and they must be the ones of the head.
 - A file of a finding must be inside the repository by its **real** path: a
   symlink that points out of the checkout is refused, so nothing outside the
   repository can reach the prompt of the backend.
@@ -178,7 +181,9 @@ revision under review:
 - A file that may hold a secret keeps the secret when the change **renames**
   it: the new name is not a secret by its own pattern, but the content is the
   content of the old one, so the new name is excluded from the diff and from
-  the bundle as well.
+  the bundle as well. A file the change **adds** that carries a line of a
+  deleted secret keeps it too — the rename detection of git is a similarity,
+  and a secret that was copied into a file of its own is not a rename.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read.
 

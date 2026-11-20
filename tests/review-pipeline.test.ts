@@ -654,6 +654,80 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret of a deleted file out of a file the change adds', async () => {
+    // The rename detection of git cannot see a secret that was copied into a
+    // file with a name of its own: the lines of the secret decide then.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-copied-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', '.env');
+      await writeFile(
+        path.join(cwd, 'config.ts'),
+        `${Array.from({ length: 200 }, (_, index) => `const line${index} = ${index};`).join('\n')}\nTOKEN=SECRET_VALUE\n`,
+        'utf-8',
+      );
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+
+      const finding = { ...FINDING, file: 'config.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(prompts.join('\n')).not.toContain('SECRET_VALUE');
+      expect(run.findings[0].verification).toBe('unverified');
+      expect(run.findings[0].verificationNote).toContain('withheld');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a checkout that hides the deletion of a file behind a git flag', async () => {
+    // The flag hides the deletion from the status: the file of the revision
+    // is not on the disk, and the review must not read a code it does not have.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-flag-gone-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'a.txt'), 'one\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await rm(path.join(cwd, 'a.txt'));
+      await gitIn(cwd, 'update-index', '--skip-worktree', 'a.txt');
+
+      expect(await gitIn(cwd, 'status', '--porcelain')).toBe('');
+
+      await expect(collectReviewContext({ cwd, base: 'main', head: 'feature' })).rejects.toThrow(
+        /deletion of a\.txt/,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a checkout that hides a change behind a git flag', async () => {
     // A file marked with assume-unchanged is not reported by the status, so
     // the disk may hold a code that is not the code of the revision.

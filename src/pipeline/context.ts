@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { SECRET_EXCLUDES } from '../core/bundle.js';
@@ -274,8 +274,21 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   // keeps the secret under its new name: the content of the old file is the
   // content of the new one, and the pathspec of the old name does not keep
   // it out of the diff.
-  const renamed = await renames(repoRoot, range);
-  const inherited = renamed.filter((pair) => baseSecret.includes(pair.from)).map((pair) => pair.to);
+  //
+  // The rename detection of git is a similarity, and a file that was renamed
+  // and rewritten is an addition and a deletion: the lines of the secret
+  // decide then, and not the similarity.
+  const changed = await changedNames(repoRoot, range);
+  const inherited = [
+    ...changed.renames.filter((pair) => baseSecret.includes(pair.from)).map((pair) => pair.to),
+    ...(await carryingTheSecret(
+      repoRoot,
+      baseSha,
+      headSha,
+      baseSecret.filter((file) => !tracked.includes(file)),
+      changed.added,
+    )),
+  ];
 
   const secretFiles = [
     ...new Set([...tracked.filter((file) => !readable.has(file)), ...baseSecret, ...inherited]),
@@ -391,25 +404,90 @@ async function readableFiles(repoRoot: string, sha: string): Promise<string[]> {
 }
 
 /**
- * The renames of the change — the old path and the new one.
+ * The names the change touches — the renames and the added files.
  *
  * The pathspecs of the diff hide a renamed file: git reports the rename
  * under the new name, and the exclusion of the old name does not apply to
  * it. The rename is the one thing that says where the content came from.
+ *
+ * The similarity of the rename detection is low on purpose: a file that was
+ * renamed and rewritten is still the file that was renamed.
  */
-async function renames(repoRoot: string, range: string): Promise<{ from: string; to: string }[]> {
-  const listed = await gitRaw(['diff', '--name-status', '-M', '-z', range], repoRoot);
+async function changedNames(
+  repoRoot: string,
+  range: string,
+): Promise<{ renames: { from: string; to: string }[]; added: string[] }> {
+  const listed = await gitRaw(['diff', '--name-status', '-M10%', '-z', range], repoRoot);
   const parts = listed.split('\0').filter((part) => part !== '');
-  const pairs: { from: string; to: string }[] = [];
-  for (let index = 0; index < parts.length; index += 1) {
+  const renames: { from: string; to: string }[] = [];
+  const added: string[] = [];
+  let index = 0;
+  while (index < parts.length) {
+    const status = parts[index];
+    const first = parts[index + 1];
     // A rename carries two names, every other change carries one.
-    if (!parts[index].startsWith('R')) continue;
-    const from = parts[index + 1];
-    const to = parts[index + 2];
-    if (from && to) pairs.push({ from, to });
+    if (status.startsWith('R')) {
+      const second = parts[index + 2];
+      if (first && second) renames.push({ from: first, to: second });
+      index += 3;
+      continue;
+    }
+    if (status.startsWith('A') && first) added.push(first);
     index += 2;
   }
-  return pairs;
+  return { renames, added };
+}
+
+/**
+ * The added files that carry the content of a secret file of the base.
+ *
+ * A secret that the change deletes may survive in a file it adds: the
+ * rename detection of git cannot see it when the content was rewritten, and
+ * the lines of the secret decide then. A file that carries a line of a
+ * secret is a secret under its new name too.
+ */
+async function carryingTheSecret(
+  repoRoot: string,
+  baseSha: string,
+  headSha: string,
+  deletedSecrets: string[],
+  added: string[],
+): Promise<string[]> {
+  if (deletedSecrets.length === 0 || added.length === 0) return [];
+  const secretLines = new Set<string>();
+  for (const secret of deletedSecrets) {
+    for (const line of await meaningfulLines(repoRoot, baseSha, secret)) {
+      secretLines.add(line);
+    }
+  }
+  if (secretLines.size === 0) return [];
+  const carrying: string[] = [];
+  for (const file of added) {
+    for (const line of await meaningfulLines(repoRoot, headSha, file)) {
+      if (secretLines.has(line)) {
+        carrying.push(file);
+        break;
+      }
+    }
+  }
+  return carrying;
+}
+
+/**
+ * The lines of a file in a revision — the ones that carry something.
+ *
+ * A line that is empty or that holds a single character says nothing, and
+ * a file that shares such a line with a secret does not carry it.
+ */
+async function meaningfulLines(repoRoot: string, sha: string, file: string): Promise<Set<string>> {
+  const content = await fileAtRevision(repoRoot, sha, file);
+  if (content === undefined) return new Set();
+  return new Set(
+    content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length >= 4),
+  );
 }
 
 /**
@@ -429,6 +507,10 @@ function literalExcludes(files: string[]): string[] {
  * the status, so a change of it is invisible: the file is compared with the
  * commit of the revision, and a file that is not on the disk at all is no
  * file of the revision.
+ *
+ * A file that cannot be read is not a file of the revision either: the flag
+ * hides its deletion from the status, and the review must not read a code
+ * that the checkout does not have.
  */
 async function modifiedBehindTheFlag(repoRoot: string, headSha: string): Promise<string[]> {
   const listed = await gitRaw(['ls-files', '-v', '-z'], repoRoot);
@@ -441,10 +523,30 @@ async function modifiedBehindTheFlag(repoRoot: string, headSha: string): Promise
   const changed: string[] = [];
   for (const entry of flagged) {
     const file = entry.slice(2);
-    const onDisk = await run('git', ['hash-object', '--path', file, '--', file], repoRoot);
-    if (onDisk.code !== 0) continue;
     const committed = await run('git', ['rev-parse', `${headSha}:${file}`], repoRoot);
-    if (committed.code !== 0) continue;
+    if (committed.code !== 0) {
+      // The file is in the index but not in the revision: the checkout and
+      // the revision are not the same thing.
+      throw new Error(
+        `The checkout has ${file}, which is not a file of the revision under review — the index and the head must be the same.`,
+      );
+    }
+    const onDisk = await run('git', ['hash-object', '--path', file, '--', file], repoRoot);
+    if (onDisk.code !== 0) {
+      // The file cannot be hashed: it is either not on the disk at all — and
+      // the flag hides its deletion — or it is not a file whose content is
+      // read, a submodule or a directory.
+      const there = await stat(path.join(repoRoot, file)).then(
+        () => true,
+        () => false,
+      );
+      if (!there) {
+        throw new Error(
+          `The checkout hides the deletion of ${file} behind a git flag (skip-worktree or assume-unchanged) — the review reads the files of the disk, and they must be the ones of the head.`,
+        );
+      }
+      continue;
+    }
     if (onDisk.stdout.trim() !== committed.stdout.trim()) changed.push(file);
   }
   return changed;
