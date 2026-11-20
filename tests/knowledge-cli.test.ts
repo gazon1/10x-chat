@@ -89,6 +89,16 @@ describe('the knowledge command (CLI)', () => {
     expect(res.stderr).toMatch(/Invalid --timeout value/);
   });
 
+  it('refuses a timeout that Node.js cannot wait for', async () => {
+    const res = await runCli(
+      ['knowledge', 'notebooks', 'list', '--json', '--timeout', '9007199254740991'],
+      await stubEnv('{"notebooks":[],"count":0}'),
+    );
+
+    expect(res.code).toBe(1);
+    expect(res.stderr).toMatch(/Invalid --timeout value/);
+  });
+
   it('says that a mutation with an unknown state may have run', async () => {
     const res = await runCli(
       [

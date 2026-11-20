@@ -107,6 +107,7 @@ The kinds of a failure:
 | `rate_limited` | The provider refused the operation for now |
 | `invalid_output` | The answer arrived, but it is not the shape 10x-chat expects |
 | `rejected` | The provider refused the operation (no such notebook, a quota, a bad request) |
+| `unknown_state` | The provider could not confirm a write — it may have committed |
 
 A failure that carries `mayHaveRun: true` is an operation that may have reached
 NotebookLM — a mutation that timed out, or one that answered with something

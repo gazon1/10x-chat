@@ -50,6 +50,9 @@ const FAILURE_KIND_OF: Record<string, KnowledgeFailureKind> = {
   ARTIFACT_TIMEOUT: 'timeout',
   CANCELLED: 'cancelled',
   NOTEBOOKLM_ERROR: 'rejected',
+  // The upstream overrides the code of the error it could not confirm: the
+  // write may have committed.
+  UNCONFIRMED_WRITE: 'unknown_state',
 };
 
 /**
@@ -92,11 +95,13 @@ function failureFromEnvelope(
   const code = str(envelope, 'code');
   const message = str(envelope, 'message') ?? 'The provider refused the operation.';
   const unknown = !code || !DEFINITE_REFUSALS.has(code);
+  // A write the upstream could not confirm always keeps the unknown state.
+  const unconfirmed = code === 'UNCONFIRMED_WRITE';
   return {
     kind: (code ? FAILURE_KIND_OF[code] : undefined) ?? 'rejected',
     message,
     ...(code ? { code } : {}),
-    ...(mayHaveRun && unknown ? { mayHaveRun: true } : {}),
+    ...(unconfirmed || (mayHaveRun && unknown) ? { mayHaveRun: true } : {}),
   };
 }
 

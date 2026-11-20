@@ -450,6 +450,27 @@ describe('the NotebookLM provider', () => {
       expect(outcome.failure.mayHaveRun).toBe(true);
     }
   });
+
+  it('reports a write the upstream could not confirm as an unknown state', async () => {
+    const { runner } = fakeRunner([
+      ok({
+        error: true,
+        code: 'UNCONFIRMED_WRITE',
+        message: 'Error: this write could not be confirmed',
+      }),
+    ]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.createNotebook('Notes');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('unknown_state');
+      expect(outcome.failure.code).toBe('UNCONFIRMED_WRITE');
+      // The notebook may be there: it must not be created again blind.
+      expect(outcome.failure.mayHaveRun).toBe(true);
+    }
+  });
 });
 
 describe('the registry of the knowledge providers', () => {

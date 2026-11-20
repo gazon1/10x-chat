@@ -19,6 +19,8 @@
  * - `invalid_output`: the provider answered, but the answer is not usable.
  * - `rejected`: the provider refused the operation (no such notebook, no
  *   quota, a bad request).
+ * - `unknown_state`: the provider could not confirm a write — it may have
+ *   committed, so the operation must not be sent again blind.
  */
 export type KnowledgeFailureKind =
   | 'unavailable'
@@ -27,7 +29,8 @@ export type KnowledgeFailureKind =
   | 'cancelled'
   | 'rate_limited'
   | 'invalid_output'
-  | 'rejected';
+  | 'rejected'
+  | 'unknown_state';
 
 /** A failed operation — never an empty value. */
 export interface KnowledgeFailure {

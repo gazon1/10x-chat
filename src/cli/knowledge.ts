@@ -14,6 +14,9 @@ import { getKnowledgeProvider } from '../knowledge/registry.js';
 /** The version of the JSON contract of the commands. */
 const SCHEMA = '10x-chat/knowledge/v1';
 
+/** The largest deadline Node.js can wait for — a bigger one fires at once. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 /** The options every operation of the group takes. */
 interface CommonOptions {
   json?: boolean;
@@ -25,8 +28,10 @@ interface CommonOptions {
 function timeoutOf(options: CommonOptions): number | undefined {
   if (options.timeout === undefined) return undefined;
   const value = Number(options.timeout);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`Invalid --timeout value: ${options.timeout} (expected a positive integer)`);
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMEOUT_MS) {
+    throw new Error(
+      `Invalid --timeout value: ${options.timeout} (expected a positive integer of at most ${MAX_TIMEOUT_MS} ms)`,
+    );
   }
   return value;
 }
@@ -56,6 +61,8 @@ function hintFor(failure: KnowledgeFailure): string {
       return 'The answer of the provider was not usable.';
     case 'rejected':
       return 'The provider refused the operation.';
+    case 'unknown_state':
+      return 'The provider could not confirm the write — check the notebook before sending it again.';
   }
 }
 
