@@ -16,6 +16,9 @@ export const SECRET_EXCLUDES = [
   '**/id_ed25519',
   '**/.credentials/**',
   '**/secrets/**',
+  // A secret is a file as well as a directory: the name alone is enough.
+  '**/.credentials',
+  '**/secrets',
 ];
 
 const DEFAULT_EXCLUDES = [

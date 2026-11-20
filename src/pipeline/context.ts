@@ -90,7 +90,7 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   const symbolic = await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], cwd).catch(
     () => '',
   );
-  if (symbolic) return symbolic.replace(/^origin\//, '');
+  if (symbolic) return resolveBaseRef(cwd, symbolic.replace(/^origin\//, ''));
   const branches = await git(
     ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'],
     cwd,
@@ -102,10 +102,33 @@ async function defaultBaseRef(cwd: string): Promise<string> {
     .split('\n')
     .map((branch) => branch.trim().replace(/^origin\//, ''))
     .filter((branch) => branch !== '' && branch !== 'HEAD');
-  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 1) return resolveBaseRef(cwd, candidates[0]);
   throw new Error(
     'Cannot resolve the default branch of origin — name the base explicitly (--base <ref>).',
   );
+}
+
+/**
+ * The base of the comparison, as the repository knows it.
+ *
+ * The short name of a branch is not always a local branch: a clone that
+ * fetched the remote only has `refs/remotes/origin/main`, and a `rev-parse`
+ * of `main` fails there. The remote-tracking ref is the same commit and is
+ * used when the local branch is absent.
+ */
+async function resolveBaseRef(cwd: string, name: string): Promise<string> {
+  if (await resolvesToCommit(cwd, name)) return name;
+  const remote = `origin/${name}`;
+  if (await resolvesToCommit(cwd, remote)) return remote;
+  return name;
+}
+
+/** Whether a ref names a commit of the repository. */
+async function resolvesToCommit(cwd: string, ref: string): Promise<boolean> {
+  const sha = await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], cwd).catch(
+    () => '',
+  );
+  return sha !== '';
 }
 
 /** The metadata of a pull request, as the pipeline reads it. */
@@ -208,7 +231,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     headRef = metadata.headRef;
     headSha = metadata.headSha;
   } else {
-    baseRef = target.base ?? (await defaultBaseRef(cwd));
+    baseRef = target.base ? await resolveBaseRef(cwd, target.base) : await defaultBaseRef(cwd);
     headRef = target.head ?? 'HEAD';
     baseSha = await git(['rev-parse', `${baseRef}^{commit}`], cwd);
     headSha = await git(['rev-parse', `${headRef}^{commit}`], cwd);
@@ -703,7 +726,10 @@ export async function revisionEntry(
   if (mode !== '120000') return { symlink: false };
   const blob = await fileAtRevision(repoRoot, sha, file);
   if (blob === undefined) return { symlink: true };
-  return { symlink: true, target: blob.replace(/\n$/, '') };
+  // The blob of a symlink holds the path it points at, as it is: a target
+  // with a newline in it is a name of its own, and trimming it would point
+  // the link at a file that does not exist.
+  return { symlink: true, target: blob };
 }
 
 /**

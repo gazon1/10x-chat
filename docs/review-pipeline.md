@@ -90,6 +90,13 @@ delimiters that carry no JSON at all are tolerated; when there are more, the
 payload of the answer may lie behind them, and the step of the reviewer or of
 the verifier is `failed` rather than "no findings".
 
+A fence of Markdown is three backticks or more, and it is closed by a run of
+backticks that is at least as long as the opening one: a block of four
+backticks holds a snippet of three — and the evidence of a finding is such a
+snippet. The name of the language (`json`, in any case) is not a part of the
+payload, and a block that is never closed is not a block: its text stays in
+the plain text of the answer.
+
 Two findings of two reviewers are one finding when they are at the same file
 and the same line and their titles overlap. The words of a title are the words
 of every alphabet: a title written in another script carries its meaning too,
@@ -177,6 +184,10 @@ revision under review:
 - It fails when a file of the revision is not on the disk and a git flag
   (`skip-worktree`, `assume-unchanged`) hides its deletion from the status: the
   review reads the files of the disk, and they must be the ones of the head.
+- The base of a comparison is the ref the repository has: the default branch of
+  `origin` is resolved, and the short name of a branch is used only when it is
+  a local branch — a clone that fetched the remote only has
+  `refs/remotes/origin/main`, and the base is that ref.
 - A file of a finding must be inside the repository by its **real** path: a
   symlink that points out of the checkout is refused, so nothing outside the
   repository can reach the prompt of the backend.
@@ -192,14 +203,18 @@ revision under review:
   from the disk: a file that changes while the reviewers run must not reach the
   backend, and the evidence of a verdict must be the code of the head. The
   **bundle** of the reviewers is read from the same commit — it is the context
-  of the change, and the context must be the context of the head. The **callers**
+  of the change, and the context must be the context of the head. The
+  **callers**
   of a file are searched in the revision under review as well: the files that
   mention it are the ones of the code that is reviewed. The names of the
   callers come back **NUL-separated and unquoted**: a name that holds a
   newline is a name of a file, and the quoting of git would hide it behind
   an escape. A **symlink** is
   followed in the revision too: the target of a link is a blob of the commit,
-  and the checkout may retarget the link while the reviewers run. A link that
+  and the checkout may retarget the link while the reviewers run. The blob of a
+  link holds the path it points at **as it is**: a target with a newline in it
+  is a name of its own, and trimming it would point the link at a file that
+  does not exist. A link that
   the change **deletes** is followed in the base revision, where the file
   behind it still is. The name of a file is a **literal** name: it is asked of
   the tree of the commit as `:(literal)`, for `:(top)` at its start is the magic
@@ -208,7 +223,9 @@ revision under review:
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers
   are told that the change touches it, and a finding about it stays
-  `Unverified`: it cannot be settled without the content.
+  `Unverified`: it cannot be settled without the content. A secret is a file
+  as well as a directory: a file named `.credentials` or `secrets` is a secret
+  of the same kind, and the name alone is enough.
 - A file that may hold a secret keeps the secret when the change **renames**
   it: the new name is not a secret by its own pattern, but the content is the
   content of the old one, so the new name is excluded from the diff and from

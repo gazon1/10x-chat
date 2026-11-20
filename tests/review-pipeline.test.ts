@@ -12,6 +12,7 @@ import {
   normalizeRepoPath,
   parsePullRequestMetadata,
   resolveInRepo,
+  revisionEntry,
   trackedFiles,
 } from '../src/pipeline/context.js';
 import {
@@ -3151,5 +3152,91 @@ describe('the context of a review', () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it('keeps the content of a file that may hold a secret out of the review', async () => {
+    // A secret is a file as well as a directory: the name `.credentials` is
+    // enough, and the content of the file must not reach the backend.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.credentials'), 'TOKEN=first\n', 'utf-8');
+      await writeFile(path.join(cwd, 'app.ts'), 'export const app = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, '.credentials'), 'TOKEN=second\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+
+      expect(context.secretFiles).toContain('.credentials');
+      expect(context.diff).not.toContain('TOKEN=second');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves the base of a comparison to the branch of the remote', async () => {
+    // A clone that fetched the remote only has `refs/remotes/origin/main`:
+    // the short name of the branch is not a local branch, and a `rev-parse`
+    // of it fails.
+    const origin = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-origin-'));
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-remote-'));
+    try {
+      await gitIn(origin, 'init', '--bare', '--initial-branch=main');
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'app.ts'), 'export const app = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'remote', 'add', 'origin', origin);
+      await gitIn(cwd, 'push', '-u', 'origin', 'main');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'branch', '-D', 'main');
+      await gitIn(cwd, 'fetch', 'origin');
+
+      const context = await collectReviewContext({ cwd, head: 'feature' });
+
+      expect(context.baseRef).toBe('origin/main');
+      expect(context.baseSha).not.toBe('');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(origin, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the newline of the target of a symlink', async () => {
+    // The blob of a symlink holds the path it points at, as it is: a target
+    // with a newline in it is a name of its own.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-link-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, 'actual.ts'), 'export const actual = 1;\n', 'utf-8');
+      await symlink('actual.ts\n', path.join(cwd, 'link.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      const sha = await gitIn(cwd, 'rev-parse', 'HEAD');
+
+      const entry = await revisionEntry(cwd, sha, 'link.ts');
+
+      expect(entry?.symlink).toBe(true);
+      expect(entry?.target).toBe('actual.ts\n');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a payload out of a fence of four backticks', async () => {
+    // A fence of Markdown is closed by a run of backticks that is at least as
+    // long as the opening one: a block of four backticks holds a snippet of
+    // three — and the evidence of a finding is such a snippet.
+    const finding = { ...FINDING, evidence: ['```js\nconst a = 1;\n```'] };
+    const answer = ['````json', JSON.stringify({ findings: [finding] }), '````'].join('\n');
+
+    const parsed = parseReviewerFindings(answer, 'correctness');
+
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0]?.title).toBe(finding.title);
   });
 });

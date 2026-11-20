@@ -122,6 +122,75 @@ export interface JsonCandidate {
   at: number;
 }
 
+/** A fenced block of an answer. */
+interface Fence {
+  /** The content of the block — without the delimiters and the info string. */
+  text: string;
+  /** The offset of the opening fence in the answer. */
+  at: number;
+  /** The offset after the closing fence in the answer. */
+  end: number;
+}
+
+/**
+ * The fenced blocks of an answer.
+ *
+ * A fence of Markdown is three backticks or more, and it is closed by a run
+ * of backticks that is at least as long as the opening one — a block of four
+ * backticks may hold a fence of three. The info string of the opening fence
+ * names the language of the block (`json` in any case) and is not a part of
+ * its content. A block that is never closed is not a block: its text stays in
+ * the plain text of the answer.
+ */
+function fencesOf(text: string): Fence[] {
+  const fences: Fence[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const open = text.indexOf('```', index);
+    if (open < 0) break;
+    let opening = 0;
+    while (text[open + opening] === '`') opening += 1;
+    // The content starts after the info string: the name of the language is
+    // not a part of the payload.
+    let start = open + opening;
+    while (text[start] === ' ' || text[start] === '\t') start += 1;
+    const tag = /[A-Za-z][A-Za-z0-9_+.-]*/y;
+    tag.lastIndex = start;
+    let contentStart = start + (tag.exec(text)?.[0].length ?? 0);
+    while (text[contentStart] === ' ' || text[contentStart] === '\t') contentStart += 1;
+    const close = closingFence(text, contentStart, opening);
+    if (!close) break;
+    // A block that holds nothing but its info string is the info string
+    // itself — a payload of `true` is a payload, not a language.
+    const content = text.slice(contentStart, close.start);
+    fences.push({
+      text: content.trim() === '' ? text.slice(start, close.start) : content,
+      at: open,
+      end: close.end,
+    });
+    index = close.end;
+  }
+  return fences;
+}
+
+/** The run of backticks that closes a fence, if the answer carries one. */
+function closingFence(
+  text: string,
+  from: number,
+  opening: number,
+): { start: number; end: number } | undefined {
+  let index = from;
+  while (index < text.length) {
+    const at = text.indexOf('`', index);
+    if (at < 0) return undefined;
+    let run = 0;
+    while (text[at + run] === '`') run += 1;
+    if (run >= opening) return { start: at, end: at + run };
+    index = at + run;
+  }
+  return undefined;
+}
+
 /**
  * Every JSON payload of an answer, in the order they appear.
  *
@@ -132,11 +201,11 @@ export interface JsonCandidate {
  * payload are counted once.
  */
 export function jsonCandidates(text: string): JsonCandidates {
-  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-  const sources: { text: string; fenced: boolean; at: number }[] = fences.map((match) => ({
-    text: match[1],
+  const fences = fencesOf(text);
+  const sources: { text: string; fenced: boolean; at: number }[] = fences.map((fence) => ({
+    text: fence.text,
     fenced: true,
-    at: match.index ?? 0,
+    at: fence.at,
   }));
   // The plain text of the answer carries the fences as well: they are blanked
   // out, so that the delimiters of a fenced payload are not counted twice.
@@ -144,9 +213,8 @@ export function jsonCandidates(text: string): JsonCandidates {
   // the copy is split the same way, or a character outside the Basic
   // Multilingual Plane before a fence blanks the wrong places.
   const plain = text.split('');
-  for (const match of fences) {
-    const from = match.index ?? 0;
-    for (let index = from; index < from + match[0].length; index += 1) plain[index] = ' ';
+  for (const fence of fences) {
+    for (let index = fence.at; index < fence.end; index += 1) plain[index] = ' ';
   }
   sources.push({ text: plain.join(''), fenced: false, at: 0 });
 
