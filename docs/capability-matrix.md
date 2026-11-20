@@ -7,6 +7,10 @@ must not promise more than the provider behind it can deliver.
 Read the source, not this document, when the two disagree — the code is the
 truth. The date of the inventory is the commit of this file.
 
+The decision per provider — migrate to a backend or retain the browser — and the
+inventory of the browser consumers are in
+[docs/playwright-inventory.md](playwright-inventory.md).
+
 ## The matrix
 
 | Provider            | Auth                                     | Model selection                     | Attachments                  | Streaming / completion                                | Cancellation | Conversation reuse                                  | Image output                     |

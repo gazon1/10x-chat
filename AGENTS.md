@@ -36,6 +36,7 @@
 | `docs/verification.md` | The result of the last full check run and the documented exceptions |
 | `docs/secrets.md` | The secrets store: CLI, permissions, backup, rotation |
 | `docs/usage.md` | Practical setup: proxy, models, headless/Xvfb, conversation reuse |
+| `docs/playwright-inventory.md` | The consumers of the browser runtime and the migrate/retain decision per provider |
 
 ## Architecture
 

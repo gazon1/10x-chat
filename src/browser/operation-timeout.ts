@@ -217,16 +217,6 @@ export function rpcBoundMs(operationMs: number, floorMs: number = RPC_TIMEOUT_MS
   return Math.max(floorMs, operationMs + RPC_MARGIN_MS);
 }
 
-/**
- * The bound of the client request of an RPC.
- *
- * The client waits for the answer of the server: the boundary of the client
- * is above the boundary of the server.
- */
-export function clientBoundMs(operationMs: number, floorMs: number = RPC_TIMEOUT_MS): number {
-  return rpcBoundMs(operationMs, floorMs) + CLIENT_BOUND_MARGIN_MS;
-}
-
 /** The bounds of one call: the operation, the RPC and the client. */
 export interface TimeoutPlan {
   /** The bound of the operation itself. */
