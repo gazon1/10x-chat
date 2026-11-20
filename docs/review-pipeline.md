@@ -193,7 +193,9 @@ revision under review:
   of a file are searched in the revision under review as well: the files that
   mention it are the ones of the code that is reviewed. A **symlink** is
   followed in the revision too: the target of a link is a blob of the commit,
-  and the checkout may retarget the link while the reviewers run.
+  and the checkout may retarget the link while the reviewers run. A link that
+  the change **deletes** is followed in the base revision, where the file
+  behind it still is.
 - A file that may hold a secret — `.env*`, `*.pem`, `*.key`, an `id_rsa`, a
   `.credentials` or a `secrets` directory — is never read: its content reaches
   neither the diff of the bundle nor the evidence of a finding. The reviewers

@@ -13,6 +13,7 @@ import {
   fileBehindLink,
   MAX_DIFF_CHARS,
   normalizeRepoPath,
+  revisionEntry,
 } from './context.js';
 import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
@@ -249,7 +250,16 @@ async function excerptOf(
     if (!deleted.has(name)) {
       return { text: '', exists: false, lineInRange: false, deleted: false, withheld: false };
     }
-    const content = await fileAtRevision(repoRoot, baseSha, name);
+    // The links of the base revision are followed as well: the content of a
+    // link is the file behind it, not the path it points at.
+    const baseFiles = new Set([...tracked, ...deleted]);
+    const behindBase = await fileBehindLink(repoRoot, baseSha, name, baseFiles);
+    if (!behindBase && (await revisionEntry(repoRoot, baseSha, name))?.symlink) {
+      // The link of the base revision points at a file that is not in it:
+      // there is no code to show.
+      return { text: '', exists: false, lineInRange: false, deleted: true, withheld: false };
+    }
+    const content = await fileAtRevision(repoRoot, baseSha, behindBase ?? name);
     if (content === undefined) {
       return { text: '', exists: false, lineInRange: false, deleted: true, withheld: false };
     }
@@ -345,8 +355,9 @@ async function callersOf(repoRoot: string, file: string, revision: string): Prom
       // the callers of a change are the ones of the code that is reviewed, and
       // a file that changes while the reviewers run must not reach the backend.
       // The name of the file is the pattern, and the revision is the tree it
-      // is searched in.
-      ['grep', '-l', '-F', file, revision],
+      // is searched in. The pattern follows `-e`: a name that starts with a
+      // dash is a name of a file, not an option of the command.
+      ['grep', '-l', '-F', '-e', file, revision],
       { cwd: repoRoot, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout) => {
         if (error) {

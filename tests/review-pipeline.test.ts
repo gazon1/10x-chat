@@ -962,6 +962,93 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('reads the file behind a symlink that the change deleted from the base revision', async () => {
+    // The content of a link is the file behind it: a deleted link is judged
+    // on the code of the base revision, not on the path it pointed at.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-link-deleted-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'actual.ts'), 'export const actual = 1;\n', 'utf-8');
+      await symlink('actual.ts', path.join(cwd, 'src', 'link.ts'));
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', 'src/link.ts');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/link.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('export const actual = 1;');
+      expect(verification).not.toContain('1: actual.ts');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('finds the callers of a file whose name starts with a dash', async () => {
+    // The name of the file is the pattern of the search and not an option of
+    // the command.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-dash-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '-dash.ts'), 'export const dash = 1;\n', 'utf-8');
+      await writeFile(path.join(cwd, 'main.ts'), "import './-dash.ts';\n", 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, '-dash.ts'), 'export const dash = 2;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: '-dash.ts', line: 1 };
+      const prompts: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      await runReviewPipeline({
+        backend: {
+          ...backend,
+          ask: (request) => {
+            prompts.push(request.prompt);
+            return backend.ask(request);
+          },
+        },
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      const verification = prompts.find((prompt) => prompt.includes('# Verification')) ?? '';
+      expect(verification).toContain('main.ts');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('finds the callers of a finding in the revision under review', async () => {
     // The callers of a change are the ones of the code that is reviewed: a
     // file that changes while the reviewers run must not reach the backend.
