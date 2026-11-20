@@ -67,7 +67,10 @@ export const nodeProcessRunner: ProcessRunner = {
       let killTimer: NodeJS.Timeout | undefined;
       if (options.input !== undefined) {
         // The stdin of the process is closed after the input: the CLI reads it
-        // until the end and then it has the whole of it.
+        // until the end and then it has the whole of it. A process that dies
+        // before it reads the whole of it breaks the pipe: the exit code of
+        // the process says why it died, and the broken pipe is not a crash.
+        child.stdin?.on('error', () => {});
         child.stdin?.end(options.input);
       }
       const timer = options.timeoutMs
@@ -107,11 +110,12 @@ const KILL_GRACE_MS = 2_000;
  *
  * The kernel of Linux limits one argument of a process to 128 KiB
  * (`MAX_ARG_STRLEN`): a prompt that is bigger is refused with `E2BIG`
- * before the CLI ever sees it. A prompt that does not fit travels through the
- * stdin of the CLI instead — the bundle of a review of a big change is bigger
- * than the limit.
+ * before the CLI ever sees it. The command line of Windows is smaller still
+ * (32 767 characters), and the limit of the process is the smaller one of
+ * the two. A prompt that does not fit travels through the stdin of the CLI
+ * instead — the bundle of a review of a big change is bigger than the limit.
  */
-const MAX_ARGUMENT_BYTES = 100_000;
+const MAX_ARGUMENT_BYTES = 30_000;
 
 /** The prompt that carries a request that travels through the stdin. */
 const CONTEXT_PROMPT =
