@@ -197,8 +197,10 @@ Two rules keep the baseline honest:
 
 The store holds no symbolic link: `chmod()` and `readFile()` follow a link,
 and a link in the store would take the run outside of it and change the mode
-of a file that has nothing to do with the requirements. A snapshot that is a
-link is refused, and the file is opened without following a link.
+of a file that has nothing to do with the requirements. The snapshot is an
+ordinary file: a FIFO would make the read wait for a writer that never comes.
+A snapshot that is a link or another kind of file is refused, and the file is
+opened without following a link and without waiting.
 
 The stored snapshot is checked before it is read as a baseline: its version,
 every field and the agreement of its fields with each other. Its hash must

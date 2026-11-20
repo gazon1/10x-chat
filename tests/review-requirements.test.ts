@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import {
   access,
   chmod,
@@ -805,6 +805,17 @@ describe('the requirements of a review', () => {
     await symlink(elsewhere, path.join(home, 'requirements', 'owner'));
 
     await expect(readBaseline('owner/name', 7)).rejects.toThrow(/symbolic link/);
+  });
+
+  it('refuses a snapshot that is not an ordinary file', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    // A FIFO would make the read wait for a writer that never comes.
+    await new Promise<void>((resolve, reject) => {
+      execFile('mkfifo', [baselineFile()], (error) => (error ? reject(error) : resolve()));
+    });
+
+    await expect(readBaseline('owner/name', 7)).rejects.toThrow(/must hold a file/);
   });
 
   it('makes the store private when it reads a snapshot', async () => {

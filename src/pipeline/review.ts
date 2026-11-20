@@ -904,6 +904,10 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── the reviewer roles ────────────────────────────────────────
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
+  // shortcut: the pipeline awaits the backend without a timer of its own — the
+  // timeout belongs to the backend, which answers with a failure when it is
+  // reached. A backend that never answers breaks its contract, and the run
+  // waits for it.
   for (const role of roles) {
     const roleStart = Date.now();
     if (!context || !brief) {

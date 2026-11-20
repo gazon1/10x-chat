@@ -200,22 +200,31 @@ function snapshotPath(repository: string, number: number): string {
 }
 
 /**
- * The store of the snapshots must not hold a symbolic link.
+ * The store of the snapshots must hold ordinary files.
  *
  * The path of a snapshot is built from the repository and the number of the
  * Issue, and both `chmod()` and `readFile()` follow a link: a link in the store
  * would take the run outside of it and change the mode of a file that has
- * nothing to do with the requirements. A store that holds one is refused.
+ * nothing to do with the requirements. A FIFO would block the run instead: the
+ * read of a FIFO waits for a writer that never comes.
  */
 async function refuseLinks(file: string): Promise<void> {
   const root = getRequirementsDir();
   const parts = path.relative(root, file).split(path.sep);
   let current = root;
-  for (const part of ['', ...parts]) {
+  for (const [index, part] of ['', ...parts].entries()) {
     if (part !== '') current = path.join(current, part);
     const info = await lstat(current).catch(() => undefined);
-    if (info?.isSymbolicLink()) {
+    // A part that is not there yet is a part that is still to be created.
+    if (!info) continue;
+    if (info.isSymbolicLink()) {
       throw new Error(`the store of the requirements must not hold a symbolic link: ${current}`);
+    }
+    const last = index === parts.length;
+    if (last ? !info.isFile() : !info.isDirectory()) {
+      throw new Error(
+        `the store of the requirements must hold ${last ? 'a file' : 'a directory'}: ${current}`,
+      );
     }
   }
 }
@@ -260,9 +269,12 @@ export async function readBaseline(
   try {
     await refuseLinks(file);
     await enforcePrivacy(file);
-    // The file is opened without following a link: the store holds the
-    // snapshot of the Issue, and nothing else.
-    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // The file is opened without following a link and without waiting for a
+    // writer: the store holds the snapshot of the Issue, and nothing else.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
     try {
       content = await handle.readFile('utf-8');
     } finally {
