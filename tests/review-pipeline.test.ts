@@ -3233,10 +3233,21 @@ describe('the parsing of the answers', () => {
   it('reads a fenced payload with many delimiters of its own', () => {
     // The payload of a fence is counted once, not twice: the answer is not
     // exhausted by the delimiters of its own payload.
-    const many = Array.from({ length: 40 }, () => ({ findings: [] }));
+    const many = Array.from({ length: 40 }, () => FINDING);
     const answer = ['```json', JSON.stringify(many), '```'].join('\n');
     const parsed = parseReviewerFindings(answer, 'correctness');
     expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(40);
+  });
+
+  it('does not read a container of payloads as an answer', () => {
+    // A list whose entries are payloads is a container of payloads, and not an
+    // answer of its own: the payloads that are nested in it are a part of it.
+    const many = Array.from({ length: 40 }, () => ({ findings: [] }));
+    const answer = ['```json', JSON.stringify(many), '```'].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(0);
+    expect(parsed.invalid.join(' ')).toContain('no JSON payload of findings');
   });
 
   it('does not take a confirmed state over a rejected one', () => {
@@ -3279,6 +3290,222 @@ describe('the parsing of the answers', () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].severity).toBe('MAJOR');
     expect(merged[0].evidence).toEqual(['the first evidence', 'the second evidence']);
+  });
+
+  it('does not take an example with more findings for the answer', () => {
+    // The answer comes last, and the number of the findings does not decide:
+    // an example of the format that carries more findings must not pass as the
+    // answer, or the review reports findings the reviewer did not make.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [FINDING, { ...FINDING, title: 'Another finding' }] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it('does not take a mention of an example for the introduction of the answer', () => {
+    // The prose talks about an example of the problem and then introduces the
+    // answer: a word of an earlier sentence says nothing about the payload
+    // that follows it, and the answer is not lost.
+    const answer = [
+      'One example of this problem is the missing validation in the previous implementation.',
+      'Here are my actual findings:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes a payload that a label with a full stop introduces for an example', () => {
+    // The label of the payload ends with a full stop: the marker and the
+    // payload are still of the same sentence, and the payload is an example.
+    const answer = [
+      'Here is an example of the format.',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of findings');
+  });
+
+  it('takes a payload that an abbreviation introduces for an example', () => {
+    // The abbreviation carries its own full stop: the marker and the payload
+    // are still of the same sentence, and the payload is an example.
+    const answer = ['e.g.:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+  });
+
+  it('does not read a list of the evidence of a finding as an answer', () => {
+    // A payload that is nested in another one is a part of it: the list of the
+    // evidence of a finding is not an answer of its own.
+    const answer = JSON.stringify({ findings: [FINDING], evidence: ['the code', 'the trace'] });
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not take a list of the prose that follows the answer for the answer', () => {
+    // The list of the prose comes last: the position alone would read it as
+    // the answer, and the findings of the reviewer would be lost.
+    const answer = [
+      JSON.stringify({ findings: [FINDING], decisions: [] }),
+      'The files I looked at: ["src/app.ts", "src/other.ts"]',
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not take an empty list of the prose for the payload of the findings', () => {
+    // The empty list of the prose carries nothing, and it comes last: it must
+    // not displace the payload of the answer, or the finding of the reviewer
+    // would be lost and the change would be approved without it.
+    const answer = [
+      JSON.stringify({ findings: [FINDING], decisions: [] }),
+      'The files I looked at: []',
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not take an empty list of the prose for the payload of the decisions', () => {
+    // The same for the decisions of the architecture pass: an empty pair of
+    // brackets in the prose is not the answer that says there are none.
+    const answer = [
+      JSON.stringify({ findings: [], decisions: [DECISION] }),
+      'The decisions I saw: []',
+    ].join('\n');
+    const parsed = parseReviewerDecisions(answer, 'architecture');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.decisions).toHaveLength(1);
+    expect(parsed.decisions[0].decision).toBe(DECISION.decision);
+  });
+
+  it('takes an empty bare list as the answer when nothing else answers', () => {
+    // A reviewer that answered with a bare list and nothing else: the empty
+    // list is the whole answer of that reviewer.
+    const parsed = parseReviewerFindings('[]', 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toEqual([]);
+  });
+
+  it('keeps an answer that repeats the example', () => {
+    // The example and the answer carry the same value: the example does not
+    // erase the answer, and the answer comes last.
+    const answer = [
+      'For example:',
+      JSON.stringify({ findings: [FINDING] }),
+      'And here is what I found:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes an answer that a preamble introduces for the answer', () => {
+    // The preamble names the format of the answer, and the answer is the only
+    // payload of the text: it is the answer and not an example.
+    const answer = ['The format I use is:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes no answer from an answer that carries nothing but an example', () => {
+    // The reviewer showed the format and answered nothing: the example is not
+    // the answer, and the step of the reviewer fails instead of reporting the
+    // entries of the example as the findings of the review.
+    const answer = ['For example:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of findings');
+  });
+
+  it('does not let a malformed findings field pass as an answer without findings', () => {
+    const parsed = parseReviewerFindings(
+      JSON.stringify({ findings: 'malformed', decisions: [] }),
+      'architecture',
+    );
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('not a list of findings');
+  });
+
+  it('does not confirm a finding with an earlier payload of the verdicts', () => {
+    // The answer comes last and carries no verdict: the payload that comes
+    // first does not confirm the finding.
+    const answer = [
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      JSON.stringify({ verdicts: [] }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+  });
+
+  it('does not confirm a finding with an example of a malformed answer', () => {
+    // The example carries a confirmed verdict and the answer that follows is
+    // malformed: the answer is chosen before it is read, and the malformed
+    // answer fails the verification instead of falling back to the example.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      'And here is what I found:',
+      JSON.stringify({ verdicts: 'malformed' }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('not a list of verdicts');
+  });
+
+  it('does not confirm a finding with an example of the verdicts', () => {
+    // The example carries a confirmed verdict and the answer carries none: a
+    // finding that nobody verified must not be confirmed by the example.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+      JSON.stringify({ verdicts: [] }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+  });
+
+  it('takes no verdict from an answer that carries nothing but an example', () => {
+    // The verifier showed the format of its answer and answered nothing: the
+    // example is not an answer, and a finding confirmed by an example is a
+    // finding that nobody verified.
+    const answer = [
+      'For example:',
+      JSON.stringify({
+        verdicts: [{ id: 'f-00000001', verdict: 'confirmed', evidence: 'an example' }],
+      }),
+    ].join('\n');
+    const parsed = parseVerdicts(answer);
+    expect(parsed.verdicts).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of verdicts');
   });
 });
 
