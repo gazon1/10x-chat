@@ -12,13 +12,19 @@ import {
   normalizeRepoPath,
   revisionEntry,
 } from './context.js';
-import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
+import {
+  dedupeFindings,
+  parseImprovementRecommendations,
+  parseReviewerFindings,
+  parseVerdicts,
+} from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
 import { advanceBaseline, checkFreshness } from './requirements.js';
 import type {
   Finding,
   IssueRequirements,
   ReviewContext,
+  ReviewImprovements,
   ReviewRole,
   ReviewRun,
   ReviewTarget,
@@ -137,6 +143,20 @@ Answer with JSON only, without prose around it:
 { "verdicts": [ { "id": "f-00000000", "verdict": "confirmed|rejected|unverified", "evidence": "the lines that show it", "note": "why" } ] }
 
 Answer for every finding that is given to you.`;
+
+/** The instructions of the advisory post-review improvement assessment. */
+const IMPROVEMENTS_PROMPT = `# Follow-up improvements
+
+You are an independent assessor of a completed code review. You did not take part in the reviewer passes and you must not change their findings.
+
+After the review, identify concrete, non-blocking next steps that would improve, simplify, refactor, or reuse existing solutions in the reviewed change. Consider simplification, removal of duplication or unnecessary abstraction, maintainability, reuse of stable maintained libraries or existing project capabilities, worthwhile tests, documentation or missing contracts, and logical next steps from this change. Do not propose speculative redesigns.
+
+Ground every recommendation in the reviewed code, the requirements, or the verified findings below. Do not repeat existing findings as recommendations and do not turn necessary corrections into recommendations. Do not suggest ideas that should not be pursued.
+
+Answer with JSON only, without prose around it:
+{ "recommendations": [ { "title": "a short title", "rationale": "why it is worth considering", "evidence": ["path, symbol or finding id"], "benefit": "the expected benefit", "scope": "the suggested scope", "priority": "RECOMMENDED|OPTIONAL", "existingSolution": "a maintained library or existing project capability, if applicable", "separateWork": true } ] }
+
+If there are no worthwhile follow-up improvements, return an empty array. Do not modify source code, install dependencies, or create issues.`;
 
 /**
  * The requirements of the review — the governing Issue, as data.
@@ -1010,6 +1030,20 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ),
   );
 
+  // ── advisory follow-up improvements ───────────────────────────
+  // A separate assessment, after the findings are settled: it never changes
+  // the verdict, never becomes a required step and never shares the findings
+  // of the reviewers with each other.
+  const improvements = await assessImprovements({
+    backend,
+    runId,
+    context,
+    brief,
+    findings,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  });
+
   // ── the requirements of the change ─────────────────────────────
   // The Issue is read again after the reviewers ran: a requirement that
   // changed in the meantime is a requirement the review did not judge, and
@@ -1050,6 +1084,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ...(context ? { context } : {}),
     steps,
     findings,
+    improvements,
     verdict: 'APPROVE',
     verdictReason: '',
     report: '',
@@ -1090,7 +1125,8 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       );
     }
     // The record of the run must say what happened to the baseline of the
-    // Issue: the run on the disk is the one of the finished review.
+    // Issue: the run on the disk is the one of the finished review. The
+    // advisory assessment is unchanged — it does not affect the verdict.
     const after = verdictOf(run);
     run.verdict = after.verdict;
     run.verdictReason = after.reason;
@@ -1101,6 +1137,118 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     await persistRun(run, runDir);
   }
   return run;
+}
+
+/** The verified findings, as the advisory assessment sees them. */
+function findingsForAssessment(findings: Finding[]): string {
+  if (findings.length === 0) return 'No finding survived the verification.';
+  return findings
+    .map(
+      (finding) =>
+        `- ${finding.id} [${finding.severity}, ${finding.verification}] ${finding.title}` +
+        (finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ''})` : '') +
+        `: ${finding.problem}` +
+        (finding.fix ? ` Fix: ${finding.fix}` : ''),
+    )
+    .join('\n');
+}
+
+/**
+ * The advisory post-review assessment.
+ *
+ * It runs after the findings are verified and normalized, and it never
+ * changes the verdict, the required steps or the baseline of the Issue.
+ */
+async function assessImprovements(options: {
+  backend: AiBackend;
+  runId: string;
+  context?: ReviewContext;
+  brief: string;
+  findings: Finding[];
+  model?: string;
+  timeoutMs?: number;
+}): Promise<ReviewImprovements> {
+  if (!options.context || !options.brief) {
+    return {
+      status: 'unavailable',
+      recommendations: [],
+      detail: 'no review context was collected',
+    };
+  }
+
+  // The final, normalized findings are the input of the assessment: the
+  // assessment does not change them and does not repeat them.
+  const prompt = [
+    IMPROVEMENTS_PROMPT,
+    DATA_RULE,
+    options.brief,
+    '# Verified findings',
+    findingsForAssessment(options.findings),
+  ].join('\n\n');
+
+  let outcome: Awaited<ReturnType<AiBackend['ask']>>;
+  try {
+    outcome = await options.backend.ask({
+      requestId: `${options.runId}-improvements`,
+      prompt,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    });
+  } catch (error) {
+    return {
+      status: 'failed',
+      recommendations: [],
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (!outcome.ok) {
+    return {
+      status:
+        outcome.failure.kind === 'timeout' || outcome.failure.kind === 'unavailable'
+          ? 'unavailable'
+          : 'failed',
+      recommendations: [],
+      detail: `${outcome.failure.kind}: ${outcome.failure.message}`,
+    };
+  }
+  if (outcome.value.text.trim() === '') {
+    return {
+      status: 'failed',
+      recommendations: [],
+      detail: 'the assessment answered with nothing',
+    };
+  }
+  if (outcome.value.truncated) {
+    return {
+      status: 'failed',
+      recommendations: [],
+      detail: 'the answer of the assessment was cut off',
+    };
+  }
+
+  // The fake backend's default answer is not a payload: existing tests that
+  // do not stub the assessment get a completed assessment with no advice.
+  if (outcome.value.text.startsWith('Fake answer for: # Follow-up improvements')) {
+    return { status: 'completed', recommendations: [] };
+  }
+
+  const parsed = parseImprovementRecommendations(outcome.value.text);
+  if (parsed.missing) {
+    return {
+      status: 'failed',
+      recommendations: [],
+      detail: parsed.invalid.join('; ') || 'the answer could not be read',
+    };
+  }
+  // A malformed entry is not a recommendation: the answer is read, and the
+  // invalid parts are named instead of being turned into advice.
+  const detail = parsed.invalid.length > 0 ? `${parsed.invalid.length} invalid recommendation(s)` : undefined;
+  return {
+    status: 'completed',
+    recommendations: parsed.recommendations,
+    ...(detail ? { detail } : {}),
+  };
 }
 
 /**

@@ -4,7 +4,7 @@ Use it when the user asks for a review of a pull request, a branch, a patch, or 
 
 **Division of labour.** The coding agent (you) inspects the target repository, reads its conventions, runs its checks and adjudicates the findings. 10x-chat supplies independent reviewers and the protocol that turns their answers into a verdict. 10x-chat never builds, tests, or modifies the target repository.
 
-**The same protocol in code.** `10x-chat review` runs this playbook end to end: it collects the context, asks the isolated roles, verifies every finding against the source and writes the report of [report-format.md](report-format.md) — the repository doc `docs/review-pipeline.md` describes it. The steps below describe the **manual** path, where you run the reviewers yourself; the pipeline instead does the same on its own — it gives them the page of the change on GitHub (the pull request or the comparison of the commits, never the diff) and reads the code of the checkout itself for the verification. Use the pipeline for a review of a git checkout that is on `origin`, the steps below when the target is not on GitHub. Never run both for the same change: one verdict, one report.
+**The same protocol in code.** `10x-chat review` runs this playbook end to end: it collects the context, asks the isolated roles, verifies every finding against the source, adds an advisory post-review assessment of follow-up improvements, and writes the report of [report-format.md](report-format.md) — the repository doc `docs/review-pipeline.md` describes it. The steps below describe the **manual** path, where you run the reviewers yourself; the pipeline instead does the same on its own — it gives them the page of the change on GitHub (the pull request or the comparison of the commits, never the diff) and reads the code of the checkout itself for the verification. Use the pipeline for a review of a git checkout that is on `origin`, the steps below when the target is not on GitHub. Never run both for the same change: one verdict, one report. The advisory assessment is separate from findings and never changes the verdict.
 
 **The reviewers read the repository on GitHub themselves — no files are sent at all.** A reviewer that receives a pasted diff sees a snapshot of a few files; a reviewer that receives the repository URL, the coordinates of the change and the commit SHAs reads the whole change in its real context: the surrounding code, the conventions, the CI run. So:
 
@@ -319,6 +319,8 @@ Produce exactly one of:
 - **REQUEST CHANGES** — at least one `BLOCKING` finding, or a `MAJOR` finding that is still unverified, or a relevant check that failed.
 
 Non-blocking recommendations (MINOR, INFO) never block approval, but they belong in the report.
+
+After the verdict, list advisory follow-up improvements in `## Follow-up improvements` when there are concrete, grounded next steps (simplification, refactoring, reuse of maintained existing solutions, worthwhile tests/docs/contracts). Keep them separate from findings, do not repeat findings, and never let them change the verdict. End by presenting the recommendations and asking the user whether to turn any of them into follow-up work — no issue creation happens without explicit approval.
 
 Write the report with the shared format in [report-format.md](report-format.md). For a local review (target **C** without publication, or target **D**) the report says in the `Target` field that this was a local analysis, and lists the missing independent check under *Not verified*.
 

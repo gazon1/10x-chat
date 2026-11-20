@@ -1,4 +1,10 @@
-import type { Finding, ReviewRun, ReviewVerdict, StepOutcome } from './types.js';
+import type {
+  Finding,
+  ReviewImprovements,
+  ReviewRun,
+  ReviewVerdict,
+  StepOutcome,
+} from './types.js';
 
 /** What the report needs beyond the run itself. */
 export interface ReportOptions {
@@ -377,5 +383,43 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   }
   lines.push('');
 
+  lines.push(...improvementsSection(run.improvements));
+
   return lines.join('\n');
+}
+
+/** The advisory follow-up improvements section of the report. */
+function improvementsSection(improvements: ReviewImprovements | undefined): string[] {
+  if (!improvements) return [];
+  const lines: string[] = ['## Follow-up improvements'];
+  if (improvements.status === 'completed') {
+    if (improvements.detail) {
+      lines.push(`Assessment: completed — ${literal(improvements.detail)}.`);
+      lines.push('');
+    }
+    if (improvements.recommendations.length === 0) {
+      lines.push('No follow-up improvements recommended.');
+    } else {
+      lines.push('| # | Priority | Recommendation | Rationale | Evidence | Benefit | Scope | Existing solution | Separate Issue/PR |');
+      lines.push('|---|---|---|---|---|---|---|---|---|');
+      improvements.recommendations.forEach((recommendation, index) => {
+        lines.push(
+          `| ${index + 1} | ${recommendation.priority} | ${cell(recommendation.title)} | ${cell(recommendation.rationale)} | ${cell(recommendation.evidence.join('; '))} | ${cell(recommendation.benefit)} | ${cell(recommendation.scope)} | ${cell(recommendation.existingSolution ?? '—')} | ${recommendation.separateWork ? 'Yes' : 'No'} |`,
+        );
+      });
+      lines.push('');
+      lines.push(
+        'If you want to turn any of these into follow-up work, say which ones — no issue is created without your explicit approval.',
+      );
+    }
+  } else {
+    const state = improvements.status === 'failed' ? 'failed' : 'unavailable';
+    lines.push(
+      `The advisory assessment ${state}${improvements.detail ? `: ${literal(improvements.detail)}` : ''}.`,
+    );
+    lines.push('');
+    lines.push('No follow-up improvements were produced. The review verdict is unchanged.');
+  }
+  lines.push('');
+  return lines;
 }
