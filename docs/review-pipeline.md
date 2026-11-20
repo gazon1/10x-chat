@@ -251,7 +251,10 @@ revision under review:
   rename** counts as well: a file that takes the name of another one may
   carry a secret that the change moves into it. A file that changes its
   **type** counts too — a symlink that becomes a file of its own is a change
-  of the type, and the copy may hide in the file the link turns into. A copy
+  of the type, and the copy may hide in the file the link turns into. A file
+  that the change **deletes** counts as well: the diff of a deletion shows the
+  lines that are gone, and the copy of a secret among them would reach the
+  backend. A copy
   hides in a line
   that says more than the secret too — the line of the secret, and the value it
   holds, which is the secret itself: the key is a name that the code of the

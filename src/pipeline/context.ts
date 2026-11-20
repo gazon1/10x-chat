@@ -306,7 +306,6 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     ...changed.renames.filter((pair) => baseSecret.includes(pair.from)).map((pair) => pair.to),
     ...(await carryingTheSecret(
       repoRoot,
-      headSha,
       [
         // A secret of the base: the change may delete it and copy it.
         ...baseSecret.map((file) => ({ file, sha: baseSha })),
@@ -314,10 +313,16 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
         // a name of its own, and the name of the secret does not follow it.
         ...tracked.filter((file) => !readable.has(file)).map((file) => ({ file, sha: headSha })),
       ],
-      changed.added.concat(
-        changed.modified,
-        changed.renames.map((pair) => pair.to),
-      ),
+      [
+        // A file that the change touches: its content is the content of the
+        // head.
+        ...changed.added.map((file) => ({ file, sha: headSha })),
+        ...changed.modified.map((file) => ({ file, sha: headSha })),
+        ...changed.renames.map((pair) => ({ file: pair.to, sha: headSha })),
+        // A file that the change deletes: the diff of a deletion shows the
+        // lines that are gone, and they are the lines of the base.
+        ...changed.deleted.map((file) => ({ file, sha: baseSha })),
+      ],
     )),
   ];
 
@@ -448,12 +453,18 @@ async function readableFiles(repoRoot: string, sha: string): Promise<string[]> {
 async function changedNames(
   repoRoot: string,
   range: string,
-): Promise<{ renames: { from: string; to: string }[]; added: string[]; modified: string[] }> {
+): Promise<{
+  renames: { from: string; to: string }[];
+  added: string[];
+  modified: string[];
+  deleted: string[];
+}> {
   const listed = await gitRaw(['diff', '--name-status', '-M10%', '-z', range], repoRoot);
   const parts = listed.split('\0').filter((part) => part !== '');
   const renames: { from: string; to: string }[] = [];
   const added: string[] = [];
   const modified: string[] = [];
+  const deleted: string[] = [];
   let index = 0;
   while (index < parts.length) {
     const status = parts[index];
@@ -469,9 +480,13 @@ async function changedNames(
     // A type change (`T`) is a modification of its own: a symlink that becomes
     // a file of its own may carry a secret that the symlink pointed at.
     if ((status.startsWith('M') || status.startsWith('T')) && first) modified.push(first);
+    // A deletion carries the content of the file as the base holds it: the
+    // diff of a deletion shows the lines that are gone, and a secret among
+    // them is shown to the backend.
+    if (status.startsWith('D') && first) deleted.push(first);
     index += 2;
   }
-  return { renames, added, modified };
+  return { renames, added, modified, deleted };
 }
 
 /**
@@ -485,12 +500,15 @@ async function changedNames(
  * own, and the name of the secret does not follow the content. A file that
  * was already there counts too: the copy of a secret hides as well in the
  * line that a change adds to a file of the repository.
+ *
+ * A file that the change deletes carries the secret too: the diff of a
+ * deletion shows the lines that are gone, and the copy of a secret among
+ * them would reach the backend.
  */
 async function carryingTheSecret(
   repoRoot: string,
-  headSha: string,
   secrets: { file: string; sha: string }[],
-  touched: string[],
+  touched: { file: string; sha: string }[],
 ): Promise<string[]> {
   if (secrets.length === 0 || touched.length === 0) return [];
   const exact = new Set<string>();
@@ -506,8 +524,8 @@ async function carryingTheSecret(
   }
   if (exact.size === 0) return [];
   const carrying: string[] = [];
-  for (const file of touched) {
-    for (const line of await meaningfulLines(repoRoot, headSha, file)) {
+  for (const { file, sha } of touched) {
+    for (const line of await meaningfulLines(repoRoot, sha, file)) {
       const holds = exact.has(line) || fragments.some((fragment) => line.includes(fragment));
       if (holds) {
         carrying.push(file);

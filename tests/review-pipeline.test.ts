@@ -1621,6 +1621,32 @@ describe('the review pipeline', () => {
     }
   });
 
+  it('keeps the secret of a file out of a file the change deletes', async () => {
+    // The diff of a deletion shows the lines that are gone: a copy of a
+    // secret among them would reach the backend.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-deleted-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=SECRET_VALUE\n', 'utf-8');
+      await writeFile(
+        path.join(cwd, 'config.ts'),
+        'export const a = 1;\nTOKEN=SECRET_VALUE\n',
+        'utf-8',
+      );
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', '.env', 'config.ts');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('SECRET_VALUE');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the secret of a file that stays out of a file the change adds', async () => {
     // The secret does not have to be deleted to be copied: a repository that
     // keeps its `.env` may copy it into a file of its own, and the name of the
