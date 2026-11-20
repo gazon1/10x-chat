@@ -60,6 +60,13 @@ run the audit, and it fails the pass: a review that says "no material
 decision" because nobody asked is not a review. An empty list is the answer
 that says there is none.
 
+The decisions are read with a different rule than the findings. The answer
+comes last, and the number of the entries does not decide: a decision is not a
+defect, and an earlier payload of one decision must not hide the empty list
+that says there is none. A model that repeats the format of its answer before
+the answer itself would otherwise put a decision of the format into the report
+of a change that has none.
+
 ## The finding model
 
 A finding carries a stable id, a title, a severity, a category, a file and an

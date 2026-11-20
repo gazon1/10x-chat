@@ -826,8 +826,28 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
       ],
     };
   }
-  const best = choices.reduce(betterCandidate);
+  const best = choices.reduce(laterCandidate);
   return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...notes] };
+}
+
+/**
+ * The later of two candidates.
+ *
+ * The answer comes last: a model that repeats the format of the answer puts
+ * the format first, and the answer that follows is the one that counts. A
+ * decision that the model did not make is not a decision of the change: an
+ * earlier payload of one decision must not hide an empty list that says there
+ * is none. The count of the entries does not decide here — the payload of the
+ * findings needs it, because a malformed answer must not hide behind a
+ * smaller one, and the decisions of the change are not defects.
+ */
+function laterCandidate<T extends { invalid: string[] }>(
+  a: CandidateChoice<T>,
+  b: CandidateChoice<T>,
+): CandidateChoice<T> {
+  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
+  if (a.count !== b.count) return a.count > b.count ? a : b;
+  return a.candidate.fenced ? a : b;
 }
 
 /** The decisions of one payload of an answer. */
