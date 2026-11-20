@@ -234,6 +234,8 @@ interface CandidateChoice<T extends { invalid: string[] }> {
   count: number;
   /** The entries of the payload that pass the schema. */
   valid: number;
+  /** The payload carries its entries under a key — the format of the answer. */
+  keyed: boolean;
 }
 
 /**
@@ -245,7 +247,9 @@ interface CandidateChoice<T extends { invalid: string[] }> {
  * — not even a payload whose entries are malformed, because a malformed answer
  * is a failed step, not an empty review. A fenced payload beats an unfenced
  * one, and a later payload beats an earlier one — a model that repeats the
- * format of the answer puts the format first.
+ * format of the answer puts the format first. The payload under a key wins the
+ * last tie only: it is the format of the answer, and a bare list is its
+ * fallback — never a way to hide a payload that carries the findings.
  */
 function betterCandidate<T extends { invalid: string[] }>(
   a: CandidateChoice<T>,
@@ -261,7 +265,8 @@ function betterCandidate<T extends { invalid: string[] }>(
   if (a.candidate.fenced !== b.candidate.fenced) {
     return a.candidate.fenced ? a : b;
   }
-  return a.candidate.at >= b.candidate.at ? a : b;
+  if (a.candidate.at !== b.candidate.at) return a.candidate.at > b.candidate.at ? a : b;
+  return a.keyed ? a : b;
 }
 
 /** The entries of a payload — an array of them, or the list under a key. */
@@ -284,6 +289,61 @@ function keyedEntries(payload: unknown, key: string): unknown[] | undefined {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
   const entries = (payload as Record<string, unknown>)[key];
   return Array.isArray(entries) ? entries : undefined;
+}
+
+/**
+ * The entries of a payload.
+ *
+ * A payload that carries the key of the format is read under that key; a bare
+ * list is read as it is. A payload of another shape is no payload of entries.
+ */
+function payloadEntries(
+  payload: unknown,
+  key: string,
+): { entries: unknown[]; keyed: boolean } | undefined {
+  const keyed = keyedEntries(payload, key);
+  if (keyed !== undefined) return { entries: keyed, keyed: true };
+  if (Array.isArray(payload)) return { entries: payload, keyed: false };
+  return undefined;
+}
+
+/**
+ * The payloads of an answer that may carry entries.
+ *
+ * The payloads of both shapes are read into one pool: a payload that carries
+ * the key must not hide a bare list that carries the findings — the answer
+ * would then be read as an empty review. A bare list is a list of entries only
+ * when it carries objects that are not payloads themselves: a list of strings
+ * is a list of the prose, and a list of payloads is a container of payloads.
+ */
+function payloadChoices<T extends { invalid: string[] }>(
+  candidates: JsonCandidate[],
+  key: string,
+  parse: (entries: unknown[]) => T,
+  validOf: (parsed: T) => number,
+): CandidateChoice<T>[] {
+  const choices: CandidateChoice<T>[] = [];
+  for (const candidate of candidates) {
+    const payload = payloadEntries(candidate.value, key);
+    if (!payload) continue;
+    const carriesEntries = payload.entries.some(
+      (entry) =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        !Array.isArray(entry) &&
+        !(key in (entry as Record<string, unknown>)),
+    );
+    if (!payload.keyed && !carriesEntries) continue;
+    const parsed = parse(payload.entries);
+    choices.push({
+      candidate,
+      parsed,
+      count: payload.entries.length,
+      valid: validOf(parsed),
+      keyed: payload.keyed,
+    });
+  }
+  return choices;
 }
 
 /** A non-empty string, or undefined. */
@@ -416,7 +476,9 @@ export function normalizeTitle(title: string): string {
  *
  * An answer may carry more than one payload: an example of the schema in the
  * prose of the answer is one of them. The payload whose entries pass the
- * schema wins — an example of a finding does not.
+ * schema wins — an example of a finding does not. The payloads of both shapes
+ * are read into one pool: a payload under the key of the format must not hide
+ * a bare list that carries the findings.
  */
 export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFindings {
   const { candidates, exhausted } = jsonCandidates(text);
@@ -428,43 +490,19 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const keyed = candidates
-    .filter((candidate) => keyedEntries(candidate.value, 'findings') !== undefined)
-    .map((candidate) => {
-      const entries = keyedEntries(candidate.value, 'findings') ?? [];
-      const parsed = parseFindingEntries(entries, role);
-      return {
-        candidate,
-        parsed,
-        count: entries.length,
-        valid: parsed.findings.length,
-      };
-    });
-  if (keyed.length > 0) {
-    const best = keyed.reduce(betterCandidate);
-    return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
-  }
-
-  // An answer that is a bare list of findings.
-  const bare = candidates
-    .filter((candidate) => Array.isArray(candidate.value))
-    .map((candidate) => {
-      const entries = candidate.value as unknown[];
-      const parsed = parseFindingEntries(entries, role);
-      return {
-        candidate,
-        parsed,
-        count: entries.length,
-        valid: parsed.findings.length,
-      };
-    });
-  if (bare.length === 0) {
+  const choices = payloadChoices(
+    candidates,
+    'findings',
+    (entries) => parseFindingEntries(entries, role),
+    (parsed) => parsed.findings.length,
+  );
+  if (choices.length === 0) {
     return {
       findings: [],
       invalid: ['the answer contains no JSON payload of findings', ...notes],
     };
   }
-  const best = bare.reduce(betterCandidate);
+  const best = choices.reduce(betterCandidate);
   return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
 }
 
@@ -543,33 +581,19 @@ export function parseVerdicts(text: string): ParsedVerdicts {
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const keyed = candidates
-    .filter((candidate) => keyedEntries(candidate.value, 'verdicts') !== undefined)
-    .map((candidate) => {
-      const entries = keyedEntries(candidate.value, 'verdicts') ?? [];
-      const parsed = parseVerdictEntries(entries);
-      return { candidate, parsed, count: entries.length, valid: parsed.verdicts.length };
-    });
-  if (keyed.length > 0) {
-    const best = keyed.reduce(betterCandidate);
-    return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
-  }
-
-  // An answer that is a bare list of verdicts.
-  const bare = candidates
-    .filter((candidate) => Array.isArray(candidate.value))
-    .map((candidate) => {
-      const entries = candidate.value as unknown[];
-      const parsed = parseVerdictEntries(entries);
-      return { candidate, parsed, count: entries.length, valid: parsed.verdicts.length };
-    });
-  if (bare.length === 0) {
+  const choices = payloadChoices(
+    candidates,
+    'verdicts',
+    (entries) => parseVerdictEntries(entries),
+    (parsed) => parsed.verdicts.length,
+  );
+  if (choices.length === 0) {
     return {
       verdicts: [],
       invalid: ['the answer contains no JSON payload of verdicts', ...notes],
     };
   }
-  const best = bare.reduce(betterCandidate);
+  const best = choices.reduce(betterCandidate);
   return { verdicts: best.parsed.verdicts, invalid: [...best.parsed.invalid, ...notes] };
 }
 

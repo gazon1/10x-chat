@@ -1544,6 +1544,46 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid.join(' ')).toContain('problem');
   });
 
+  it('does not let an empty payload under the key hide the findings of a bare list', () => {
+    // A payload under the key is the format of the answer, not a way to hide
+    // a bare list that carries the findings: the answer would then be read as
+    // an empty review, and the verdict as APPROVE.
+    const answer = [
+      JSON.stringify({ findings: [] }),
+      'And here is what I found:',
+      JSON.stringify([FINDING]),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not let an example under the key hide the findings of a bare list', () => {
+    // The example of the format comes first, the answer comes last: the
+    // answer is the payload that is read.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [{ ...FINDING, title: 'an example of the format' }] }),
+      'And here is what I found:',
+      JSON.stringify([FINDING]),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('does not take a list of the prose for a payload of findings', () => {
+    // A list of strings in the prose is no answer of findings: it must not
+    // fail the step of a reviewer that answered with the format.
+    const answer = [
+      'The files I looked at: ["src/app.ts", "src/other.ts"]',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+  });
+
   it('reads the verdicts of a verification', () => {
     const parsed = parseVerdicts(
       JSON.stringify({
