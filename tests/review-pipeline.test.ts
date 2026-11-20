@@ -3156,6 +3156,21 @@ describe('the parsing of the answers', () => {
     expect(parsed.invalid[0]).toContain('no decisions');
   });
 
+  it('does not let an earlier example hide the malformed findings of the answer', () => {
+    // The example of the format carries a list of findings and the answer
+    // carries a malformed one: the answer is the payload that comes last, and
+    // the earlier example must not pass it as an answer without findings.
+    const answer = [
+      'The format I use is:',
+      JSON.stringify({ findings: [] }),
+      'And here is my answer:',
+      JSON.stringify({ findings: 'malformed' }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid[0]).toContain('not a list of findings');
+  });
+
   it('does not let an empty example hide the malformed findings of the answer', () => {
     // An empty example must not turn a malformed answer into an empty review:
     // a malformed answer is a failed step, not a review without findings.

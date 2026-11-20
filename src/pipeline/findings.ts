@@ -658,18 +658,21 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     : [];
   // A findings field that is there and is not a list of findings is a
   // malformed answer: it must not pass as an answer without findings, not
-  // even behind an empty payload of another shape.
-  const carriesTheFormat = candidates.some(
-    (candidate) => keyedEntries(candidate.value, 'findings') !== undefined,
-  );
-  if (
-    !carriesTheFormat &&
-    candidates.some((candidate) => carriesMalformedFindings(candidate.value))
-  ) {
-    return {
-      findings: [],
-      invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
-    };
+  // even behind an empty payload of another shape. Only a payload that comes
+  // after it may hide it: an example of the format precedes the answer, and
+  // the answer that follows is the one that carries the findings.
+  const malformed = candidates.filter((candidate) => carriesMalformedFindings(candidate.value));
+  if (malformed.length > 0) {
+    const lastMalformed = malformed.reduce((a, b) => (a.at >= b.at ? a : b));
+    const later = candidates.some(
+      (candidate) => candidate.at > lastMalformed.at && carriesAListOfFindings(candidate.value),
+    );
+    if (!later) {
+      return {
+        findings: [],
+        invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
+      };
+    }
   }
   // The decisions are the answer of the architecture pass. An answer of another
   // pass that carries them and no findings is an answer to the wrong question:
@@ -724,6 +727,19 @@ function carriesMalformedFindings(value: unknown): boolean {
   const record = value as Record<string, unknown>;
   if (!('findings' in record)) return false;
   return !Array.isArray(record.findings);
+}
+
+/**
+ * Whether a payload carries a list of findings that may hide a malformed
+ * answer.
+ *
+ * A list under the key is the format of the answer. A bare list counts only
+ * when it carries entries: an empty list is the shape of the answer of the
+ * format, and it must not hide a malformed answer that follows it.
+ */
+function carriesAListOfFindings(value: unknown): boolean {
+  if (keyedEntries(value, 'findings') !== undefined) return true;
+  return Array.isArray(value) && value.length > 0;
 }
 
 /**
@@ -825,14 +841,30 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
       ]
     : [];
   const answer = answerCandidate(candidates);
-  const entries = answer ? keyedEntries(answer.value, 'decisions') : undefined;
-  if (entries === undefined) {
+  if (!answer) {
     return {
       decisions: [],
       invalid: [
         'the answer carries no decisions — the audit of the implicit decisions did not run',
         ...notes,
       ],
+    };
+  }
+  const record = answer.value as Record<string, unknown>;
+  if (!('decisions' in record)) {
+    return {
+      decisions: [],
+      invalid: [
+        'the answer carries no decisions — the audit of the implicit decisions did not run',
+        ...notes,
+      ],
+    };
+  }
+  const entries = keyedEntries(answer.value, 'decisions');
+  if (entries === undefined) {
+    return {
+      decisions: [],
+      invalid: ['the answer carries a decisions field that is not a list of decisions', ...notes],
     };
   }
   const parsed = parseDecisionEntries(entries);

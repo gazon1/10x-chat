@@ -102,6 +102,13 @@ balanced object and array of the answer is tried, and the one that carries the
 answer is the one that is read — an example of the schema that a reviewer
 repeats in the prose of its answer is not the answer.
 
+The position decides which payload is the answer, and it decides it for the
+malformed payloads as well. A findings field that is there and is not a list
+of findings is a malformed answer, and only a payload that comes after it may
+hide it: an example of the format precedes the answer, and the answer that
+follows is the one that carries the findings. An earlier example of the format
+must never pass a malformed answer as an answer without findings.
+
 **A finding is not confirmed because it parsed.** A finding is `confirmed`
 only when the verification pass confirms it *with evidence* and the finding
 points at a place: a finding without a file or without a line is a hypothesis,
