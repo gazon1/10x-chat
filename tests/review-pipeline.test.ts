@@ -387,7 +387,60 @@ describe('the review pipeline', () => {
     });
 
     const row = run.report.split('\n').find((line) => line.includes(piped.problem.slice(0, 20)));
-    expect(row).toContain('src/a\\|b.ts');
+    expect(row).toContain('<code>src/a&#124;b.ts:2</code>');
+  });
+
+  it('keeps a backtick of a file name inside the code span of the report', async () => {
+    // A backtick in the name would end a span of one backtick.
+    const ticked = { ...FINDING, file: 'src/a`b.ts', line: 2 };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([ticked]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf({ trackedFiles: ['src/a`b.ts'] }),
+    });
+
+    const row = run.report.split('\n').find((line) => line.includes(ticked.problem.slice(0, 20)));
+    expect(row).toContain('<code>src/a`b.ts:2</code>');
+  });
+
+  it('rejects a finding about a deleted file whose line is outside it', async () => {
+    // The line of a deleted file is the line it had in the base revision.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-deleted-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'gone.ts'), 'export const gone = 1;\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await gitIn(cwd, 'rm', 'src/gone.ts');
+      await gitIn(cwd, 'commit', '-m', 'delete');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      const finding = { ...FINDING, file: 'src/gone.ts', line: 999 };
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([finding]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd },
+        collect: async () => context,
+      });
+
+      expect(run.findings[0].verification).toBe('rejected');
+      expect(run.findings[0].verificationNote).toContain('outside the file');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('does not read a file that is not part of the revision under review', async () => {

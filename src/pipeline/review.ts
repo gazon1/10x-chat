@@ -191,10 +191,15 @@ async function excerptOf(
     if (content === undefined) {
       return { text: '', exists: false, lineInRange: false, deleted: true };
     }
+    const lines = content.split('\n');
+    // The line of a finding about a deleted file is the line it had in the
+    // base revision — the diff of a deletion numbers the lines it removes.
+    const line = finding.line;
+    const lineInRange = line === undefined || (line >= 1 && line <= lines.length);
     return {
-      text: sliceWithNumbers(content.split('\n'), finding.line),
+      text: sliceWithNumbers(lines, line),
       exists: true,
-      lineInRange: true,
+      lineInRange,
       deleted: true,
     };
   }

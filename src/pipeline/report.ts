@@ -37,18 +37,28 @@ function commandOf(step: StepOutcome, run: ReviewRun): string {
 
 /** A cell of a table — a pipe or a newline would break the table. */
 function cell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+  // A backslash is escaped before a pipe: the escape of a pipe in a table
+  // eats the backslash in front of it, and a name of a path has backslashes.
+  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-/** The location of a finding — the file and the line. */
+/**
+ * The location of a finding — the file and the line, as it is.
+ *
+ * A name of a file may hold a pipe, a backtick or a backslash, and the table
+ * of the report splits on a pipe: the location is written as inline HTML,
+ * where a pipe is an entity and a backtick is an ordinary character, so the
+ * name is shown exactly as it is.
+ */
 function locationOf(finding: Finding): string {
   if (!finding.file) return '—';
-  // The name of a file is a name: a pipe in it would split the cell of the
-  // table of the report, and a newline would end the row.
   const location = `${finding.file}${finding.line ? `:${finding.line}` : ''}`
-    .replace(/\|/g, '\\|')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\|/g, '&#124;')
     .replace(/\r?\n/g, ' ');
-  return `\`${location}\``;
+  return `<code>${location}</code>`;
 }
 
 /** The status of a finding in the wording of the report format. */
