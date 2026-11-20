@@ -6,6 +6,8 @@ import type {
   FindingCategory,
   FindingSeverity,
   FindingVerification,
+  ImprovementPriority,
+  ReviewImprovement,
   ReviewRole,
 } from './types.js';
 
@@ -73,6 +75,14 @@ export interface ParsedDecisions {
   decisions: Decision[];
   /** The entries that did not pass it, and why. */
   invalid: string[];
+}
+
+/** The result of parsing the answer of the advisory improvement assessment. */
+export interface ParsedImprovements {
+  recommendations: ReviewImprovement[];
+  invalid: string[];
+  /** No payload of recommendations was found — the answer was not read. */
+  missing: boolean;
 }
 
 /**
@@ -977,6 +987,107 @@ function parseVerdictEntries(entries: unknown[]): ParsedVerdicts {
   });
 
   return { verdicts, invalid };
+}
+
+/** The priority of a recommendation — only the two the report knows. */
+function priorityOf(value: unknown): ImprovementPriority | undefined {
+  const text = textOf(value)?.toUpperCase();
+  return text === 'RECOMMENDED' || text === 'OPTIONAL' ? text : undefined;
+}
+
+/** Whether a recommendation should become separate follow-up work. */
+function separateWorkOf(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  const text = textOf(value)?.toLowerCase();
+  if (text === 'true' || text === 'yes') return true;
+  if (text === 'false' || text === 'no') return false;
+  return undefined;
+}
+
+/**
+ * Parse the answer of the advisory improvement assessment.
+ *
+ * An empty list is a valid answer: "nothing to recommend" is a completed
+ * assessment. A malformed entry is reported and dropped; a missing payload is
+ * not an empty answer.
+ */
+export function parseImprovementRecommendations(text: string): ParsedImprovements {
+  const { candidates, exhausted } = jsonCandidates(text);
+  const notes = exhausted
+    ? [
+        `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
+      ]
+    : [];
+  const choices = payloadChoices(candidates, 'recommendations', (entries) =>
+    parseImprovementEntries(entries),
+  );
+  if (choices.length === 0) {
+    return {
+      recommendations: [],
+      invalid: ['the answer contains no JSON payload of recommendations', ...notes],
+      missing: true,
+    };
+  }
+  const best = choices.reduce(betterCandidate);
+  return {
+    recommendations: best.parsed.recommendations,
+    invalid: [...best.parsed.invalid, ...notes],
+    missing: false,
+  };
+}
+
+/** The recommendations of one payload of an answer. */
+function parseImprovementEntries(entries: unknown[]): Omit<ParsedImprovements, 'missing'> {
+  const recommendations: ReviewImprovement[] = [];
+  const invalid: string[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      invalid.push(`recommendations[${index}]: the entry is not an object`);
+      return;
+    }
+    const value = entry as Record<string, unknown>;
+    const title = textOf(value.title);
+    const rationale = textOf(value.rationale);
+    const evidence = evidenceOf(value.evidence);
+    const benefit = textOf(value.benefit) ?? textOf(value.expectedBenefit);
+    const scope = textOf(value.scope) ?? textOf(value.suggestedScope);
+    const priority = priorityOf(value.priority);
+    const separateWork = separateWorkOf(value.separateWork ?? value.separate);
+    const missing = [
+      title === undefined ? 'title' : undefined,
+      rationale === undefined ? 'rationale' : undefined,
+      evidence.length === 0 ? 'evidence' : undefined,
+      benefit === undefined ? 'benefit' : undefined,
+      scope === undefined ? 'scope' : undefined,
+      priority === undefined ? 'priority' : undefined,
+      separateWork === undefined ? 'separateWork' : undefined,
+    ].filter((field): field is string => field !== undefined);
+    if (
+      missing.length > 0 ||
+      title === undefined ||
+      rationale === undefined ||
+      benefit === undefined ||
+      scope === undefined ||
+      priority === undefined ||
+      separateWork === undefined
+    ) {
+      invalid.push(`recommendations[${index}]: ${missing.join(', ')} missing or malformed`);
+      return;
+    }
+    const existingSolution = textOf(value.existingSolution) ?? textOf(value.library);
+    recommendations.push({
+      title,
+      rationale,
+      evidence,
+      benefit,
+      scope,
+      priority,
+      ...(existingSolution ? { existingSolution } : {}),
+      separateWork,
+    });
+  });
+
+  return { recommendations, invalid };
 }
 
 /** The order of the severities — the first one is the most grave. */

@@ -4137,3 +4137,175 @@ describe('the boundaries of the rules', () => {
     expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('failed');
   });
 });
+
+
+describe('the advisory follow-up improvements', () => {
+  const RECOMMENDATIONS = [
+    {
+      title: 'Extract the prompt builder',
+      rationale: 'The same prompt assembly appears in two places.',
+      evidence: ['src/pipeline/review.ts', 'src/pipeline/report.ts'],
+      benefit: 'One place to change when the prompt evolves.',
+      scope: 'A small helper in the pipeline.',
+      priority: 'RECOMMENDED',
+      existingSolution: 'The existing prompt helpers in the pipeline.',
+      separateWork: true,
+    },
+    {
+      title: 'Document the advisory state',
+      rationale: 'The new state is not obvious to a reader of the report.',
+      evidence: ['docs/review-pipeline.md'],
+      benefit: 'Readers know the assessment is advisory.',
+      scope: 'A short note in the docs.',
+      priority: 'OPTIONAL',
+      separateWork: false,
+    },
+  ];
+
+  function improvementsAnswer(recommendations: unknown[] = RECOMMENDATIONS): string {
+    return JSON.stringify({ recommendations });
+  }
+
+  it('produces several grounded recommendations separate from findings', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'confirmed',
+              evidence: 'exec(input) is called with the raw input',
+            },
+          ],
+        }),
+      },
+      { prompt: '# Follow-up improvements', answer: improvementsAnswer() },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.improvements?.status).toBe('completed');
+    expect(run.improvements?.recommendations).toHaveLength(2);
+    expect(run.improvements?.recommendations[0]).toMatchObject({
+      priority: 'RECOMMENDED',
+      separateWork: true,
+    });
+    expect(run.improvements?.recommendations[0].evidence.length).toBeGreaterThan(0);
+    // Recommendations are not findings.
+    expect(run.findings).toHaveLength(1);
+    expect(
+      run.findings.some((finding) => finding.title === RECOMMENDATIONS[0].title),
+    ).toBe(false);
+    expect(run.report).toContain('## Follow-up improvements');
+    expect(run.report).toContain('Extract the prompt builder');
+    expect(run.report).toContain('RECOMMENDED');
+  });
+
+  it('represents a completed assessment with no recommendations', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      { prompt: '# Follow-up improvements', answer: improvementsAnswer([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.improvements).toEqual({ status: 'completed', recommendations: [] });
+    expect(run.report).toContain('## Follow-up improvements');
+    expect(run.report).toContain('No follow-up improvements recommended.');
+  });
+
+  it('keeps the verdict when the advisory assessment fails', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      { prompt: '# Follow-up improvements', failure: 'unavailable' },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.verdict).toBe('APPROVE');
+    expect(run.steps.every((step) => step.status === 'passed')).toBe(true);
+    expect(run.improvements?.status).toBe('unavailable');
+    expect(run.improvements?.recommendations).toEqual([]);
+    expect(run.improvements?.detail).toContain('unavailable');
+    expect(run.report).toContain('advisory assessment unavailable');
+    expect(run.report).toContain('verdict is unchanged');
+  });
+
+  it('keeps a REQUEST CHANGES verdict when the advisory assessment fails', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'confirmed',
+              evidence: 'exec(input) is called with the raw input',
+            },
+          ],
+        }),
+      },
+      { prompt: '# Follow-up improvements', failure: 'unavailable' },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.improvements?.status).toBe('unavailable');
+    expect(run.improvements?.recommendations).toEqual([]);
+    expect(run.report).toContain('REQUEST CHANGES');
+    expect(run.report).toContain('verdict is unchanged');
+  });
+
+  it('persists and renders the advisory assessment', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      { prompt: '# Follow-up improvements', answer: improvementsAnswer([RECOMMENDATIONS[0]]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const saved = JSON.parse(
+      await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
+    ) as { improvements?: { status: string; recommendations: { title: string }[] }; findings: unknown[] };
+    expect(saved.improvements?.status).toBe('completed');
+    expect(saved.improvements?.recommendations[0].title).toBe('Extract the prompt builder');
+    expect(saved.findings).toEqual([]);
+    const report = await readFile(path.join(home, 'reviews', run.id, 'report.md'), 'utf-8');
+    expect(report).toContain('## Follow-up improvements');
+    expect(report).toContain('Extract the prompt builder');
+  });
+});

@@ -221,6 +221,38 @@ export interface ReviewContext {
 /** The verdict of a review — the two the report format knows. */
 export type ReviewVerdict = 'APPROVE' | 'REQUEST CHANGES';
 
+/** The priority of a follow-up improvement recommendation. */
+export type ImprovementPriority = 'RECOMMENDED' | 'OPTIONAL';
+
+/** A non-blocking follow-up improvement recommended after the review. */
+export interface ReviewImprovement {
+  /** A short title. */
+  title: string;
+  /** Why it is worth considering, grounded in the reviewed change. */
+  rationale: string;
+  /** Paths, symbols or finding IDs that support the recommendation. */
+  evidence: string[];
+  /** The expected benefit. */
+  benefit: string;
+  /** The suggested scope of the improvement. */
+  scope: string;
+  priority: ImprovementPriority;
+  /** A maintained existing solution or library that could help, if any. */
+  existingSolution?: string;
+  /** Whether it should be a separate Issue/PR. */
+  separateWork: boolean;
+}
+
+/** The advisory post-review assessment — separate from findings and steps. */
+export interface ReviewImprovements {
+  /** The outcome of the assessment. */
+  status: 'completed' | 'unavailable' | 'failed';
+  /** The recommendations — empty when there are none. */
+  recommendations: ReviewImprovement[];
+  /** Why the assessment could not be completed, when it could not. */
+  detail?: string;
+}
+
 /** The result of a review run. */
 export interface ReviewRun {
   /** The id of the run — the name of its directory. */
@@ -233,6 +265,8 @@ export interface ReviewRun {
   steps: StepOutcome[];
   /** The findings of the run — normalized, deduplicated and verified. */
   findings: Finding[];
+  /** The advisory post-review improvements — separate from findings and verdict. */
+  improvements?: ReviewImprovements;
   /** The implicit decisions of the run — what the change decided on its own. */
   decisions: Decision[];
   /** The verdict of the run — the machine-readable answer of the review. */

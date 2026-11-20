@@ -1081,4 +1081,34 @@ describe('the requirements of a review', () => {
     expect(run.verdict).toBe('APPROVE');
     expect(run.report).not.toContain('Requirements:');
   });
+
+  it('advances the baseline when the advisory assessment fails after a complete review', async () => {
+    await fakeGh({});
+    const backend = {
+      ...quietBackend(),
+      ask: (request: Parameters<ReturnType<typeof quietBackend>['ask']>[0]) =>
+        request.prompt.startsWith('# Follow-up improvements')
+          ? Promise.resolve({
+              ok: false as const,
+              failure: {
+                kind: 'unavailable' as const,
+                message: 'The advisory assessment is not available.',
+                submission: 'not_submitted' as const,
+              },
+            })
+          : quietBackend().ask(request),
+    };
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo, pr: 42, issue: 7 },
+      collect: async () => contextOf(requirementsOf()),
+    });
+
+    expect(run.verdict).toBe('APPROVE');
+    expect(run.steps.every((step) => step.status === 'passed')).toBe(true);
+    expect(run.improvements?.status).toBe('unavailable');
+    const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+    expect(baseline.hash).toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
+  });
 });

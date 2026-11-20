@@ -1,8 +1,9 @@
 # The review pipeline
 
 The pipeline owns a review: it collects the context of the change, asks
-independent reviewers for findings, verifies the findings against the source
-and writes the report.
+independent reviewers for findings, verifies the findings against the source,
+adds an advisory post-review assessment of follow-up improvements, and writes
+the report.
 
 It is ordinary TypeScript. It depends on the **AI backend contract**
 (`src/backend/contract.ts`) and on the repository — never on Playwright, never
@@ -32,6 +33,18 @@ A review with a governing Issue has two more steps, and only then:
 `check-requirements` reads the Issue again after the reviewers ran, and
 `update-requirements` moves the baseline of the Issue. A review without an
 Issue has neither — its steps are exactly the ones above.
+
+After the findings are verified and normalized the pipeline runs a separate
+**advisory assessment** of follow-up improvements. It uses the AI backend
+contract in its own request, does not share or modify the initial findings of
+the reviewer passes, and does not become a step of the run: its result lives
+in `review.json` as `improvements` and in the report as
+`## Follow-up improvements`. The assessment is advisory — a failure or an
+unavailable answer does not change the verdict, does not turn a completed
+review into an incomplete one, and does not affect the freshness check or the
+baseline of a governing Issue. An empty recommendation list is a completed
+assessment. The pipeline never creates GitHub issues, never modifies source
+code, never installs dependencies and never executes refactoring.
 
 ## The finding model
 
@@ -465,7 +478,8 @@ a review that found nothing because it could not run is not an approval.
 
 The verdict is a field of the run (`verdict` and `verdictReason` of
 `review.json`), not only a line of the report: the caller of the pipeline reads
-it without parsing the markdown.
+it without parsing the markdown. The advisory follow-up assessment is not a
+step and never changes the verdict or the exit code of the command.
 
 ## What the pipeline never does
 

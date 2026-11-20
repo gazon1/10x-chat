@@ -55,6 +55,13 @@ Keep it short: a reader should get the verdict, the evidence and the open risks 
 
 ## Remaining risks
 - <risk> — <why it is still open, who accepted it>
+
+## Follow-up improvements
+| # | Priority | Recommendation | Rationale | Evidence | Benefit | Scope | Existing solution | Separate Issue/PR |
+|---|---|---|---|---|---|---|---|---|
+| 1 | RECOMMENDED / OPTIONAL | <title> | <why> | <paths, symbols, finding IDs> | <benefit> | <scope> | <library or existing capability, if any> | Yes / No |
+
+`No follow-up improvements recommended.` when the advisory assessment completed with none. If the assessment failed or was unavailable, record that state and note that the verdict is unchanged. Recommendations are advisory: present them and ask the user which, if any, to turn into follow-up work — never create an issue without explicit approval.
 ```
 
 Rules that make the report trustworthy:
