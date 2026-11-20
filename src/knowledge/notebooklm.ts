@@ -24,6 +24,9 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 /** The largest deadline Node.js can wait for — a bigger one fires at once. */
 export const MAX_TIMEOUT_MS = 2_147_483_647;
 
+/** The failures of a process that never started — the operation never ran. */
+const SPAWN_FAILURES = new Set(['ENOENT', 'EACCES', 'EPERM']);
+
 /** The options of the provider. */
 export interface NotebookLmOptions {
   /** The command of the CLI — the one on the PATH by default. */
@@ -109,6 +112,19 @@ function failureFromEnvelope(
 }
 
 /**
+ * Did the process fail before it started?
+ *
+ * The runner rejects when the executable is not there or cannot be started.
+ * Every other failure happens while the process was running.
+ */
+function isSpawnFailure(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && SPAWN_FAILURES.has(code)) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('ENOENT');
+}
+
+/**
  * Create the NotebookLM provider.
  *
  * The provider drives the `notebooklm` CLI of `notebooklm-py`: it owns the
@@ -145,13 +161,19 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
         timeoutMs,
       });
     } catch (error) {
+      // A process that never started did nothing: the operation is safe to
+      // send again. A process that failed while it was running may have
+      // reached NotebookLM — the state of a mutation is unknown.
+      const started = !isSpawnFailure(error);
+      const detail = error instanceof Error ? error.message : String(error);
       return {
         ok: false,
         failure: {
           kind: 'unavailable',
-          message: `The "${command}" executable could not be started: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          message: started
+            ? `The provider failed while it was running: ${detail}`
+            : `The "${command}" executable could not be started: ${detail}`,
+          ...(started && options_.mutating === true ? { mayHaveRun: true } : {}),
         },
       };
     }
@@ -278,7 +300,13 @@ export function createNotebookLmProvider(options: NotebookLmOptions = {}): Knowl
       if (!isRecord(raw)) return { ok: false, failure: invalid('the state of the provider') };
       const details = isRecord(raw.details) ? raw.details : undefined;
       const reportedProfile = str(raw, 'profile');
-      if (str(raw, 'status') === 'ok') {
+      const state = str(raw, 'status');
+      // The CLI answers with `ok` or `error` — anything else is an answer we
+      // do not understand, not a session that is not logged in.
+      if (state !== 'ok' && state !== 'error') {
+        return { ok: false, failure: invalid('the state of the provider') };
+      }
+      if (state === 'ok') {
         return {
           ok: true,
           value: {

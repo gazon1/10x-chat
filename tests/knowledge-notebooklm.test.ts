@@ -479,6 +479,57 @@ describe('the NotebookLM provider', () => {
     expect(() => createNotebookLmProvider({ timeoutMs: 0 })).toThrow(/Invalid timeoutMs/);
     expect(() => createNotebookLmProvider({ timeoutMs: 1.5 })).toThrow(/Invalid timeoutMs/);
   });
+
+  it('reports a process that failed while it was running as a failure that may have run', async () => {
+    const runner: ProcessRunner = {
+      run() {
+        return Promise.reject(new Error('kill EPERM'));
+      },
+    };
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.addSource('nb1', 'https://example.com');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('unavailable');
+      // The source may have been added: it must not be added again blind.
+      expect(outcome.failure.mayHaveRun).toBe(true);
+    }
+  });
+
+  it('reports an executable that is not there as a failure that did not run', async () => {
+    const runner: ProcessRunner = {
+      run() {
+        const error = new Error('spawn notebooklm ENOENT');
+        return Promise.reject(error);
+      },
+    };
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.addSource('nb1', 'https://example.com');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('unavailable');
+      // The process never started: the operation can be sent again.
+      expect(outcome.failure.mayHaveRun).toBeUndefined();
+    }
+  });
+
+  it('reports an answer of the provider that it does not understand as invalid', async () => {
+    const { runner } = fakeRunner([ok({ profile: 'default' })]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.status();
+
+    // The CLI answers with `ok` or `error`: anything else is not a session
+    // that is not logged in, it is an answer we do not understand.
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('invalid_output');
+    }
+  });
 });
 
 describe('the registry of the knowledge providers', () => {
