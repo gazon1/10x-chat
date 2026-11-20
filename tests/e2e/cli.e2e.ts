@@ -446,7 +446,24 @@ if (prompt.indexOf('# Verification') >= 0) {
             fix: 'Fix the function.',
           },
         ];
-  text = JSON.stringify({ findings: findings });
+  // The architecture pass answers the second question as well: the audit of
+  // the implicit decisions of the change. An answer without the list is an
+  // audit that did not run, and it fails the pass.
+  const decisions =
+    prompt.indexOf('# Role: architecture') >= 0
+      ? [
+          {
+            kind: 'Implicit decision',
+            decision: 'The change keeps the review in the manual path.',
+            previous: 'The review had no section of its own.',
+            evidence: 'src/pipeline/report.ts',
+            consequence: 'A trade-off is visible without becoming a defect.',
+            risk: 'A reader who reads the verdict only misses it.',
+            confirmation: 'no',
+          },
+        ]
+      : [];
+  text = JSON.stringify({ findings: findings, decisions: decisions });
 }
 process.stdout.write(
   JSON.stringify({ status: 'completed', request_id: requestId, result: { text: text } }),

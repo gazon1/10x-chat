@@ -101,7 +101,7 @@ const FINDING = {
 
 /** The answer of a reviewer with one finding. */
 function answerWith(findings: unknown[]): string {
-  return JSON.stringify({ findings });
+  return JSON.stringify({ findings, decisions: [] });
 }
 
 /** The answer of a reviewer with findings and decisions. */
@@ -2607,10 +2607,10 @@ describe('the implicit decisions of a review', () => {
     expect(findings).not.toContain('The audit of the decisions lives in the manual');
   });
 
-  it('reports no decision when the answer carries none', async () => {
+  it('reports no decision when the answer carries an empty list', async () => {
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: answerWith([]) },
-      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWithDecisions([], []) },
       { prompt: '# Role: tests', answer: answerWith([]) },
     ]);
 
@@ -2624,6 +2624,27 @@ describe('the implicit decisions of a review', () => {
     expect(run.report).toContain('Not applicable');
     const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
     expect(step?.status).toBe('passed');
+  });
+
+  it('fails the architecture pass when the answer omits the audit', async () => {
+    // An answer without the decisions has not run the audit: a review that
+    // says "no material decision" because nobody asked is not a review.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('no decisions');
+    expect(run.verdict).toBe('REQUEST CHANGES');
   });
 
   it('fails the architecture pass when a decision does not pass the schema', async () => {
@@ -2645,6 +2666,28 @@ describe('the implicit decisions of a review', () => {
     const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
     expect(step?.status).toBe('failed');
     expect(step?.detail).toContain('kind');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+
+  it('fails the architecture pass when the findings of the answer are malformed', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: JSON.stringify({ findings: 'malformed', decisions: [] }),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('not a list of findings');
     expect(run.verdict).toBe('REQUEST CHANGES');
   });
 });
@@ -2672,18 +2715,23 @@ describe('the parsing of the answers', () => {
     expect(parsed.decisions[0].confirmation).toBe('no');
   });
 
-  it('reads no decision out of an answer that carries none', () => {
-    // The decisions are optional: an answer that names none has answered the
-    // question, it has not failed to answer it.
+  it('reports an answer that carries no decisions', () => {
+    // The architecture pass must answer the question: an empty list of
+    // decisions is the answer that says there is none, and an answer without
+    // the key is an audit that did not run.
     const parsed = parseReviewerDecisions(JSON.stringify({ findings: [] }));
     expect(parsed.decisions).toEqual([]);
-    expect(parsed.invalid).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no decisions');
   });
 
   it('does not read a bare list of findings as a list of decisions', () => {
+    // The list of findings is not the list of decisions: the answer has to
+    // carry the decisions under their own key.
     const parsed = parseReviewerDecisions(JSON.stringify([FINDING]));
     expect(parsed.decisions).toEqual([]);
-    expect(parsed.invalid).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no decisions');
   });
 
   it('reports a decision that does not pass the schema', () => {
@@ -2693,6 +2741,54 @@ describe('the parsing of the answers', () => {
     expect(parsed.decisions).toEqual([]);
     expect(parsed.invalid).toHaveLength(1);
     expect(parsed.invalid[0]).toContain('kind');
+  });
+
+  it('reports a decision whose columns are missing', () => {
+    // A placeholder in place of the evidence would present an unfinished
+    // audit as a finished one.
+    const parsed = parseReviewerDecisions(
+      JSON.stringify({
+        findings: [],
+        decisions: [{ kind: 'Implicit decision', decision: 'a decision of two fields' }],
+      }),
+    );
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('evidence');
+    expect(parsed.invalid[0]).toContain('consequence');
+  });
+
+  it('does not let a malformed findings field pass as an answer without findings', () => {
+    const parsed = parseReviewerFindings(
+      JSON.stringify({ findings: 'malformed', decisions: [] }),
+      'architecture',
+    );
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('not a list of findings');
+  });
+
+  it('reads an answer that carries the decisions and no finding', () => {
+    // The architecture pass answers a second question: an answer that carries
+    // the decisions and no finding has answered it.
+    const parsed = parseReviewerFindings(
+      JSON.stringify({
+        decisions: [
+          {
+            kind: 'Implicit decision',
+            decision: 'a decision',
+            previous: 'the behavior of the base revision',
+            evidence: 'the code',
+            consequence: 'the guarantee',
+            risk: 'the failure scenario',
+            confirmation: 'yes',
+          },
+        ],
+      }),
+      'architecture',
+    );
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
   });
 
   it('reads the payload of an answer that carries prose around it', () => {

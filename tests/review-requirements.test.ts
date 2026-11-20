@@ -193,7 +193,7 @@ function requirementsOf(overrides: Partial<IssueRequirements> = {}): IssueRequir
 function quietBackend() {
   return createFakeBackend([
     { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [] }) },
-    { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
+    { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
     { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
   ]);
 }
@@ -368,7 +368,7 @@ describe('the requirements of a review', () => {
     const prompts: string[] = [];
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [FINDING] }) },
-      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
       { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
       {
         prompt: '# Verification',
@@ -1003,7 +1003,7 @@ describe('the requirements of a review', () => {
     const major = { ...FINDING, severity: 'MAJOR' };
     const backend = createFakeBackend([
       { prompt: '# Role: correctness', answer: JSON.stringify({ findings: [major] }) },
-      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [] }) },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
       { prompt: '# Role: tests', answer: JSON.stringify({ findings: [] }) },
       {
         prompt: '# Verification',

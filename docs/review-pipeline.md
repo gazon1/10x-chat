@@ -50,7 +50,15 @@ changes. The decisions live in their own section of the report and in their own
 field of `review.json`. A review without a material decision writes one line —
 *Not applicable* — instead of a table, and a decision that does not pass the
 schema fails the architecture pass like a malformed finding does: the audit
-that lost an entry did not finish.
+that lost an entry did not finish. All seven columns are required: a
+placeholder in place of the evidence would present an unfinished audit as a
+finished one.
+
+The audit is not optional either. An answer of the architecture pass that
+carries no list of decisions at all — the key is missing, not empty — has not
+run the audit, and it fails the pass: a review that says "no material
+decision" because nobody asked is not a review. An empty list is the answer
+that says there is none.
 
 ## The finding model
 

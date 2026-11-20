@@ -656,6 +656,21 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
+  // A findings field that is there and is not a list of findings is a
+  // malformed answer: it must not pass as an answer without findings, not
+  // even behind an empty payload of another shape.
+  const carriesTheFormat = candidates.some(
+    (candidate) => keyedEntries(candidate.value, 'findings') !== undefined,
+  );
+  if (
+    !carriesTheFormat &&
+    candidates.some((candidate) => carriesMalformedFindings(candidate.value))
+  ) {
+    return {
+      findings: [],
+      invalid: ['the answer carries a findings field that is not a list of findings', ...notes],
+    };
+  }
   const choices = payloadChoices(candidates, 'findings', (entries) =>
     parseFindingEntries(entries, role),
   );
@@ -673,6 +688,19 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
   }
   const best = choices.reduce(betterCandidate);
   return { findings: best.parsed.findings, invalid: [...best.parsed.invalid, ...notes] };
+}
+
+/**
+ * Whether a payload carries a findings field that is not a list of findings.
+ *
+ * The field of the format is there and it does not hold what it must hold: the
+ * answer is malformed, and it must not pass as an answer without findings.
+ */
+function carriesMalformedFindings(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!('findings' in record)) return false;
+  return !Array.isArray(record.findings);
 }
 
 /** The findings of one payload of an answer. */
@@ -742,9 +770,9 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
  * payload that carries the key counts — a bare list of findings is not a list
  * of decisions.
  *
- * An answer without the key reports no decision. That is not a malformed
- * answer: the decisions are optional, and a reviewer that names none has
- * answered the question.
+ * An answer without the key has not run the audit: the architecture pass must
+ * answer the question, and an empty list of decisions is the answer that says
+ * there is none — not the answer that omits it.
  */
 export function parseReviewerDecisions(text: string): ParsedDecisions {
   const { candidates, exhausted } = jsonCandidates(text);
@@ -761,7 +789,12 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
     choices.push({ candidate, parsed, count: entries.length, keyed: true });
   }
   if (choices.length === 0) {
-    return { decisions: [], invalid: [] };
+    return {
+      decisions: [],
+      invalid: [
+        'the answer carries no decisions — the audit of the implicit decisions did not run',
+      ],
+    };
   }
   const best = choices.reduce(betterCandidate);
   return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...notes] };
@@ -779,9 +812,23 @@ function parseDecisionEntries(entries: unknown[]): ParsedDecisions {
     const value = entry as Record<string, unknown>;
     const kind = decisionKindOf(value.kind);
     const decision = textOf(value.decision);
+    const previous = textOf(value.previous);
+    const evidence = evidenceOfDecision(value.evidence);
+    const consequence = textOf(value.consequence);
+    const risk = textOf(value.risk);
+    const confirmation = confirmationOf(value.confirmation);
+    // The seven columns of the row of the report: a decision that does not
+    // carry all of them is not a decision the report can show. A placeholder
+    // in place of the evidence would present an unfinished audit as a
+    // finished one.
     const missing = [
       kind === undefined ? 'kind' : undefined,
       decision === undefined ? 'decision' : undefined,
+      previous === undefined ? 'previous' : undefined,
+      evidence === undefined ? 'evidence' : undefined,
+      consequence === undefined ? 'consequence' : undefined,
+      risk === undefined ? 'risk' : undefined,
+      confirmation === undefined ? 'confirmation' : undefined,
     ].filter((field): field is string => field !== undefined);
     if (missing.length > 0) {
       invalid.push(`decisions[${index}]: ${missing.join(', ')} missing or malformed`);
@@ -790,13 +837,11 @@ function parseDecisionEntries(entries: unknown[]): ParsedDecisions {
     decisions.push({
       kind: kind as DecisionKind,
       decision: decision as string,
-      previous: textOf(value.previous) ?? '—',
-      evidence: textOf(value.evidence) ?? '—',
-      consequence: textOf(value.consequence) ?? '—',
-      risk: textOf(value.risk) ?? '—',
-      // A decision nobody confirmed needs a human: the safe default is the
-      // attention, not the silence.
-      confirmation: confirmationOf(value.confirmation),
+      previous: previous as string,
+      evidence: evidence as string,
+      consequence: consequence as string,
+      risk: risk as string,
+      confirmation: confirmation as 'yes' | 'no',
     });
   });
 
@@ -811,10 +856,27 @@ function decisionKindOf(value: unknown): DecisionKind | undefined {
   return found;
 }
 
+/**
+ * The evidence of a decision — a string or a list of them.
+ *
+ * A decision cites its evidence as a string; a model that writes a list of
+ * references is read as one string.
+ */
+function evidenceOfDecision(value: unknown): string | undefined {
+  if (typeof value === 'string') return textOf(value);
+  if (!Array.isArray(value)) return undefined;
+  const texts = value
+    .map((item) => textOf(item))
+    .filter((item): item is string => item !== undefined);
+  return texts.length === 0 ? undefined : texts.join('; ');
+}
+
 /** Whether a human has to confirm a decision. */
-function confirmationOf(value: unknown): 'yes' | 'no' {
+function confirmationOf(value: unknown): 'yes' | 'no' | undefined {
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
   const text = textOf(value)?.toLowerCase();
-  return text === 'no' ? 'no' : 'yes';
+  if (text === 'yes' || text === 'no') return text;
+  return undefined;
 }
 
 /**
