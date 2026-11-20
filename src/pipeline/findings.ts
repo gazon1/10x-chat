@@ -1061,6 +1061,11 @@ function separateWorkOf(value: unknown): boolean | undefined {
  * An empty list is a valid answer: "nothing to recommend" is a completed
  * assessment. A malformed entry is reported and dropped; a missing payload is
  * not an empty answer.
+ *
+ * The answer is chosen like the answer of a reviewer: the last payload that is
+ * not an example of the format. The answer is chosen before it is read: a
+ * malformed answer is the answer, and it is reported instead of falling back
+ * to an earlier payload.
  */
 export function parseImprovementRecommendations(text: string): ParsedImprovements {
   const { candidates, exhausted } = jsonCandidates(text);
@@ -1069,20 +1074,38 @@ export function parseImprovementRecommendations(text: string): ParsedImprovement
         `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
       ]
     : [];
-  const choices = payloadChoices(candidates, 'recommendations', (entries) =>
-    parseImprovementEntries(entries),
-  );
-  if (choices.length === 0) {
+  const answer = answerCandidate(candidates, carriesTheShapeOfARecommendationAnswer);
+  if (!answer) {
     return {
       recommendations: [],
       invalid: ['the answer contains no JSON payload of recommendations', ...notes],
       missing: true,
     };
   }
-  const best = choices.reduce(betterCandidate);
+  // A bare list is the answer of an assessment that answered without the key.
+  if (Array.isArray(answer.value)) {
+    const parsed = parseImprovementEntries(answer.value);
+    return {
+      recommendations: parsed.recommendations,
+      invalid: [...parsed.invalid, ...notes],
+      missing: false,
+    };
+  }
+  const record = answer.value as Record<string, unknown>;
+  if (!Array.isArray(record.recommendations)) {
+    return {
+      recommendations: [],
+      invalid: [
+        'the answer carries a recommendations field that is not a list of recommendations',
+        ...notes,
+      ],
+      missing: false,
+    };
+  }
+  const parsed = parseImprovementEntries(record.recommendations);
   return {
-    recommendations: best.parsed.recommendations,
-    invalid: [...best.parsed.invalid, ...notes],
+    recommendations: parsed.recommendations,
+    invalid: [...parsed.invalid, ...notes],
     missing: false,
   };
 }
@@ -1139,6 +1162,23 @@ function parseImprovementEntries(entries: unknown[]): Omit<ParsedImprovements, '
   });
 
   return { recommendations, invalid };
+}
+
+/**
+ * Whether a payload carries the shape of an answer of the assessment.
+ *
+ * A bare list is the answer of an assessment that answered without the key —
+ * but only a list of entries: a list of strings is a list of the prose.
+ */
+function carriesTheShapeOfARecommendationAnswer(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length === 0 || value.every((entry) => !!entry && typeof entry === 'object');
+  }
+  if (!value || typeof value !== 'object') return false;
+  // The presence of the key marks the payload of the answer, not its value: a
+  // recommendations field that is not a list is a malformed answer, and it must
+  // not pass as an answer without recommendations.
+  return 'recommendations' in (value as Record<string, unknown>);
 }
 
 /** The order of the severities — the first one is the most grave. */

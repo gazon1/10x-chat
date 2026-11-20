@@ -360,7 +360,11 @@ describe('the review pipeline', () => {
       collect: async () => contextOf(),
     });
 
-    for (const prompt of prompts) {
+    // The advisory assessment is not a reviewer: it answers with its own
+    // payload and its own schema, and it is asked for nothing else.
+    const reviewers = prompts.filter((prompt) => prompt.startsWith('# Role:'));
+    expect(reviewers).toHaveLength(3);
+    for (const prompt of reviewers) {
       expect(prompt).not.toContain('return an empty array');
       expect(prompt).toContain(
         'return "findings": [] and still report every consequential decision',
@@ -4365,7 +4369,6 @@ describe('the boundaries of the rules', () => {
   });
 });
 
-
 describe('the advisory follow-up improvements', () => {
   const RECOMMENDATIONS = [
     {
@@ -4428,9 +4431,7 @@ describe('the advisory follow-up improvements', () => {
     expect(run.improvements?.recommendations[0].evidence.length).toBeGreaterThan(0);
     // Recommendations are not findings.
     expect(run.findings).toHaveLength(1);
-    expect(
-      run.findings.some((finding) => finding.title === RECOMMENDATIONS[0].title),
-    ).toBe(false);
+    expect(run.findings.some((finding) => finding.title === RECOMMENDATIONS[0].title)).toBe(false);
     expect(run.report).toContain('## Follow-up improvements');
     expect(run.report).toContain('Extract the prompt builder');
     expect(run.report).toContain('RECOMMENDED');
@@ -4527,7 +4528,10 @@ describe('the advisory follow-up improvements', () => {
 
     const saved = JSON.parse(
       await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
-    ) as { improvements?: { status: string; recommendations: { title: string }[] }; findings: unknown[] };
+    ) as {
+      improvements?: { status: string; recommendations: { title: string }[] };
+      findings: unknown[];
+    };
     expect(saved.improvements?.status).toBe('completed');
     expect(saved.improvements?.recommendations[0].title).toBe('Extract the prompt builder');
     expect(saved.findings).toEqual([]);
