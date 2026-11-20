@@ -31,6 +31,27 @@ export {
   runBackendChat,
   runChat,
 } from './core/index.js';
+export {
+  createNotebookLmProvider,
+  getKnowledgeProvider,
+  type KnowledgeAnswer,
+  KnowledgeError,
+  type KnowledgeFailure,
+  type KnowledgeFailureKind,
+  type KnowledgeNotebook,
+  type KnowledgeOutcome,
+  type KnowledgeProvider,
+  type KnowledgeProviderFactory,
+  type KnowledgeProviderOptions,
+  type KnowledgeReference,
+  type KnowledgeSource,
+  type KnowledgeStatus,
+  listKnowledgeProviders,
+  MAX_TIMEOUT_MS,
+  NOTEBOOKLM_PROVIDER_NAME,
+  type NotebookLmOptions,
+  registerKnowledgeProvider,
+} from './knowledge/index.js';
 export { collectReviewContext, MAX_DIFF_CHARS } from './pipeline/context.js';
 export {
   dedupeFindings,

@@ -343,6 +343,33 @@ Deep research via ChatGPT, Gemini, or Perplexity with non-blocking progress poll
 
 ChatGPT Deep Research is selected from the composer `+` (`Add files and more`) menu, then verified by the active `Deep research` pill before the prompt is submitted. Model/thinking level is selected separately from the composer model pill (`Instant`, `Medium`, `High`, `Extra High`, `Pro`) and the GPT family submenu (`GPT-5.6 Sol`, `GPT-5.5`, `GPT-5.4`, `GPT-5.3`, `o3`). You can combine both in one `--model`, e.g. `--model "GPT-5.6 Sol High"`. See [`docs/chatgpt-deep-research.md`](docs/chatgpt-deep-research.md).
 
+### `knowledge`
+
+NotebookLM as a **knowledge provider** — notebooks, sources and grounded
+answers. The `notebooklm` CLI of [notebooklm-py](https://github.com/teng-lin/notebooklm-py)
+owns the login and the credentials; 10x-chat never sees them.
+
+```bash
+pipx install notebooklm-py
+notebooklm login
+
+10x-chat knowledge status --json
+10x-chat knowledge notebooks list --json
+10x-chat knowledge notebooks create --title "Project research" --json
+10x-chat knowledge sources add --notebook <notebook-id> --url https://example.com/article --json
+10x-chat knowledge sources list --notebook <notebook-id> --json
+10x-chat knowledge sources refresh --notebook <notebook-id> --source <source-id> --json
+10x-chat knowledge ask --notebook <notebook-id> --question "Extract key decisions and risks" --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Machine-readable output — the versioned envelope and nothing else |
+| `--profile <name>` | The profile of `notebooklm-py` to use |
+| `--timeout <ms>` | The deadline of the operation (default: 120000) |
+
+See [`docs/knowledge.md`](docs/knowledge.md).
+
 ### `history`
 
 List chat history visible in provider sidebars (ChatGPT, Gemini, Claude, Grok, Perplexity).
