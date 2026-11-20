@@ -1167,12 +1167,16 @@ function parseImprovementEntries(entries: unknown[]): Omit<ParsedImprovements, '
 /**
  * Whether a payload carries the shape of an answer of the assessment.
  *
- * A bare list is the answer of an assessment that answered without the key —
- * but only a list of entries: a list of strings is a list of the prose.
+ * A bare list is the answer of an assessment that answered without the key.
+ * The shape of its entries is not a part of the shape of the answer: the
+ * answer is chosen before it is read, and a malformed entry of the answer is
+ * reported by the parser of the entries instead of hiding the answer and
+ * letting an earlier payload answer in its place. Only a list of the prose — a
+ * list of strings — is no answer at all.
  */
 function carriesTheShapeOfARecommendationAnswer(value: unknown): boolean {
   if (Array.isArray(value)) {
-    return value.length === 0 || value.every((entry) => !!entry && typeof entry === 'object');
+    return value.length === 0 || value.some((entry) => typeof entry !== 'string');
   }
   if (!value || typeof value !== 'object') return false;
   // The presence of the key marks the payload of the answer, not its value: a

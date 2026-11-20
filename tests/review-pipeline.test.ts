@@ -29,6 +29,7 @@ import {
   dedupeDecisions,
   dedupeFindings,
   findingId,
+  parseImprovementRecommendations,
   parseReviewerDecisions,
   parseReviewerFindings,
   parseVerdicts,
@@ -4395,6 +4396,42 @@ describe('the advisory follow-up improvements', () => {
   function improvementsAnswer(recommendations: unknown[] = RECOMMENDATIONS): string {
     return JSON.stringify({ recommendations });
   }
+
+  it('reads the malformed answer of the assessment instead of an earlier payload', () => {
+    // The answer comes last: the assessment answered with a malformed list,
+    // and the recommendations of an earlier payload are not its answer. The
+    // malformed list is the answer, and it is reported instead of being
+    // dropped in favour of the payload that came before it.
+    const answer = [
+      JSON.stringify({ recommendations: [RECOMMENDATIONS[0]] }),
+      JSON.stringify([null]),
+    ].join('\n');
+    const parsed = parseImprovementRecommendations(answer);
+    expect(parsed.recommendations).toEqual([]);
+    expect(parsed.missing).toBe(false);
+    expect(parsed.invalid).toContain('recommendations[0]: the entry is not an object');
+  });
+
+  it('reports the malformed entries of the answer of the assessment', () => {
+    const answer = JSON.stringify([{ title: 'Extract the prompt builder' }, 'invalid']);
+    const parsed = parseImprovementRecommendations(answer);
+    expect(parsed.recommendations).toEqual([]);
+    expect(parsed.missing).toBe(false);
+    expect(parsed.invalid).toHaveLength(2);
+  });
+
+  it('does not take a list of the prose for the answer of the assessment', () => {
+    // A list of strings in the prose says nothing about the assessment: the
+    // payload of the answer is not lost because the prose follows it.
+    const answer = [
+      JSON.stringify({ recommendations: [RECOMMENDATIONS[0]] }),
+      'The files I looked at: ["src/pipeline/review.ts", "src/pipeline/report.ts"]',
+    ].join('\n');
+    const parsed = parseImprovementRecommendations(answer);
+    expect(parsed.recommendations).toHaveLength(1);
+    expect(parsed.recommendations[0].title).toBe(RECOMMENDATIONS[0].title);
+    expect(parsed.invalid).toEqual([]);
+  });
 
   it('produces several grounded recommendations separate from findings', async () => {
     const backend = createFakeBackend([

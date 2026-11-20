@@ -43,7 +43,12 @@ in `review.json` as `improvements` and in the report as
 unavailable answer does not change the verdict, does not turn a completed
 review into an incomplete one, and does not affect the freshness check or the
 baseline of a governing Issue. An empty recommendation list is a completed
-assessment. The pipeline never creates GitHub issues, never modifies source
+assessment. The answer of the assessment is chosen by the same rule as the
+answer of a reviewer: the last payload of the top level that is not an example
+of the format is the answer, and the answer is chosen before it is read — a
+malformed list of recommendations is the answer, and its malformed entries are
+reported instead of letting an earlier payload answer in its place. The
+pipeline never creates GitHub issues, never modifies source
 code, never installs dependencies and never executes refactoring.
 
 ## The finding model
