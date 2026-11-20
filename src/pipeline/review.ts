@@ -12,10 +12,16 @@ import {
   normalizeRepoPath,
   revisionEntry,
 } from './context.js';
-import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
+import {
+  dedupeFindings,
+  parseReviewerDecisions,
+  parseReviewerFindings,
+  parseVerdicts,
+} from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
 import { advanceBaseline, checkFreshness } from './requirements.js';
 import type {
+  Decision,
   Finding,
   IssueRequirements,
   ReviewContext,
@@ -89,10 +95,12 @@ If you find nothing blocking, return an empty array. Do not invent problems to f
 
 You are an independent reviewer of a change. Your role: architecture, maintainability, compatibility and scope discipline.
 
-Judge the change against the conventions of the repository and against the code around it: does it fit the shape of the codebase, is it the smallest change that solves the task, does it break a public API, a format or a schema, does it leave dead code or needless abstraction, are the tests meaningful? Name the consequential decisions the requirements did not state and what they change.
+Judge the change against the conventions of the repository and against the code around it: does it fit the shape of the codebase, is it the smallest change that solves the task, does it break a public API, a format or a schema, does it leave dead code or needless abstraction, are the tests meaningful?
+
+Also audit the implicit decisions of the change. Answer the question: "What did you decide that I did not tell you to decide?" Name the consequential decisions the requirements did not state, the behavior of the base revision or the alternative that was available, the evidence, the consequence for the guarantees and the failure scenario that stays open. Compare the behavior before and after where the change changes it. A trade-off is not a defect: name it as a decision, never as a finding. A change with no material decision returns an empty list of decisions.
 
 Answer with JSON only, without prose around it:
-{ "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
+{ "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ], "decisions": [ { "kind": "Confirmed behavioral change|Intended decision|Implicit decision|Unverified assumption", "decision": "what the implementation decided", "previous": "the behavior of the base revision or the alternative that was available", "evidence": "the code, the test or the document", "consequence": "the guarantee or the contract that changes", "risk": "the failure scenario or the risk that stays open", "confirmation": "yes|no" } ] }
 
 If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
   tests: `# Role: tests
@@ -904,6 +912,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── the reviewer roles ────────────────────────────────────────
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
+  const decisionsOfRun: Decision[] = [];
   // shortcut: the pipeline awaits the backend without a timer of its own — the
   // timeout belongs to the backend, which answers with a failure when it is
   // reached. A backend that never answers breaks its contract, and the run
@@ -960,14 +969,26 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     }
     const parsed = parseReviewerFindings(text, role);
     candidates.push(...parsed.findings);
-    const invalid = parsed.invalid.length > 0 ? `, ${parsed.invalid.length} invalid` : '';
+    // The decisions of the change are the answer of the architecture pass: the
+    // audit of the implicit decisions belongs to the pass that judges the
+    // approach, and to no other one.
+    const invalidEntries = [...parsed.invalid];
+    let decisionCount = 0;
+    if (role === 'architecture') {
+      const decisions = parseReviewerDecisions(text);
+      decisionsOfRun.push(...decisions.decisions);
+      decisionCount = decisions.decisions.length;
+      invalidEntries.push(...decisions.invalid);
+    }
+    const invalid = invalidEntries.length > 0 ? `, ${invalidEntries.length} invalid` : '';
+    const decisionsText = role === 'architecture' ? `, ${decisionCount} decisions` : '';
     steps.push(
       step(
         `review-${role}`,
         // An entry that did not pass the schema may be the defect that
         // matters: a reviewer that lost one is a reviewer that did not finish.
-        parsed.invalid.length > 0 ? 'failed' : 'passed',
-        `${parsed.findings.length} findings${invalid}${parsed.invalid.length > 0 ? ` — ${parsed.invalid.join('; ')}` : ''}`,
+        invalidEntries.length > 0 ? 'failed' : 'passed',
+        `${parsed.findings.length} findings${decisionsText}${invalid}${invalidEntries.length > 0 ? ` — ${invalidEntries.join('; ')}` : ''}`,
         roleStart,
       ),
     );
@@ -1050,6 +1071,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ...(context ? { context } : {}),
     steps,
     findings,
+    // The decisions of the change — they are not findings: they carry no
+    // severity and they never change the verdict.
+    decisions: decisionsOfRun,
     verdict: 'APPROVE',
     verdictReason: '',
     report: '',

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
+  Decision,
+  DecisionKind,
   Finding,
   FindingCategory,
   FindingSeverity,
@@ -36,6 +38,22 @@ export interface ParsedFindings {
   /** The entries that did not pass it, and why. */
   invalid: string[];
 }
+
+/** The result of parsing the decisions of an answer. */
+export interface ParsedDecisions {
+  /** The decisions that passed the schema. */
+  decisions: Decision[];
+  /** The entries that did not pass it, and why. */
+  invalid: string[];
+}
+
+/** The kinds of decision the report format knows. */
+export const DECISION_KINDS: readonly DecisionKind[] = [
+  'Confirmed behavioral change',
+  'Intended decision',
+  'Implicit decision',
+  'Unverified assumption',
+];
 
 /** The verdict of a verification pass for one finding. */
 export interface VerificationVerdict {
@@ -407,6 +425,44 @@ function payloadEntries(
 }
 
 /**
+ * The keys of a decision that no finding carries — an entry that carries one
+ * of them and no key of a finding is a decision, not a finding.
+ *
+ * The evidence is in both: a decision cites its evidence as a string, a
+ * finding as a list.
+ */
+const DECISION_KEYS = ['kind', 'decision', 'previous', 'consequence', 'confirmation'];
+
+/**
+ * The keys of a finding that no decision carries.
+ */
+const FINDING_KEYS = [
+  'title',
+  'severity',
+  'category',
+  'problem',
+  'impact',
+  'fix',
+  'file',
+  'line',
+  'endLine',
+];
+
+/**
+ * Whether an entry looks like a decision.
+ *
+ * The answer of the architecture pass carries the decisions under their own
+ * key, and the array of them is a JSON value of its own: a bare list of
+ * decisions must not be read as a bare list of findings.
+ */
+function looksLikeDecision(entry: unknown): boolean {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  const value = entry as Record<string, unknown>;
+  if (FINDING_KEYS.some((key) => key in value)) return false;
+  return DECISION_KEYS.some((key) => key in value);
+}
+
+/**
  * The payloads of an answer that may carry entries.
  *
  * The payloads of both shapes are read into one pool: a payload that carries
@@ -429,7 +485,8 @@ function payloadChoices<T extends { invalid: string[] }>(
         entry !== null &&
         typeof entry === 'object' &&
         !Array.isArray(entry) &&
-        !(key in (entry as Record<string, unknown>)),
+        !(key in (entry as Record<string, unknown>)) &&
+        !looksLikeDecision(entry),
     );
     if (!payload.keyed && !carriesEntries) {
       // An empty list is an answer that carries no findings: the prompt asks
@@ -603,6 +660,12 @@ export function parseReviewerFindings(text: string, role: ReviewRole): ParsedFin
     parseFindingEntries(entries, role),
   );
   if (choices.length === 0) {
+    // An answer that carries the decisions of the change and no finding is an
+    // answer of the architecture pass: it has nothing to report, and that is
+    // not a malformed answer.
+    if (candidates.some((candidate) => keyedEntries(candidate.value, 'decisions') !== undefined)) {
+      return { findings: [], invalid: [...notes] };
+    }
     return {
       findings: [],
       invalid: ['the answer contains no JSON payload of findings', ...notes],
@@ -669,6 +732,89 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
   });
 
   return { findings, invalid };
+}
+
+/**
+ * Parse the decisions of an answer.
+ *
+ * A decision lives under its own key: the payload that carries the findings
+ * is the payload of the answer, and the decisions are read out of it. Only a
+ * payload that carries the key counts — a bare list of findings is not a list
+ * of decisions.
+ *
+ * An answer without the key reports no decision. That is not a malformed
+ * answer: the decisions are optional, and a reviewer that names none has
+ * answered the question.
+ */
+export function parseReviewerDecisions(text: string): ParsedDecisions {
+  const { candidates, exhausted } = jsonCandidates(text);
+  const notes = exhausted
+    ? [
+        `the answer carries more than ${MAX_JSON_CANDIDATES} delimiters without JSON — the payload may be missed`,
+      ]
+    : [];
+  const choices: CandidateChoice<ParsedDecisions>[] = [];
+  for (const candidate of candidates) {
+    const entries = keyedEntries(candidate.value, 'decisions');
+    if (entries === undefined) continue;
+    const parsed = parseDecisionEntries(entries);
+    choices.push({ candidate, parsed, count: entries.length, keyed: true });
+  }
+  if (choices.length === 0) {
+    return { decisions: [], invalid: [] };
+  }
+  const best = choices.reduce(betterCandidate);
+  return { decisions: best.parsed.decisions, invalid: [...best.parsed.invalid, ...notes] };
+}
+
+/** The decisions of one payload of an answer. */
+function parseDecisionEntries(entries: unknown[]): ParsedDecisions {
+  const decisions: Decision[] = [];
+  const invalid: string[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      invalid.push(`decisions[${index}]: the entry is not an object`);
+      return;
+    }
+    const value = entry as Record<string, unknown>;
+    const kind = decisionKindOf(value.kind);
+    const decision = textOf(value.decision);
+    const missing = [
+      kind === undefined ? 'kind' : undefined,
+      decision === undefined ? 'decision' : undefined,
+    ].filter((field): field is string => field !== undefined);
+    if (missing.length > 0) {
+      invalid.push(`decisions[${index}]: ${missing.join(', ')} missing or malformed`);
+      return;
+    }
+    decisions.push({
+      kind: kind as DecisionKind,
+      decision: decision as string,
+      previous: textOf(value.previous) ?? '—',
+      evidence: textOf(value.evidence) ?? '—',
+      consequence: textOf(value.consequence) ?? '—',
+      risk: textOf(value.risk) ?? '—',
+      // A decision nobody confirmed needs a human: the safe default is the
+      // attention, not the silence.
+      confirmation: confirmationOf(value.confirmation),
+    });
+  });
+
+  return { decisions, invalid };
+}
+
+/** The kind of a decision — the kinds of the report format, and nothing else. */
+function decisionKindOf(value: unknown): DecisionKind | undefined {
+  const text = textOf(value);
+  if (!text) return undefined;
+  const found = DECISION_KINDS.find((kind) => kind.toLowerCase() === text.toLowerCase());
+  return found;
+}
+
+/** Whether a human has to confirm a decision. */
+function confirmationOf(value: unknown): 'yes' | 'no' {
+  const text = textOf(value)?.toLowerCase();
+  return text === 'no' ? 'no' : 'yes';
 }
 
 /**

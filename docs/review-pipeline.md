@@ -19,7 +19,7 @@ Every step has a stable id. The outcome of every step is reported in the
 | `collect-context` | The PR metadata, the base and head commits, the changed files and the page of the change on GitHub. |
 | `build-bundle` | The brief: the GitHub coordinates of the change, the changed files and the conventions — no file is attached. |
 | `review-correctness` | The correctness, regression and security pass. |
-| `review-architecture` | The architecture, maintainability, compatibility and scope pass. |
+| `review-architecture` | The architecture, maintainability, compatibility and scope pass — and the audit of the implicit decisions of the change. |
 | `review-tests` | The tests and verification pass. |
 | `verify-findings` | The independent verification of every candidate finding. |
 | `normalize-findings` | The merge of the duplicates and the states of the findings. |
@@ -32,6 +32,25 @@ A review with a governing Issue has two more steps, and only then:
 `check-requirements` reads the Issue again after the reviewers ran, and
 `update-requirements` moves the baseline of the Issue. A review without an
 Issue has neither — its steps are exactly the ones above.
+
+## The decision model
+
+The architecture pass answers a second question: what did you decide that I
+did not tell you to decide? Its answer carries a list of *decisions* beside the
+findings, and each decision carries its kind (`Confirmed behavioral change`,
+`Intended decision`, `Implicit decision`, `Unverified assumption`), the decision
+itself, the behavior of the base revision or the alternative that was
+available, the evidence, the consequence for the guarantees, the failure
+scenario that stays open and whether a human has to confirm it.
+
+**A decision is not a finding.** It has no severity, it is never verified as a
+defect, it is never repeated in the table of the findings and it never changes
+the verdict: a trade-off that nobody asked for is not a reason to ask for
+changes. The decisions live in their own section of the report and in their own
+field of `review.json`. A review without a material decision writes one line —
+*Not applicable* — instead of a table, and a decision that does not pass the
+schema fails the architecture pass like a malformed finding does: the audit
+that lost an entry did not finish.
 
 ## The finding model
 
@@ -242,14 +261,15 @@ onto it like this:
 | `FIX` | `fix` — optional |
 | the status of the finding | `verification` — `confirmed` → *Open*, `unverified` → *Unverified*, `rejected` → *Rejected* |
 
-Three fields of the report have no counterpart in a pipeline run and say so:
+Two fields of the report have no counterpart in a pipeline run and say so:
 the *Acceptance criteria* of the change are the caller's, not the pipeline's,
-the *Checks* table carries the steps of the pipeline, and the *Implicit
-decisions and trade-offs* section belongs to the manual playbook — the
-reviewers of the pipeline answer with findings only, so a pipeline report has
-no such section. A review with a governing Issue names that Issue and its
-version in the header of the report, and its *Acceptance criteria* row names
-the criteria of the Issue.
+and the *Checks* table carries the steps of the pipeline. The *Implicit
+decisions and trade-offs* section is written by the architecture pass: it
+answers the question the requirements did not ask — what did you decide that I
+did not tell you to decide? — and its rows are decisions, not findings. They
+carry no severity and they never change the verdict; a review with a governing
+Issue names that Issue and its version in the header of the report, and its
+*Acceptance criteria* row names the criteria of the Issue.
 
 ## Running it
 
@@ -417,7 +437,9 @@ a review that found nothing because it could not run is not an approval.
 
 The verdict is a field of the run (`verdict` and `verdictReason` of
 `review.json`), not only a line of the report: the caller of the pipeline reads
-it without parsing the markdown.
+it without parsing the markdown. The decisions of the change never take part in
+it: they carry no severity, and a review never asks for changes because of a
+trade-off.
 
 ## What the pipeline never does
 

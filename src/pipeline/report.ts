@@ -309,6 +309,29 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   }
   lines.push('');
 
+  lines.push('## Implicit decisions and trade-offs');
+  // A decision is not a finding: it has no severity, it does not change the
+  // verdict and it is never repeated in the table of the findings.
+  const architecture = run.steps.find((step) => step.id === 'review-architecture');
+  if (run.decisions.length === 0) {
+    lines.push(
+      architecture && architecture.status !== 'passed'
+        ? `Not verified — the architecture pass did not answer: ${literal(architecture.detail ?? architecture.status)}.`
+        : 'Not applicable — the reviewers named no material decision.',
+    );
+  } else {
+    lines.push(
+      '| Kind | Decision | Previous behavior or alternative | Evidence and rationale | Consequence | Failure scenario or unresolved risk | Human confirmation |',
+    );
+    lines.push('|---|---|---|---|---|---|---|');
+    for (const decision of run.decisions) {
+      lines.push(
+        `| ${cell(decision.kind)} | ${cell(decision.decision)} | ${cell(decision.previous)} | ${cell(decision.evidence)} | ${cell(decision.consequence)} | ${cell(decision.risk)} | ${cell(decision.confirmation)} |`,
+      );
+    }
+  }
+  lines.push('');
+
   lines.push('## Acceptance criteria');
   lines.push('| Criterion | Status | Evidence |');
   lines.push('|---|---|---|');

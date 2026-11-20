@@ -60,6 +60,42 @@ export interface Finding {
   reportedBy: ReviewRole[];
 }
 
+/**
+ * The kinds of decision the report format distinguishes.
+ *
+ * Observed is not inferred: a row says what the code shows, what the
+ * requirements asked for, what nobody asked for or what rests on material
+ * nobody read.
+ */
+export type DecisionKind =
+  | 'Confirmed behavioral change'
+  | 'Intended decision'
+  | 'Implicit decision'
+  | 'Unverified assumption';
+
+/**
+ * A decision the implementation took that the requirements did not state.
+ *
+ * A decision is not a finding: it carries no severity, it is never verified
+ * as a defect and it never changes the verdict.
+ */
+export interface Decision {
+  /** What kind of decision this is. */
+  kind: DecisionKind;
+  /** What the implementation decided. */
+  decision: string;
+  /** The behavior of the base revision, or the alternative that was available. */
+  previous: string;
+  /** The code, the test or the document that shows it. */
+  evidence: string;
+  /** The guarantee or the contract that changes. */
+  consequence: string;
+  /** The failure scenario, or the risk that stays open. */
+  risk: string;
+  /** Whether a human has to confirm it. */
+  confirmation: 'yes' | 'no';
+}
+
 /** The outcome of a step of the pipeline. */
 export type StepStatus = 'passed' | 'failed' | 'skipped' | 'unavailable';
 
@@ -197,6 +233,14 @@ export interface ReviewRun {
   steps: StepOutcome[];
   /** The findings of the run — normalized, deduplicated and verified. */
   findings: Finding[];
+  /**
+   * The decisions of the run — what the implementation decided that the
+   * requirements did not state.
+   *
+   * They are not findings: they carry no severity and they never change the
+   * verdict.
+   */
+  decisions: Decision[];
   /** The verdict of the run — the machine-readable answer of the review. */
   verdict: ReviewVerdict;
   /** The reason of the verdict, in one sentence. */

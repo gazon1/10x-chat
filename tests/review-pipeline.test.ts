@@ -27,6 +27,7 @@ import {
 import {
   dedupeFindings,
   findingId,
+  parseReviewerDecisions,
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
@@ -101,6 +102,11 @@ const FINDING = {
 /** The answer of a reviewer with one finding. */
 function answerWith(findings: unknown[]): string {
   return JSON.stringify({ findings });
+}
+
+/** The answer of a reviewer with findings and decisions. */
+function answerWithDecisions(findings: unknown[], decisions: unknown[]): string {
+  return JSON.stringify({ findings, decisions });
 }
 
 /** The parts of a text that are not inside a fenced block. */
@@ -2539,7 +2545,156 @@ describe('the review pipeline', () => {
   });
 });
 
+describe('the implicit decisions of a review', () => {
+  const DECISION = {
+    kind: 'Implicit decision',
+    decision: 'The audit of the decisions lives in the manual playbook only.',
+    previous: 'The pipeline reported the findings and nothing else.',
+    evidence: 'docs/review-pipeline.md',
+    consequence: 'An automated review shows no decision of the change.',
+    risk: 'A trade-off reaches the reader as if it were nothing.',
+    confirmation: 'yes',
+  };
+
+  it('collects the decisions of the architecture pass and renders them', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([], [DECISION]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].kind).toBe('Implicit decision');
+    expect(run.decisions[0].confirmation).toBe('yes');
+    expect(run.report).toContain('## Implicit decisions and trade-offs');
+    expect(run.report).toContain('The audit of the decisions lives in the manual playbook only.');
+  });
+
+  it('keeps a decision out of the findings and out of the verdict', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([], [DECISION]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    // A trade-off is not a defect: it is not a finding and it does not ask for
+    // changes.
+    expect(run.findings).toHaveLength(0);
+    expect(run.verdict).toBe('APPROVE');
+    const findings = run.report.slice(
+      run.report.indexOf('## Findings'),
+      run.report.indexOf('## Implicit decisions and trade-offs'),
+    );
+    expect(findings).toContain('No finding survived the verification');
+    expect(findings).not.toContain('The audit of the decisions lives in the manual');
+  });
+
+  it('reports no decision when the answer carries none', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.decisions).toEqual([]);
+    expect(run.report).toContain('Not applicable');
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('passed');
+  });
+
+  it('fails the architecture pass when a decision does not pass the schema', async () => {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([], [{ decision: 'a decision without a kind' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-architecture');
+    expect(step?.status).toBe('failed');
+    expect(step?.detail).toContain('kind');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+});
+
 describe('the parsing of the answers', () => {
+  it('reads the decisions of an answer', () => {
+    const answer = JSON.stringify({
+      findings: [],
+      decisions: [
+        {
+          kind: 'Confirmed behavioral change',
+          decision: 'The report carries a section of its own.',
+          previous: 'The report carried the findings only.',
+          evidence: 'report-format.md',
+          consequence: 'A trade-off is visible without becoming a defect.',
+          risk: 'A reader who reads the verdict only misses it.',
+          confirmation: 'no',
+        },
+      ],
+    });
+    const parsed = parseReviewerDecisions(answer);
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.decisions).toHaveLength(1);
+    expect(parsed.decisions[0].kind).toBe('Confirmed behavioral change');
+    expect(parsed.decisions[0].confirmation).toBe('no');
+  });
+
+  it('reads no decision out of an answer that carries none', () => {
+    // The decisions are optional: an answer that names none has answered the
+    // question, it has not failed to answer it.
+    const parsed = parseReviewerDecisions(JSON.stringify({ findings: [] }));
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it('does not read a bare list of findings as a list of decisions', () => {
+    const parsed = parseReviewerDecisions(JSON.stringify([FINDING]));
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid).toEqual([]);
+  });
+
+  it('reports a decision that does not pass the schema', () => {
+    const parsed = parseReviewerDecisions(
+      JSON.stringify({ findings: [], decisions: [{ decision: 'a decision without a kind' }] }),
+    );
+    expect(parsed.decisions).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('kind');
+  });
+
   it('reads the payload of an answer that carries prose around it', () => {
     const answer = [
       'Here is what I found [note].',
