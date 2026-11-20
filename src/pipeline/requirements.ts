@@ -199,6 +199,29 @@ function snapshotPath(repository: string, number: number): string {
 }
 
 /**
+ * The privacy of the store — the directories are private, the file is private.
+ *
+ * The mode is enforced before the read as well as before the write: a snapshot
+ * that was restored with wide permissions, or a directory that another program
+ * created, would show the description of the Issue to the other users of the
+ * machine.
+ */
+async function enforcePrivacy(file: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  const dir = path.dirname(file);
+  try {
+    await chmod(getRequirementsDir(), 0o700);
+    await chmod(path.dirname(dir), 0o700);
+    await chmod(dir, 0o700);
+    await chmod(file, 0o600);
+  } catch (error) {
+    // A store that is not there yet is a store that holds no snapshot: there is
+    // nothing to keep private.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+/**
  * The snapshot of the last completed review of an Issue.
  *
  * A file that is not there is no snapshot — the Issue is seen for the first
@@ -211,6 +234,7 @@ export async function readBaseline(
   number: number,
 ): Promise<StoredSnapshot | undefined> {
   const file = snapshotPath(repository, number);
+  await enforcePrivacy(file);
   let content: string;
   try {
     content = await readFile(file, 'utf-8');

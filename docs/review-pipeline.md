@@ -170,11 +170,13 @@ and nothing else.
 
 The baseline of the Issue — the version of the last successfully completed
 review — lives in `~/.10x-chat/requirements/<owner>/<name>/<issue>.json`, a
-small private file (`0600`, in a directory of `0700`). It says whether the
-Issue is seen for the first time (`initial`), whether the requirements did not
-drift (`unchanged`) or whether they did (`changed`). A changed Issue is named
-as changed in the context and in the report, and the reviewers get its
-complete current body.
+small private file (`0600`, in a directory of `0700`). The mode is enforced
+before every read as well as before every write: a snapshot that was restored
+with wide permissions would show the description of the Issue to the other
+users of the machine. It says whether the Issue is seen for the first time
+(`initial`), whether the requirements did not drift (`unchanged`) or whether they
+did (`changed`). A changed Issue is named as changed in the context and in the
+report, and the reviewers get its complete current body.
 
 Two rules keep the baseline honest:
 

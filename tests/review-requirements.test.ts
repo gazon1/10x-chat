@@ -14,6 +14,7 @@ import {
   hashRequirements,
   parseIssue,
   REQUIREMENTS_LOCK,
+  readBaseline,
 } from '../src/pipeline/requirements.js';
 import { REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { IssueRequirements, ReviewContext } from '../src/pipeline/types.js';
@@ -319,6 +320,37 @@ describe('the requirements of a review', () => {
     expect(changed.requirements?.status).toBe('changed');
     expect(changed.requirements?.previousTitle).toBe(ISSUE_TITLE);
     expect(changed.requirements?.hash).not.toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
+  });
+
+  it('recognises a change of the title of the issue alone', async () => {
+    await fakeGh({});
+    await mkdir(path.dirname(baselineFile()), { recursive: true });
+    await writeFile(
+      baselineFile(),
+      JSON.stringify({
+        version: 1,
+        repository: 'owner/name',
+        number: 7,
+        url: 'https://github.com/owner/name/issues/7',
+        title: ISSUE_TITLE,
+        body: ISSUE_BODY,
+        hash: hashRequirements(ISSUE_TITLE, ISSUE_BODY),
+        observedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'utf-8',
+    );
+
+    // The body is the same, only the title of the Issue changes: the version
+    // of the requirements changes with it.
+    await fakeGh({ issue: { number: 7, title: `${ISSUE_TITLE} And more.`, body: ISSUE_BODY } });
+    const changed = await collectReviewContext({ cwd: repo, pr: 42, issue: 7 });
+
+    expect(changed.requirements?.status).toBe('changed');
+    expect(changed.requirements?.previousTitle).toBe(ISSUE_TITLE);
+    expect(changed.requirements?.hash).not.toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
+    expect(changed.requirements?.hash).toBe(
+      hashRequirements(`${ISSUE_TITLE} And more.`, ISSUE_BODY),
+    );
   });
 
   it('gives every reviewer and the verifier the same requirements', async () => {
@@ -635,14 +667,25 @@ describe('the requirements of a review', () => {
     const module = path
       .resolve(import.meta.dirname, '..', 'src', 'pipeline', 'requirements.ts')
       .replaceAll(path.sep, '/');
+    const lockModule = path
+      .resolve(import.meta.dirname, '..', 'src', 'core', 'lock.ts')
+      .replaceAll(path.sep, '/');
     const script = path.join(home, 'advance-locked.mjs');
     await writeFile(
       script,
       `const { writeFile } = await import('node:fs/promises');\n` +
-        `const { advanceBaseline, hashRequirements } = await import('file://${module}');\n` +
-        `const [title, body, started, advanced] = process.argv.slice(2);\n` +
-        // The marker says that the process is about to advance the baseline.
-        `await writeFile(started, 'started');\n` +
+        `const { acquireLock } = await import('file://${lockModule}');\n` +
+        `const { advanceBaseline, hashRequirements, REQUIREMENTS_LOCK } = await import('file://${module}');\n` +
+        `const [dir, title, body, started, advanced] = process.argv.slice(2);\n` +
+        // The process proves that the lock of the store is busy: it cannot take
+        // it, and it says so before it tries to advance the baseline.
+        `try {\n` +
+        `  const lock = await acquireLock(dir, REQUIREMENTS_LOCK, { timeoutMs: 500, pollMs: 50 });\n` +
+        `  await lock.release();\n` +
+        `  await writeFile(started, 'free');\n` +
+        `} catch {\n` +
+        `  await writeFile(started, 'busy');\n` +
+        `}\n` +
         `await advanceBaseline({\n` +
         `  repository: 'owner/name',\n` +
         `  number: 7,\n` +
@@ -662,17 +705,30 @@ describe('the requirements of a review', () => {
     const lock = await acquireLock(getRequirementsDir(), REQUIREMENTS_LOCK, { timeoutMs: 30_000 });
     const child = spawn(
       process.execPath,
-      ['--import', 'tsx', script, ISSUE_TITLE, `${ISSUE_BODY} Newer.`, started, advanced],
+      [
+        '--import',
+        'tsx',
+        script,
+        getRequirementsDir(),
+        ISSUE_TITLE,
+        `${ISSUE_BODY} Newer.`,
+        started,
+        advanced,
+      ],
       {
         cwd: path.resolve(import.meta.dirname, '..'),
         env: { ...process.env, TEN_X_CHAT_HOME: home },
         stdio: 'ignore',
       },
     );
+    const exited = new Promise<void>((resolve) => child.on('exit', () => resolve()));
     try {
-      // The child is running and waits for the lock of the store.
+      // The child found the lock of the store busy: it waits for it.
       await waitForFile(started);
-      await sleep(600);
+      expect(await readFile(started, 'utf-8')).toBe('busy');
+
+      // The store stays untouched while the lock is held.
+      await sleep(1_000);
       expect(await exists(advanced)).toBe(false);
       expect(await exists(baselineFile())).toBe(false);
 
@@ -684,7 +740,44 @@ describe('the requirements of a review', () => {
     } finally {
       await lock.release().catch(() => {});
       child.kill();
+      await exited;
     }
+  });
+
+  it('makes the store private when it reads a snapshot', async () => {
+    const file = baselineFile();
+    const dir = path.dirname(file);
+    const repositoryDir = path.dirname(dir);
+    const root = path.dirname(repositoryDir);
+    await mkdir(dir, { recursive: true });
+    await chmod(dir, 0o755);
+    await chmod(repositoryDir, 0o755);
+    await chmod(root, 0o755);
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        repository: 'owner/name',
+        number: 7,
+        url: 'https://github.com/owner/name/issues/7',
+        title: ISSUE_TITLE,
+        body: ISSUE_BODY,
+        hash: hashRequirements(ISSUE_TITLE, ISSUE_BODY),
+        observedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      'utf-8',
+    );
+    await chmod(file, 0o644);
+
+    const snapshot = await readBaseline('owner/name', 7);
+
+    expect(snapshot?.hash).toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
+    // The snapshot holds the description of the Issue: the store is private
+    // before the read as well as before the write.
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(repositoryDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(root)).mode & 0o777).toBe(0o700);
   });
 
   it('fails the collection when the stored baseline cannot be read', async () => {
