@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
+  Decision,
+  DecisionKind,
   Finding,
   FindingCategory,
   FindingSeverity,
@@ -29,6 +31,19 @@ export const VERIFICATIONS: readonly FindingVerification[] = [
   'rejected',
 ];
 
+/**
+ * The kinds of an implicit decision.
+ *
+ * An unknown kind is an implicit one: a decision nobody could classify is a
+ * decision that needs the attention of a human.
+ */
+export const DECISION_KINDS: readonly DecisionKind[] = [
+  'behavior_change',
+  'intended',
+  'implicit',
+  'assumption',
+];
+
 /** The result of parsing the answer of a reviewer. */
 export interface ParsedFindings {
   /** The findings that passed the schema. */
@@ -49,6 +64,14 @@ export interface VerificationVerdict {
 /** The result of parsing the answer of a verification pass. */
 export interface ParsedVerdicts {
   verdicts: VerificationVerdict[];
+  invalid: string[];
+}
+
+/** The result of parsing the decisions of an answer. */
+export interface ParsedDecisions {
+  /** The decisions that passed the schema. */
+  decisions: Decision[];
+  /** The entries that did not pass it, and why. */
   invalid: string[];
 }
 
@@ -669,6 +692,121 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
   });
 
   return { findings, invalid };
+}
+
+/** The kind of a decision — an unknown kind is an implicit one. */
+function decisionKindOf(value: unknown): DecisionKind {
+  const text = textOf(value)?.toLowerCase();
+  return DECISION_KINDS.find((kind) => kind === text) ?? 'implicit';
+}
+
+/**
+ * The id of a decision.
+ *
+ * The id is a hash of the normalized text of the decision: two roles that
+ * report the same decision report one decision.
+ */
+export function decisionId(decision: string): string {
+  const key = JSON.stringify(normalizeTitle(decision) || decision.trim().toLowerCase());
+  return `d-${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
+}
+
+/**
+ * Parse the decisions of the answer of a reviewer.
+ *
+ * The decisions are optional: an answer that carries none reports no implicit
+ * decision, and that is not a malformed answer. An entry that does not pass
+ * the schema is invalid — it is reported, never silently dropped.
+ *
+ * Only a payload that carries the key of the decisions is read: a bare list of
+ * findings is not a list of decisions.
+ */
+export function parseReviewerDecisions(text: string, role: ReviewRole): ParsedDecisions {
+  const { candidates } = jsonCandidates(text);
+  const choices: CandidateChoice<ParsedDecisions>[] = [];
+  for (const candidate of candidates) {
+    const entries = keyedEntries(candidate.value, 'decisions');
+    if (entries === undefined) continue;
+    choices.push({
+      candidate,
+      parsed: parseDecisionEntries(entries, role),
+      count: entries.length,
+      keyed: true,
+    });
+  }
+  if (choices.length === 0) return { decisions: [], invalid: [] };
+  const best = choices.reduce(betterCandidate);
+  return best.parsed;
+}
+
+/** The decisions of one payload of an answer. */
+function parseDecisionEntries(entries: unknown[], role: ReviewRole): ParsedDecisions {
+  const decisions: Decision[] = [];
+  const invalid: string[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      invalid.push(`decisions[${index}]: the entry is not an object`);
+      return;
+    }
+    const value = entry as Record<string, unknown>;
+    const decision = textOf(value.decision);
+    if (!decision) {
+      invalid.push(`decisions[${index}]: decision missing or malformed`);
+      return;
+    }
+    const kind = decisionKindOf(value.kind);
+    const previous = textOf(value.previous);
+    const rationale = textOf(value.rationale);
+    const consequence = textOf(value.consequence);
+    const risk = textOf(value.risk);
+    // A decision that nobody classified needs a human: it is the kind the
+    // reviewers did not name.
+    const needsHuman =
+      typeof value.needsHuman === 'boolean'
+        ? value.needsHuman
+        : kind === 'implicit' || kind === 'assumption';
+    decisions.push({
+      id: decisionId(decision),
+      kind,
+      decision,
+      ...(previous ? { previous } : {}),
+      ...(rationale ? { rationale } : {}),
+      ...(consequence ? { consequence } : {}),
+      ...(risk ? { risk } : {}),
+      needsHuman,
+      reportedBy: [role],
+    });
+  });
+  return { decisions, invalid };
+}
+
+/**
+ * Merge the decisions of the roles.
+ *
+ * Two roles that report the same decision report it once: the fields of both
+ * are kept and the roles that reported it are named.
+ */
+export function dedupeDecisions(decisions: Decision[]): Decision[] {
+  const merged = new Map<string, Decision>();
+  for (const decision of decisions) {
+    const known = merged.get(decision.id);
+    if (!known) {
+      merged.set(decision.id, { ...decision });
+      continue;
+    }
+    known.reportedBy = [...new Set([...known.reportedBy, ...decision.reportedBy])];
+    known.previous = known.previous ?? decision.previous;
+    known.rationale = known.rationale ?? decision.rationale;
+    known.consequence = known.consequence ?? decision.consequence;
+    known.risk = known.risk ?? decision.risk;
+    known.needsHuman = known.needsHuman || decision.needsHuman;
+    // The most concrete kind wins: a change of behavior is more than an
+    // assumption.
+    if (DECISION_KINDS.indexOf(decision.kind) < DECISION_KINDS.indexOf(known.kind)) {
+      known.kind = decision.kind;
+    }
+  }
+  return [...merged.values()];
 }
 
 /**

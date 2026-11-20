@@ -12,10 +12,17 @@ import {
   normalizeRepoPath,
   revisionEntry,
 } from './context.js';
-import { dedupeFindings, parseReviewerFindings, parseVerdicts } from './findings.js';
+import {
+  dedupeDecisions,
+  dedupeFindings,
+  parseReviewerDecisions,
+  parseReviewerFindings,
+  parseVerdicts,
+} from './findings.js';
 import { renderReviewReport, verdictOf } from './report.js';
 import { advanceBaseline, checkFreshness } from './requirements.js';
 import type {
+  Decision,
   Finding,
   IssueRequirements,
   ReviewContext,
@@ -73,6 +80,52 @@ export interface ReviewPipelineOptions {
   backendLabel?: string;
 }
 
+/** The schema of a finding — the same for every role. */
+const FINDING_SCHEMA = `{ "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" }`;
+
+/**
+ * The schema of an implicit decision — the same for every role.
+ *
+ * The kinds say what kind of attention a decision needs: a change of behavior
+ * is observed, an intended decision is stated, an implicit decision was never
+ * asked for, an assumption is not verified.
+ */
+const DECISION_SCHEMA = `{ "decision": "what was decided", "kind": "behavior_change|intended|implicit|assumption", "previous": "the previous behavior or the alternative that was available", "rationale": "the evidence and the rationale", "consequence": "what changes because of it", "risk": "the failure scenario or the unresolved risk", "needsHuman": false }`;
+
+/** The answer of a reviewer — the findings and the decisions. */
+const ANSWER_SCHEMA = `{ "findings": [ ${FINDING_SCHEMA} ], "decisions": [ ${DECISION_SCHEMA} ] }`;
+
+/**
+ * The audit of the implicit decisions — the same for every role.
+ *
+ * The requirements of a change never say everything, and a change that looks
+ * correct may still have quietly weakened a guarantee. The key question of
+ * the audit: *what did you decide that I did not tell you to decide?*
+ */
+const DECISIONS_RULE = `# The implicit decisions
+
+The requirements of a change never say everything. Name the consequential decisions the implementation made that nobody asked for, and answer for each of them: what was decided, what it changes, and what can fail.
+
+Compare the behavior before and after the change where it matters — persistence and durability, ordering and consistency, delivery and retry, concurrency, resource limits and backpressure, timeouts and cancellation, compatibility with existing callers and stored data, recovery after a failure. Select only the contracts the change touches.
+
+Consider the failure modes of the paths the change touches: normal operation, boundary inputs and resource exhaustion, concurrent operations, partial failures, restart and recovery, unavailable dependencies, timeouts, retries and cancellation, and the loss, the duplication or the staleness of data. A bounded queue, a retry, a cache or a persistence is a trade-off, not a virtue: judge the contract it actually offers.
+
+A decision is not a defect. A defect you can prove is a finding; a trade-off the change accepts on purpose is a decision, not a bug; an assumption nobody checked is an assumption. Do not report a decision that a finding of yours already reports. Mark the decisions a human has to confirm.
+
+Answer with an empty "decisions" array when the change decides nothing of consequence — a trivial change may skip the audit.`;
+
+/**
+ * The audit of the approach — the architecture role alone.
+ *
+ * The question is not only what the implementation decided, but whether the
+ * custom code was needed at all.
+ */
+const APPROACH_RULE = `# The approach
+
+Judge the approach itself and not only the result: could this have been solved by reusing what the repository already has, by a focused refactoring of the code that is already there, or by the standard library or a dependency the project already uses — instead of new custom code?
+
+Look at the repository before you judge: an existing abstraction, helper or module, a boundary that a small refactoring would fix, the standard library, the dependencies of the project. Name an external library only when it is a realistic fit, and do not require outside research for a trivial change. A missed reuse is not a defect: a decision, with the alternative that was available. When the requirements of the change are given, say where the plan should have considered a refactoring or a reuse.`;
+
 /** The instructions of a reviewer role. */
 const ROLE_PROMPTS: Record<ReviewRole, string> = {
   correctness: `# Role: correctness
@@ -82,7 +135,7 @@ You are an independent reviewer of a change. Your role: correctness, regressions
 Look only for real defects: logic that is wrong, callers that break, data loss, security holes, missing error handling, unhandled boundary values, injection, authz, secrets, unsafe input and races.
 
 Answer with JSON only, without prose around it:
-{ "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
+${ANSWER_SCHEMA}
 
 If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
   architecture: `# Role: architecture
@@ -92,7 +145,7 @@ You are an independent reviewer of a change. Your role: architecture, maintainab
 Judge the change against the conventions of the repository and against the code around it: does it fit the shape of the codebase, is it the smallest change that solves the task, does it break a public API, a format or a schema, does it leave dead code or needless abstraction, are the tests meaningful? Name the consequential decisions the requirements did not state and what they change.
 
 Answer with JSON only, without prose around it:
-{ "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/file.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
+${ANSWER_SCHEMA}
 
 If you find nothing blocking, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
   tests: `# Role: tests
@@ -102,10 +155,25 @@ You are an independent reviewer of a change. Your role: tests and verification.
 Is the behaviour covered, are the assertions meaningful, would the test fail without the fix, are the edge cases of the change tested, is there a test that only proves the code runs? Point at the test that is missing and at the behaviour it would pin.
 
 Answer with JSON only, without prose around it:
-{ "findings": [ { "title": "a short title", "severity": "BLOCKING|MAJOR|MINOR|INFO", "category": "correctness|security|architecture|maintainability|tests|compatibility|scope|other", "file": "path/of/the/test.ts", "line": 42, "problem": "one or two sentences", "impact": "the concrete failure scenario — inputs or state -> wrong result", "evidence": ["the code, the trace or the reproduction"], "fix": "the minimal correction" } ] }
+${ANSWER_SCHEMA}
 
 If the change is covered, return an empty array. Do not invent problems to fill the schema. Do not rewrite the code.`,
 };
+
+/**
+ * The instructions that every role gets in addition to its own.
+ *
+ * The audit of the implicit decisions belongs to the whole review: the
+ * correctness role sees the failure modes, the architecture role the
+ * trade-offs, the tests role the paths nobody pinned.
+ */
+function promptOf(role: ReviewRole): string {
+  return [
+    ROLE_PROMPTS[role],
+    DECISIONS_RULE,
+    ...(role === 'architecture' ? [APPROACH_RULE] : []),
+  ].join('\n\n');
+}
 
 /**
  * The rule of the untrusted content.
@@ -904,6 +972,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── the reviewer roles ────────────────────────────────────────
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
+  const reported: Decision[] = [];
   // shortcut: the pipeline awaits the backend without a timer of its own — the
   // timeout belongs to the backend, which answers with a failure when it is
   // reached. A backend that never answers breaks its contract, and the run
@@ -916,7 +985,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     }
     const request = {
       requestId: `${runId}-${role}`,
-      prompt: `${ROLE_PROMPTS[role]}\n\n${DATA_RULE}\n\n${brief}`,
+      prompt: `${promptOf(role)}\n\n${DATA_RULE}\n\n${brief}`,
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     };
@@ -960,14 +1029,19 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     }
     const parsed = parseReviewerFindings(text, role);
     candidates.push(...parsed.findings);
-    const invalid = parsed.invalid.length > 0 ? `, ${parsed.invalid.length} invalid` : '';
+    // The decisions are optional: an answer that carries none reports no
+    // implicit decision, and that is not a malformed answer.
+    const parsedDecisions = parseReviewerDecisions(text, role);
+    reported.push(...parsedDecisions.decisions);
+    const invalidEntries = [...parsed.invalid, ...parsedDecisions.invalid];
+    const invalid = invalidEntries.length > 0 ? `, ${invalidEntries.length} invalid` : '';
     steps.push(
       step(
         `review-${role}`,
         // An entry that did not pass the schema may be the defect that
         // matters: a reviewer that lost one is a reviewer that did not finish.
-        parsed.invalid.length > 0 ? 'failed' : 'passed',
-        `${parsed.findings.length} findings${invalid}${parsed.invalid.length > 0 ? ` — ${parsed.invalid.join('; ')}` : ''}`,
+        invalidEntries.length > 0 ? 'failed' : 'passed',
+        `${parsed.findings.length} findings, ${parsedDecisions.decisions.length} decisions${invalid}${invalidEntries.length > 0 ? ` — ${invalidEntries.join('; ')}` : ''}`,
         roleStart,
       ),
     );
@@ -1001,11 +1075,14 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
 
   // ── normalize-findings ────────────────────────────────────────
   const normalizeStart = Date.now();
+  // The decisions of the roles are merged too: two roles that name the same
+  // decision name it once.
+  const decisions = dedupeDecisions(reported);
   steps.push(
     step(
       'normalize-findings',
       'passed',
-      `${candidates.length} reported, ${findings.length} after the merge`,
+      `${candidates.length} reported, ${findings.length} after the merge, ${decisions.length} decisions`,
       normalizeStart,
     ),
   );
@@ -1050,6 +1127,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ...(context ? { context } : {}),
     steps,
     findings,
+    decisions,
     verdict: 'APPROVE',
     verdictReason: '',
     report: '',

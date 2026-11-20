@@ -30,6 +30,42 @@ export type FindingCategory =
 /** The reviewer roles of the pipeline. */
 export type ReviewRole = 'correctness' | 'architecture' | 'tests';
 
+/**
+ * The kinds of an implicit decision.
+ *
+ * A decision is not a defect: it is what the implementation chose where the
+ * requirements said nothing. The kind says how much attention it needs — a
+ * change of behavior is observed, an assumption is not.
+ */
+export type DecisionKind = 'behavior_change' | 'intended' | 'implicit' | 'assumption';
+
+/**
+ * An implicit decision of a change — what the implementation chose on its own.
+ *
+ * It is the reading of the reviewers, not a verified fact: a decision that is
+ * also a defect is a finding, and a decision that names a risk is not one.
+ */
+export interface Decision {
+  /** A stable id: the same decision keeps it across the roles. */
+  id: string;
+  /** The kind of the decision — what kind of attention it needs. */
+  kind: DecisionKind;
+  /** What was decided. */
+  decision: string;
+  /** The previous behavior or the alternative that was available. */
+  previous?: string;
+  /** The evidence and the rationale of the decision. */
+  rationale?: string;
+  /** What changes because of the decision. */
+  consequence?: string;
+  /** The failure scenario or the unresolved risk. */
+  risk?: string;
+  /** Whether a human has to confirm the decision. */
+  needsHuman: boolean;
+  /** The roles that reported the decision — more than one after a merge. */
+  reportedBy: ReviewRole[];
+}
+
 /** A finding of a review. */
 export interface Finding {
   /** A stable id: the same finding keeps it across runs and reviewers. */
@@ -197,6 +233,8 @@ export interface ReviewRun {
   steps: StepOutcome[];
   /** The findings of the run — normalized, deduplicated and verified. */
   findings: Finding[];
+  /** The implicit decisions of the run — what the change decided on its own. */
+  decisions: Decision[];
   /** The verdict of the run — the machine-readable answer of the review. */
   verdict: ReviewVerdict;
   /** The reason of the verdict, in one sentence. */

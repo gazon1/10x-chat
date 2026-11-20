@@ -118,6 +118,34 @@ that was merged into a finding counts: the overlap of the titles is not
 transitive, so a finding that overlaps a merged title is the same defect even
 when it does not overlap the title that was kept.
 
+## The implicit decisions
+
+The requirements of a change never say everything. Every role is therefore
+asked, besides the defects, for the **implicit decisions** of the change: what
+the implementation decided that nobody asked for, what it changes and what can
+fail. The architecture role is asked one thing more — whether the custom code
+was needed at all, or whether the existing code of the repository, a focused
+refactoring, the standard library or a dependency of the project would have
+served better.
+
+A decision carries a kind — `behavior_change`, `intended`, `implicit` or
+`assumption` — the decision itself, the previous behavior or the alternative
+that was available, the evidence and the rationale, the consequence, the
+failure scenario or the unresolved risk, and whether a human has to confirm it.
+An unknown kind is an implicit one: a decision nobody could classify is a
+decision that needs a human.
+
+**The decisions are optional.** An answer that carries none reports no
+implicit decision, and that is not a malformed answer. An entry that does not
+pass the schema is invalid, like a malformed finding: it is reported in the
+step of the role and never becomes a decision. Two roles that name the same
+decision name it once — the id of a decision is a hash of its normalized text.
+
+**A decision is not a defect.** The decisions are not verified against the
+source the way the findings are, and they never become findings: they are the
+reading of the reviewers, and the report says so. Only a proven defect blocks
+the merge.
+
 ## What the reviewers get
 
 The reviewers read the change **on GitHub** — the way the manual playbook does.
@@ -247,6 +275,14 @@ the *Acceptance criteria* of the change are the caller's, not the pipeline's,
 and the *Checks* table carries the steps of the pipeline. A review with a
 governing Issue names that Issue and its version in the header of the report,
 and its *Acceptance criteria* row names the criteria of the Issue.
+
+The *Implicit decisions and trade-offs* section of the report carries the
+decisions of the reviewers: the decision, its kind, the previous behavior or
+the alternative, the evidence and the rationale, the consequence, the failure
+scenario or the unresolved risk, and whether a human has to confirm it. The
+decisions that need a human come first. When the roles reported none, the
+section says so in one line — and says that the audit is incomplete when the
+architecture pass did not finish.
 
 ## Running it
 

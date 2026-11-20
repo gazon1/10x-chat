@@ -1,6 +1,6 @@
 export {
-  cleanupBrowserOnProcessExit,
   type BrowserSession,
+  cleanupBrowserOnProcessExit,
   type LaunchOptions,
   launchBrowser,
 } from './manager.js';
