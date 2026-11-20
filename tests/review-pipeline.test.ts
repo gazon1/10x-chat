@@ -2682,6 +2682,9 @@ describe('the implicit decisions of a review', () => {
     expect(step?.status).toBe('failed');
     expect(step?.detail).toContain('no decisions');
     expect(run.verdict).toBe('REQUEST CHANGES');
+    // The section must not pass the silence of the architecture pass as
+    // "no material decision".
+    expect(run.report).toContain('Not verified — the architecture pass did not answer');
   });
 
   it('fails the architecture pass when the answer omits the findings', async () => {
