@@ -69,8 +69,10 @@ requested capability.
 - **Cleanup:** every ask uses a dedicated `chrome-use` session name and always
   attempts `chrome-use … done` in `finally` to close tabs it opened.
 - **Timeout:** respects `request.timeoutMs` without exceeding it per command; if the
-  prompt was confirmed sent, timeout is reported as `timeout/submitted`, otherwise
-  as an unknown/unavailable pre-submit failure (never retried automatically).
+  prompt was confirmed sent, timeout is reported as `timeout/submitted`. A deadline
+  that expires before any submit attempt is reported as `unavailable/not_submitted`
+  (safe to retry, nothing sent). Ambiguous submit cases report unknown submission
+  (never retried automatically).
 - **Cancellation:** capability `false`; `cancel` returns `{cancelled:false}`.
 - **Browser disconnect / chrome-use unavailable:** start/connect failures before
   submit → `unavailable/not_submitted`. Ambiguous submit/connection loss after a

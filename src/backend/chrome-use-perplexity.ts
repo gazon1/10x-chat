@@ -299,14 +299,16 @@ export function createChromeUsePerplexityBackend(
     const ensureTime = (submitted: boolean): BackendOutcome<never> | undefined => {
       const left = remaining();
       if (left !== undefined && left <= 0) {
-        const sub: BackendSubmission = submitted ? 'submitted' : 'unknown';
-        known.set(request.requestId, { submission: sub });
+        if (submitted) {
+          known.set(request.requestId, { submission: 'submitted' });
+          return failure('timeout', 'submitted', 'Timed out waiting for the Perplexity answer.');
+        }
+        // Before submit nothing reached Perplexity; safe to retry.
+        known.set(request.requestId, { submission: 'not_submitted' });
         return failure(
-          submitted ? 'timeout' : 'unknown_submission',
-          sub,
-          submitted
-            ? 'Timed out waiting for the Perplexity answer.'
-            : 'Timed out before the prompt was confirmed sent (it may have reached Perplexity).',
+          'unavailable',
+          'not_submitted',
+          'Timed out before the prompt was sent to Perplexity.',
         );
       }
       return undefined;

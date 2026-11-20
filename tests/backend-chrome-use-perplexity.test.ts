@@ -174,6 +174,51 @@ describe('chrome-use Perplexity backend (POC)', () => {
     expect(calls.some((c) => c.args[2] === 'click')).toBe(false);
   });
 
+  it('reports pre-submit deadline expiry as unavailable/not_submitted', async () => {
+    const calls: Call[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    // Negative timeout => deadline already passed before any submit attempt.
+    const out = await backend.ask({ requestId: 'req-timeout', prompt: 'hi', timeoutMs: -1 });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('unavailable');
+    expect(out.failure.submission).toBe('not_submitted');
+    expect(out.failure.message).toMatch(/before the prompt was sent/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reports pre-submit deadline expiry before click without submitting', async () => {
+    const calls: Call[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        const sub = args[2];
+        if (sub === 'press' && args[3] === 'Escape') {
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const out = await backend.ask({ requestId: 'req-timeout2', prompt: 'hi', timeoutMs: 15 });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('unavailable');
+    expect(out.failure.submission).toBe('not_submitted');
+    expect(calls.some((c) => c.args[2] === 'click')).toBe(false);
+  });
+
   it('rejects attachments and model selection explicitly', async () => {
     const backend = createChromeUsePerplexityBackend({ runner: { run: async () => ok() } });
     const a = await backend.ask({ requestId: 'r', prompt: 'hi', attachments: ['/tmp/x'] });
