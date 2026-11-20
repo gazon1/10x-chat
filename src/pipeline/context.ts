@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { SECRET_EXCLUDES } from '../core/bundle.js';
+import { collectRequirements } from './requirements.js';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
 /** The bound of the diff of a change that has no page on GitHub. */
@@ -234,6 +235,14 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   const repository = repositoryOf(remoteUrl) || repoRoot;
   const repositoryUrl = webRepositoryUrl(remoteUrl);
 
+  // The requirements of the change: the governing Issue is read now, and a
+  // failure to read it fails the collection — a review that silently omits
+  // the requirements it was asked for is not a review of the change.
+  const requirements =
+    target.issue !== undefined
+      ? await collectRequirements(target.issue, repository, cwd)
+      : undefined;
+
   let baseRef: string;
   let baseSha: string;
   let headRef: string;
@@ -389,6 +398,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     ...(repositoryUrl ? { repositoryUrl } : {}),
     ...(pr !== undefined ? { pr } : {}),
     ...(prUrl ? { prUrl } : {}),
+    ...(requirements ? { requirements } : {}),
     ...(title ? { title } : {}),
     baseRef,
     baseSha,

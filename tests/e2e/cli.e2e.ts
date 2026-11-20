@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -350,6 +350,20 @@ it('refuses a timeout that is not a number', async () => {
   });
 });
 
+it('refuses an issue without a pull request and an issue that is not a number', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    // The Issue is the requirements of a pull request: without one there is
+    // nothing for it to govern.
+    const alone = await runCli(['review', '--issue', '57'], env);
+    expect(alone.code).toBe(1);
+    expect(alone.output).toContain('--issue option is supported together with --pr');
+    const garbage = await runCli(['review', '--pr', '42', '--issue', '57garbage'], env);
+    expect(garbage.code).toBe(1);
+    expect(garbage.output).toContain('Invalid --issue value');
+  });
+});
+
 /**
  * A `chatgpt-use` that answers with the envelope of the CLI: one finding for
  * the reviewers, a verdict for every candidate of the verification.
@@ -422,6 +436,64 @@ async function createReviewRepo(): Promise<string> {
   await gitIn(cwd, 'commit', '-m', 'second');
   return cwd;
 }
+
+/**
+ * A `gh` that answers with the pull request and with the governing Issue.
+ *
+ * The commits of the pull request are the commits of the checkout: the script
+ * asks git for them, so the review compares the branches of the repository.
+ */
+const FAKE_GH = `#!/bin/sh
+case "$1 $2" in
+"pr view")
+  printf '{"number":42,"url":"https://github.com/owner/name/pull/42","title":"Add the run function","baseRefName":"main","baseRefOid":"%s","headRefName":"feature","headRefOid":"%s"}' "$(git rev-parse main)" "$(git rev-parse feature)"
+  ;;
+"issue view")
+  printf '{"number":7,"url":"https://github.com/owner/name/issues/7","title":"The requirements of the change","body":"The change must do what the issue says."}'
+  ;;
+esac
+`;
+
+it('reviews a pull request against the requirements of its issue', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    // The repository of the checkout: the Issue is read from it.
+    await gitIn(repo, 'remote', 'add', 'origin', 'https://github.com/owner/name.git');
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      await writeFile(path.join(bin, 'gh'), FAKE_GH, 'utf-8');
+      await chmod(path.join(bin, 'gh'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      const approve = await runCli(
+        ['review', '--pr', '42', '--issue', '7'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+
+      expect(approve.code).toBe(0);
+      expect(approve.output).toContain('APPROVE');
+      // The report names the Issue and the version of it that was judged.
+      expect(approve.output).toContain('issue #7');
+      expect(approve.output).toContain('The requirements of the change');
+      // The baseline of the Issue is written by the completed review.
+      const baseline = path.join(home, 'requirements', 'owner', 'name', '7.json');
+      const stored = JSON.parse(await readFile(baseline, 'utf-8'));
+      expect(stored.number).toBe(7);
+      expect(stored.repository).toBe('owner/name');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
 
 it('tells the caller of a review what the verdict is', async () => {
   await withTempHome(async (home) => {

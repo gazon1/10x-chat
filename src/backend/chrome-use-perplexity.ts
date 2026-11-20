@@ -40,6 +40,14 @@ const COMPOSER = 'div[role="textbox"][contenteditable="true"]';
 const SUBMIT = 'button[aria-label="Submit"]';
 const CMD_TIMEOUT_FLOOR_MS = 5_000;
 
+/**
+ * The marker of a command that never ran.
+ *
+ * A chrome-use that could not be started created no session, so there is
+ * nothing to tear down; a command that ran may have created one.
+ */
+const NOT_STARTED = 'could not be started';
+
 interface ChromeJson {
   success?: boolean;
   data?: unknown;
@@ -201,7 +209,8 @@ export function createChromeUsePerplexityBackend(
     input?: string,
     submitAttempt = false,
   ): Promise<
-    { ok: true; json?: ChromeJson; result: ProcessResult } | { ok: false; outcome: FailureOutcome }
+    | { ok: true; json?: ChromeJson; result: ProcessResult }
+    | { ok: false; outcome: FailureOutcome; started: boolean }
   > => {
     // Respect the caller/request budget: never run a command longer than the
     // remaining deadline (a floor above it would violate timeoutMs).
@@ -222,11 +231,16 @@ export function createChromeUsePerplexityBackend(
             outcome: failure(
               'unknown_submission',
               'unknown',
-              `chrome-use could not be started (prompt may have been submitted): ${detail}`,
+              `chrome-use ${NOT_STARTED} (prompt may have been submitted): ${detail}`,
             ),
+            started: false,
           };
         }
-        return { ok: false, outcome: unavailable(`chrome-use could not be started: ${detail}`) };
+        return {
+          ok: false,
+          outcome: unavailable(`chrome-use ${NOT_STARTED}: ${detail}`),
+          started: false,
+        };
       }
       if (submitAttempt && !submitted) {
         return {
@@ -236,9 +250,14 @@ export function createChromeUsePerplexityBackend(
             'unknown',
             `Failed to start submit command (prompt may have been submitted): ${detail}`,
           ),
+          started: false,
         };
       }
-      return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
+      return {
+        ok: false,
+        outcome: classifyCommandError(detail, submitted, false),
+        started: false,
+      };
     }
     if (result.timedOut) {
       if (submitAttempt && !submitted) {
@@ -249,6 +268,7 @@ export function createChromeUsePerplexityBackend(
             'submitted',
             `command timed out (${sub[0] ?? 'chrome-use'}) - prompt may have been submitted`,
           ),
+          started: true,
         };
       }
       return {
@@ -258,6 +278,7 @@ export function createChromeUsePerplexityBackend(
           submitted,
           true,
         ),
+        started: true,
       };
     }
     const json = parseJson(result.stdout);
@@ -272,9 +293,10 @@ export function createChromeUsePerplexityBackend(
             'unknown',
             `Submit command failed (prompt may have been submitted): ${detail}`,
           ),
+          started: true,
         };
       }
-      return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
+      return { ok: false, outcome: classifyCommandError(detail, submitted, false), started: true };
     }
     if (result.code !== 0) {
       const detail =
@@ -288,11 +310,13 @@ export function createChromeUsePerplexityBackend(
             'unknown',
             `Submit command failed (prompt may have been submitted): ${detail || 'chrome-use failed'}`,
           ),
+          started: true,
         };
       }
       return {
         ok: false,
         outcome: classifyCommandError(detail || 'chrome-use failed', submitted, false),
+        started: true,
       };
     }
     if (json?.success !== true) {
@@ -305,6 +329,7 @@ export function createChromeUsePerplexityBackend(
             'unknown',
             `Submit command returned invalid result (prompt may have been submitted): ${detail || 'invalid chrome-use JSON envelope'}`,
           ),
+          started: true,
         };
       }
       return {
@@ -314,6 +339,7 @@ export function createChromeUsePerplexityBackend(
           submitted,
           false,
         ),
+        started: true,
       };
     }
     return { ok: true, json, result };
@@ -360,12 +386,14 @@ export function createChromeUsePerplexityBackend(
 
     let submitted = false;
     let partialText = '';
-    // A session exists only after the open command was issued. A request whose
-    // deadline expired before it must not touch the browser at all.
-    let sessionAttempted = false;
+    // A session exists only after the open command was issued and only when the
+    // process really started. A request whose deadline expired before the first
+    // command must not touch the browser at all, and a chrome-use that could not
+    // start created no session to tear down.
+    let sessionStarted = false;
 
     const cleanup = async (): Promise<void> => {
-      if (!sessionAttempted) return;
+      if (!sessionStarted) return;
       try {
         // Cleanup is lifecycle management: give it its own bounded budget so a
         // request timeout cannot starve tab/session teardown.
@@ -379,12 +407,15 @@ export function createChromeUsePerplexityBackend(
       let t = ensureTime(false);
       if (t) return t;
 
-      sessionAttempted = true;
       const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
       if (!opened.ok) {
+        // A chrome-use that never ran created no session: there is nothing to
+        // tear down. A command that ran may have created one.
+        sessionStarted = opened.started;
         known.set(request.requestId, { submission: opened.outcome.failure.submission });
         return opened.outcome;
       }
+      sessionStarted = true;
 
       await cmd(
         session,

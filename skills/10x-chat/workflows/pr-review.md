@@ -57,6 +57,18 @@ gh pr view <n> --json files -q '.files[].path'      # the changed files
 
 The reviewers get the PR number, the PR URL, the base and head SHA and the changed file list. **No publication happens here** — nothing is committed, nothing is pushed, no PR is created.
 
+#### The Issue that governs the change
+
+When the user names the Issue that governs the pull request, run the **pipeline** with `--issue`:
+
+```bash
+10x-chat review --pr <n> --issue <m>
+```
+
+The pipeline reads the Issue through `gh`, hashes its title and its body, and compares that version with the version of the last completed review of the Issue. The three reviewers and the verification get the **complete current description** of the Issue, the report names the exact version it judged, and a run whose Issue changed while it ran is incomplete — it never approves stale requirements.
+
+Do not judge the change against a remembered, a paraphrased or a cached Issue: read it, every time. The manual path below has no such guard — a manual review may say that it judged the requirements of the Issue, but it must not claim the freshness protection of the pipeline.
+
 #### B — a pushed branch without a pull request
 
 The base of the comparison is the **default branch of the repository** — resolve it, never assume `main`:
@@ -325,4 +337,5 @@ Write the report with the shared format in [report-format.md](report-format.md).
 - [ ] Each reported finding checked against the diff and the repository's checks.
 - [ ] Every check recorded with its command and result; nothing claimed without evidence.
 - [ ] For a local review: the report states that it was a local analysis, and the missing independent check is listed under *Not verified*.
+- [ ] For an Issue-linked review: the pipeline ran with `--issue`, and the report names the version of the Issue it judged.
 - [ ] One verdict: `APPROVE` or `REQUEST CHANGES`, plus remaining risks.
