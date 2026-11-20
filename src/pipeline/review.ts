@@ -703,8 +703,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         cwd: context.repoRoot,
         // The content comes from the commit under review, not from the disk: a
         // file that changes while the reviewers run must not reach the backend.
-        read: (file) =>
-          fileAtRevision(context.repoRoot, context.headSha, normalizeRepoPath(file)),
+        read: (file) => fileAtRevision(context.repoRoot, context.headSha, normalizeRepoPath(file)),
       });
       const withheld = context.changedFiles.filter((file) =>
         context.secretFiles.includes(file),
