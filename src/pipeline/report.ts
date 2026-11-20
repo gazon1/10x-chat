@@ -359,13 +359,15 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
     );
   }
   for (const step of run.steps) {
-    if (step.status === 'failed' || step.status === 'skipped') {
+    if (step.status === 'failed' || step.status === 'skipped' || step.status === 'unavailable') {
       lines.push(`- ${step.id} — ${literal(step.detail ?? step.status)}`);
     }
   }
   if (
     notVerified.length === 0 &&
-    run.steps.every((s) => s.status !== 'failed' && s.status !== 'skipped')
+    run.steps.every(
+      (s) => s.status !== 'failed' && s.status !== 'skipped' && s.status !== 'unavailable',
+    )
   ) {
     lines.push('- Nothing — every step of the pipeline ran and every finding was settled.');
   }
@@ -387,9 +389,11 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
         ? 'FAILED'
         : step?.status === 'skipped'
           ? 'SKIPPED'
-          : findings.length > 0
-            ? `${findings.length} finding(s)`
-            : 'no findings';
+          : step?.status === 'unavailable'
+            ? 'UNAVAILABLE'
+            : findings.length > 0
+              ? `${findings.length} finding(s)`
+              : 'no findings';
     lines.push(`| ${label} | ${provider} | ${verdictText} | ${cell(step?.detail ?? '')} |`);
   }
   lines.push('');

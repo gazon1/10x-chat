@@ -31,8 +31,9 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
+import { renderReviewReport } from '../src/pipeline/report.js';
 import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
-import type { ReviewContext } from '../src/pipeline/types.js';
+import type { ReviewContext, ReviewRun } from '../src/pipeline/types.js';
 
 const SOURCE = ['export function run(input: string) {', '  return exec(input);', '}'].join('\n');
 
@@ -2121,6 +2122,33 @@ describe('the review pipeline', () => {
     expect(run.findings[0].verification).toBe('rejected');
     expect(run.findings[0].evidence).toContain('exec(input)');
     expect(run.findings[0].verificationNote).toContain('the sink validates the input itself');
+  });
+
+  it('reports an unavailable step instead of an empty review', () => {
+    // A step that was unavailable did not run: the report must not tell the
+    // reader that every step of the pipeline ran and every finding was
+    // settled.
+    const run = {
+      id: 'a-review',
+      target: { kind: 'pr', number: 69, repo: 'gazon1/10x-chat' },
+      steps: [
+        { id: 'review-correctness', status: 'unavailable', detail: 'the backend was unavailable' },
+        { id: 'review-architecture', status: 'passed' },
+        { id: 'review-tests', status: 'passed' },
+      ],
+      findings: [],
+      decisions: [],
+      verdict: 'REQUEST CHANGES',
+      verdictReason: 'a step of the pipeline did not run',
+      report: '',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:00:01.000Z',
+    } as unknown as ReviewRun;
+
+    const report = renderReviewReport(run);
+    expect(report).toContain('UNAVAILABLE');
+    expect(report).toContain('- review-correctness — the backend was unavailable');
+    expect(report).not.toContain('every step of the pipeline ran');
   });
 
   it('reports a failed step instead of an empty review', async () => {
