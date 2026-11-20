@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -523,6 +524,83 @@ describe('the requirements of a review', () => {
     expect(baseline.hash).toBe(newer);
   });
 
+  it('keeps the newer baseline when two processes advance it at the same time', async () => {
+    await fakeGh({});
+    const newer = hashRequirements(ISSUE_TITLE, `${ISSUE_BODY} Newer.`);
+    // Two processes, not two calls of one process: the lock of the project is
+    // an abstract unix socket, and it is the kernel that gives the name to
+    // one process only.
+    const script = path.join(home, 'advance.mjs');
+    const newerMarker = path.join(home, 'newer-written');
+    const olderMarker = path.join(home, 'older-written');
+    const module = path
+      .resolve(import.meta.dirname, '..', 'src', 'pipeline', 'requirements.ts')
+      .replaceAll(path.sep, '/');
+    await writeFile(
+      script,
+      `const { writeFile } = await import('node:fs/promises');\n` +
+        `const { access } = await import('node:fs/promises');\n` +
+        `const { advanceBaseline, hashRequirements } = await import('file://${module}');\n` +
+        `const [observedAt, title, body, marker, waitFor] = process.argv.slice(2);\n` +
+        `const sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n` +
+        // The process waits for the observation of the other one, when it was
+        // told to wait: the older observation is written last, and it must not
+        // overwrite the newer one.
+        `if (waitFor) {\n` +
+        `  for (let i = 0; i < 600; i += 1) {\n` +
+        `    if (await access(waitFor).then(() => true, () => false)) break;\n` +
+        `    await sleep(50);\n` +
+        `  }\n` +
+        `}\n` +
+        `await advanceBaseline({\n` +
+        `  repository: 'owner/name',\n` +
+        `  number: 7,\n` +
+        `  url: 'https://github.com/owner/name/issues/7',\n` +
+        `  title,\n` +
+        `  body,\n` +
+        `  hash: hashRequirements(title, body),\n` +
+        `  status: 'initial',\n` +
+        `  observedAt,\n` +
+        `});\n` +
+        // The marker says that this process wrote its observation.
+        `await writeFile(marker, 'written');\n`,
+      'utf-8',
+    );
+
+    const run = (
+      observedAt: string,
+      body: string,
+      marker: string,
+      waitFor?: string,
+    ): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ['--import', 'tsx', script, observedAt, ISSUE_TITLE, body, marker, waitFor ?? ''],
+          {
+            cwd: path.resolve(import.meta.dirname, '..'),
+            env: { ...process.env, TEN_X_CHAT_HOME: home },
+            stdio: 'ignore',
+          },
+        );
+        child.on('error', reject);
+        child.on('exit', (code) =>
+          code === 0 ? resolve() : reject(new Error(`the process exited with ${code}`)),
+        );
+      });
+
+    // The newer observation is written first; the older one waits for it and
+    // is written last. The guard must hold between two processes.
+    const older = run('2026-01-01T00:00:00.000Z', ISSUE_BODY, olderMarker, newerMarker);
+    const newerProcess = run('2026-06-01T00:00:00.000Z', `${ISSUE_BODY} Newer.`, newerMarker);
+    await Promise.all([newerProcess, older]);
+
+    // The newer observation wins, although it was written first.
+    const baseline = JSON.parse(await readFile(baselineFile(), 'utf-8'));
+    expect(baseline.hash).toBe(newer);
+    expect(baseline.observedAt).toBe('2026-06-01T00:00:00.000Z');
+  });
+
   it('fails the collection when the stored baseline cannot be read', async () => {
     await fakeGh({});
     await mkdir(path.dirname(baselineFile()), { recursive: true });
@@ -696,9 +774,13 @@ describe('the requirements of a review', () => {
   it('gives up on a gh that never answers', async () => {
     await fakeGh({ issueHangs: true });
 
+    const started = Date.now();
     await expect(collectRequirements(7, 'owner/name', repo, { timeoutMs: 300 })).rejects.toThrow(
       /did not answer within/,
     );
+    // The timeout bounds the wait, and it bounds it promptly: the CLI is
+    // killed, and the run does not wait for the corpse of the process.
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it('leaves a review without an issue exactly as it was', async () => {
