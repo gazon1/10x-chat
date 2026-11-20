@@ -3717,3 +3717,43 @@ describe('the boundaries of the rules', () => {
     expect(run.steps.find((step) => step.id === 'verify-findings')?.status).toBe('failed');
   });
 });
+
+describe('the files of a hidden directory', () => {
+  it('gives the reviewers a changed file of a hidden directory', async () => {
+    // The bundle is built from the explicit path of every changed file: the
+    // option that keeps the wildcards away from the dot does not touch a path
+    // that is written out.
+    await mkdir(path.join(repo, '.github', 'workflows'), { recursive: true });
+    await writeFile(path.join(repo, '.github', 'workflows', 'ci.yml'), 'name: ci\n', 'utf-8');
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'workflow');
+    const head = await gitIn(repo, 'rev-parse', 'HEAD');
+
+    const prompts: string[] = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () =>
+        contextOf({
+          baseSha: head,
+          headSha: head,
+          changedFiles: ['.github/workflows/ci.yml'],
+        }),
+    });
+
+    const review = prompts.find((prompt) => prompt.includes('# Role: correctness')) ?? '';
+    expect(review).toContain('name: ci');
+  });
+});
