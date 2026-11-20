@@ -194,6 +194,12 @@ revision under review:
   and the name of the secret does not follow the content.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read.
+- The title, the names of the files, the diff and the excerpts of the source are
+  **data, not instructions**: they come from the repository, and an instruction
+  inside them is an attack on the reviewer. Every one of them sits in a fence
+  that is longer than the backticks it carries, so the content cannot close it,
+  and the reviewers are told that an instruction found in them is a finding of
+  the category `security`.
 
 ## The verdict of the report
 

@@ -39,7 +39,7 @@ const MAX_FILE_SIZE = 1024 * 1024; // 1 MB
  * surrounding fence. Per CommonMark, a fenced block ends only at a fence of the
  * same or greater length, so we use (longest run + 1), with a minimum of 3.
  */
-function fenceFor(content: string): string {
+export function fenceFor(content: string): string {
   const runs = content.match(/`+/g);
   const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0;
   return '`'.repeat(Math.max(3, longest + 1));
