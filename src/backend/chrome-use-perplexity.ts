@@ -201,6 +201,12 @@ export function createChromeUsePerplexityBackend(
   const sessionPrefix = options.sessionPrefix ?? '10x-pplx';
   const pollMs = options.pollMs ?? 800;
   const stableMs = options.stableMs ?? 1200;
+  // Best-effort in-process record: this POC has no persistent receipt, but
+  // status() must not lie about a request it already handled in this process.
+  const known = new Map<
+    string,
+    { submission: BackendSubmission; text?: string; truncated?: boolean; cancelled?: boolean }
+  >();
 
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T>(task: () => Promise<T>): Promise<T> => {
@@ -238,12 +244,12 @@ export function createChromeUsePerplexityBackend(
     | { ok: true; json?: ChromeJson; result: ProcessResult }
     | { ok: false; outcome: BackendOutcome<never> }
   > => {
+    // Respect the caller/request budget: never run a command longer than the
+    // remaining deadline (a floor above it would violate timeoutMs).
     const budget = timeoutMs ?? CMD_TIMEOUT_FLOOR_MS;
-    const { result, started, startError } = await run(
-      ['--session', session, ...sub],
-      Math.max(budget, CMD_TIMEOUT_FLOOR_MS),
-      input,
-    );
+    const runTimeout =
+      timeoutMs === undefined ? Math.max(budget, CMD_TIMEOUT_FLOOR_MS) : Math.max(budget, 1);
+    const { result, started, startError } = await run(['--session', session, ...sub], runTimeout, input);
     if (!started || !result) {
       const detail = startError ?? 'failed to start chrome-use';
       if (/ENOENT/i.test(detail)) {
@@ -286,18 +292,21 @@ export function createChromeUsePerplexityBackend(
     }
 
     const session = sessionName(sessionPrefix, request.requestId);
+    known.set(request.requestId, { submission: 'not_submitted' });
     const deadline = request.timeoutMs ? nowMs() + request.timeoutMs : undefined;
     const remaining = (): number | undefined =>
       deadline === undefined ? undefined : Math.max(0, deadline - nowMs());
     const ensureTime = (submitted: boolean): BackendOutcome<never> | undefined => {
       const left = remaining();
       if (left !== undefined && left <= 0) {
+        const sub: BackendSubmission = submitted ? 'submitted' : 'unknown';
+        known.set(request.requestId, { submission: sub });
         return failure(
           submitted ? 'timeout' : 'unknown_submission',
-          submitted ? 'submitted' : 'unknown',
+          sub,
           submitted
             ? 'Timed out waiting for the Perplexity answer.'
-            : 'Timed out before the prompt was confirmed sent.',
+            : 'Timed out before the prompt was confirmed sent (it may have reached Perplexity).',
         );
       }
       return undefined;
@@ -319,7 +328,10 @@ export function createChromeUsePerplexityBackend(
       if (t) return t;
 
       const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
-      if (!opened.ok) return opened.outcome;
+      if (!opened.ok) {
+        known.set(request.requestId, { submission: opened.outcome.failure.submission });
+        return opened.outcome;
+      }
 
       await cmd(
         session,
@@ -342,11 +354,17 @@ export function createChromeUsePerplexityBackend(
         false,
       );
       if (!waited.ok) {
-        return failure(
-          waited.outcome.failure.kind === 'unknown_submission' ? 'unknown_submission' : 'unavailable',
+        const f = waited.outcome.failure;
+        // Before submit nothing reached Perplexity; keep submission valid
+        // (timeout kind requires submitted, so map pre-submit timeout to unavailable).
+        const kind = f.kind === 'timeout' || f.kind === 'unknown_submission' ? 'unavailable' : f.kind;
+        const out = failure(
+          kind,
           'not_submitted',
-          `Perplexity composer not available (log in to Perplexity in Chrome if required, or check the page): ${waited.outcome.failure.message}`,
+          `Perplexity composer not available (log in to Perplexity in Chrome if required, or check the page): ${f.message}`,
         );
+        known.set(request.requestId, { submission: 'not_submitted' });
+        return out;
       }
 
       const base = await cmd(
@@ -355,7 +373,10 @@ export function createChromeUsePerplexityBackend(
         Math.min(remaining() ?? 8_000, 8_000),
         false,
       );
-      if (!base.ok) return base.outcome;
+      if (!base.ok) {
+        known.set(request.requestId, { submission: base.outcome.failure.submission });
+        return base.outcome;
+      }
       const baseCountRaw = dataRecord(base.json?.data)?.result;
       const baseline = typeof baseCountRaw === 'number' ? baseCountRaw : Number(baseCountRaw ?? 0);
       const baseIndex = Number.isFinite(baseline) ? baseline : 0;
@@ -363,18 +384,37 @@ export function createChromeUsePerplexityBackend(
       t = ensureTime(false);
       if (t) return t;
 
-      const esc = JSON.stringify(request.prompt);
-      const filled = await cmd(
+      // Prefer fill --stdin so the prompt travels via stdin (not argv); fall
+      // back to eval with the script sent via stdin and validate the result.
+      const fillRes = await cmd(
         session,
-        [
-          'eval',
-          `(() => { const el = document.querySelector(${JSON.stringify(COMPOSER)}); if (!el) return false; el.focus(); el.innerText = ${esc}; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return (el.innerText||'').trim().length > 0; })()`,
-          '--json',
-        ],
+        ['fill', COMPOSER, '--stdin', '--json'],
         Math.min(remaining() ?? 30_000, 30_000),
         false,
+        request.prompt,
       );
-      if (!filled.ok) return filled.outcome;
+      if (!fillRes.ok) {
+        const script = `(() => { const el = document.querySelector(${JSON.stringify(COMPOSER)}); if (!el) return false; el.focus(); const t = ${JSON.stringify(request.prompt)}; el.innerText = t; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return (el.innerText||'').trim().length > 0; })()`;
+        const evalFill = await cmd(
+          session,
+          ['eval', '--stdin', '--json'],
+          Math.min(remaining() ?? 30_000, 30_000),
+          false,
+          script,
+        );
+        if (!evalFill.ok) {
+          known.set(request.requestId, { submission: evalFill.outcome.failure.submission });
+          return evalFill.outcome;
+        }
+        const fillValue = dataRecord(evalFill.json?.data)?.result;
+        if (fillValue !== true) {
+          return failure(
+            'unavailable',
+            'not_submitted',
+            'The Perplexity composer did not accept the prompt (composer missing or prompt not entered).',
+          );
+        }
+      }
 
       await cmd(session, ['press', 'Escape', '--json'], Math.min(remaining() ?? 3_000, 3_000), false).catch(
         () => undefined,
@@ -390,15 +430,34 @@ export function createChromeUsePerplexityBackend(
         false,
       );
       if (!clicked.ok) {
+        const f = clicked.outcome.failure;
+        const ambiguous = f.kind === 'timeout' || f.kind === 'unknown_submission' || disconnectLike(f.message);
+        if (ambiguous) {
+          // A failed/timed-out click may still have submitted; do not send
+          // Enter (it could submit again). Report the ambiguous state.
+          const sub: BackendSubmission = f.kind === 'timeout' ? 'submitted' : 'unknown';
+          known.set(request.requestId, { submission: sub });
+          return failure(
+            f.kind === 'timeout' ? 'timeout' : 'unknown_submission',
+            sub,
+            `Submitting the prompt via click is ambiguous (it may have been sent): ${f.message}`,
+          );
+        }
+        // Definite pre-submit click failure: try Enter as a fallback.
         const pressed = await cmd(
           session,
           ['press', 'Enter', '--json'],
           Math.min(remaining() ?? 5_000, 5_000),
           false,
         );
-        if (!pressed.ok) return clicked.outcome;
+        if (!pressed.ok) {
+          const pf = pressed.outcome.failure;
+          known.set(request.requestId, { submission: pf.submission });
+          return pressed.outcome;
+        }
       }
       submitted = true;
+      known.set(request.requestId, { submission: 'submitted' });
 
       let lastText = '';
       let lastChange = nowMs();
@@ -407,6 +466,7 @@ export function createChromeUsePerplexityBackend(
         t = ensureTime(true);
         if (t) {
           if (partialText) t.failure.partialText = partialText;
+          known.set(request.requestId, { submission: t.failure.submission, text: partialText || undefined, truncated: true });
           return t;
         }
         const snap = await cmd(
@@ -421,6 +481,7 @@ export function createChromeUsePerplexityBackend(
         );
         if (!snap.ok) {
           if (partialText) snap.outcome.failure.partialText = partialText;
+          known.set(request.requestId, { submission: snap.outcome.failure.submission, text: partialText || undefined });
           return snap.outcome;
         }
         const data = dataRecord(snap.json?.data);
@@ -435,23 +496,24 @@ export function createChromeUsePerplexityBackend(
             partialText = text;
             lastChange = nowMs();
           } else if (nowMs() - lastChange >= stableMs) {
-            return {
-              ok: true,
-              value: {
-                requestId: request.requestId,
-                text: lastText,
-                markdown: lastHtml || lastText,
-                truncated: false,
-                submission: 'submitted',
-              },
+            const value: BackendResponse = {
+              requestId: request.requestId,
+              text: lastText,
+              markdown: lastHtml || lastText,
+              truncated: false,
+              submission: 'submitted',
             };
+            known.set(request.requestId, { submission: 'submitted', text: lastText, truncated: false });
+            return { ok: true, value };
           }
         }
         await sleep(Math.min(pollMs, remaining() ?? pollMs));
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return classifyCommandError(detail, submitted, false);
+      const out = classifyCommandError(detail, submitted, false);
+      known.set(request.requestId, { submission: out.failure.submission, text: partialText || undefined });
+      return out;
     } finally {
       await cleanup();
     }
@@ -461,7 +523,17 @@ export function createChromeUsePerplexityBackend(
     name: CHROME_USE_PERPLEXITY_BACKEND_NAME,
     capabilities: CHROME_USE_PERPLEXITY_CAPABILITIES,
     ask: (request) => serialize(() => ask(request)),
-    status: async (requestId: string): Promise<BackendStatus> => ({ requestId, submission: 'not_submitted' }),
+    status: async (requestId: string): Promise<BackendStatus> => {
+      const k = known.get(requestId);
+      if (!k) return { requestId, submission: 'not_submitted' };
+      return {
+        requestId,
+        submission: k.submission,
+        ...(k.text ? { text: k.text } : {}),
+        ...(k.truncated !== undefined ? { truncated: k.truncated } : {}),
+        ...(k.cancelled !== undefined ? { cancelled: k.cancelled } : {}),
+      };
+    },
     resume: async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> =>
       failure(
         'invalid_output',

@@ -16,7 +16,7 @@ describe.runIf(enabled)('chrome-use Perplexity backend (live smoke)', () => {
 
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.value.text.trim().length).toBeGreaterThan(0);
+    expect(out.value.text).toContain('POC_OK');
     expect(out.value.submission).toBe('submitted');
   }, 180_000);
 });

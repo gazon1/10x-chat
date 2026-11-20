@@ -51,6 +51,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
             const text = prosePolls >= 2 ? 'Paris is the capital of France.' : 'Paris is the';
             return ok({ result: { count: 1, text, html: `<p>${text}</p>` } });
           }
+          // best-effort overlay dismiss eval
           return ok({ result: 0 });
         }
         if (sub === 'fill') return ok();
@@ -74,6 +75,10 @@ describe('chrome-use Perplexity backend (POC)', () => {
     expect(fill?.args).toContain('--stdin');
     expect(fill?.input).toBe('Capital of France?');
     expect(calls.some((c) => c.args[2] === 'done')).toBe(true);
+
+    const status = await backend.status('req-1');
+    expect(status.submission).toBe('submitted');
+    expect(status.text).toContain('Paris');
   });
 
   it('reports unavailable when chrome-use cannot be started', async () => {
@@ -95,8 +100,12 @@ describe('chrome-use Perplexity backend (POC)', () => {
     const runner: ProcessRunner = {
       run: async (_cmd, args) => {
         const sub = args[2];
-        if (sub === 'open' || sub === 'wait' || sub === 'eval' || sub === 'fill' || sub === 'press')
-          return ok(sub === 'eval' ? { result: 0 } : {});
+        if (sub === 'open' || sub === 'wait' || sub === 'fill' || sub === 'press') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          return ok({ result: 0 });
+        }
         if (sub === 'click') {
           submitted = true;
           return ok();
@@ -112,6 +121,57 @@ describe('chrome-use Perplexity backend (POC)', () => {
     if (out.ok) return;
     expect(out.failure.kind).toBe('unknown_submission');
     expect(out.failure.submission).toBe('unknown');
+  });
+
+  it('treats ambiguous click failure as unknown submission and does not press Enter', async () => {
+    const calls: Call[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        const sub = args[2];
+        if (sub === 'open' || sub === 'wait' || sub === 'fill') return ok();
+        if (sub === 'eval') return ok({ result: 0 });
+        if (sub === 'press') return ok();
+        if (sub === 'click') return failJson('relay connection lost');
+        if (sub === 'done') return ok();
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('unknown_submission');
+    expect(out.failure.submission).toBe('unknown');
+    expect(calls.filter((c) => c.args[2] === 'press' && c.args[3] === 'Enter')).toHaveLength(0);
+  });
+
+  it('fails without submit when fill fallback reports prompt not entered', async () => {
+    const calls: Call[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        const sub = args[2];
+        if (sub === 'open' || sub === 'wait') return ok();
+        if (sub === 'fill') return failJson('fill failed');
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script === '--stdin') return ok({ result: false });
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          return ok({ result: 0 });
+        }
+        if (sub === 'click' || sub === 'press') return ok();
+        if (sub === 'done') return ok();
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stableMs: 0 });
+    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('unavailable');
+    expect(out.failure.submission).toBe('not_submitted');
+    expect(calls.some((c) => c.args[2] === 'click')).toBe(false);
   });
 
   it('rejects attachments and model selection explicitly', async () => {

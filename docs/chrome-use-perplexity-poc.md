@@ -68,16 +68,19 @@ requested capability.
   (log in in Chrome if required).
 - **Cleanup:** every ask uses a dedicated `chrome-use` session name and always
   attempts `chrome-use … done` in `finally` to close tabs it opened.
-- **Timeout:** respects `request.timeoutMs`; if the prompt was confirmed sent,
-  timeout is reported as `timeout/submitted`, otherwise as an unknown pre-submit
-  timeout (never retried automatically).
+- **Timeout:** respects `request.timeoutMs` without exceeding it per command; if the
+  prompt was confirmed sent, timeout is reported as `timeout/submitted`, otherwise
+  as an unknown/unavailable pre-submit failure (never retried automatically).
 - **Cancellation:** capability `false`; `cancel` returns `{cancelled:false}`.
 - **Browser disconnect / chrome-use unavailable:** start/connect failures before
-  submit → `unavailable/not_submitted`. Loss of connection after submit →
-  `unknown_submission/unknown` with an explicit message (prompt may have been
-  submitted; do not resend blindly).
+  submit → `unavailable/not_submitted`. Ambiguous submit/connection loss after a
+  possible send → `unknown_submission/unknown` (no automatic retry/resend).
+  Definite post-submit loss while waiting → `unknown_submission/unknown` with an
+  explicit message. The prompt is delivered via `fill --stdin` (argv-safe) with
+  a stdin-based eval fallback; a failed fill is not submitted.
 - **Conversation reuse:** not implemented in this POC; each ask opens the
   landing page in a fresh chrome-use session (explicitly declared unsupported).
+  `status()` reports in-process submission state only (no persistent receipt).
 
 ## Comparison with existing Playwright provider path
 
