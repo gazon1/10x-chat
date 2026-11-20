@@ -19,7 +19,7 @@ function positiveInteger(raw: string): number | undefined {
 export function createReviewCommand(): Command {
   const cmd = new Command('review')
     .description(
-      'Run a review pipeline over a pull request, a branch or a diff — the pipeline never publishes to GitHub',
+      'Run a review pipeline over a pull request or a branch — the reviewers read the change on GitHub, and the pipeline never publishes to GitHub',
     )
     .option('--pr <number>', 'The pull request to review (the metadata comes from the gh CLI)')
     .option('--base <ref>', 'The base of the comparison (default: the default branch of origin)')

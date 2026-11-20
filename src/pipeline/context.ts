@@ -1,15 +1,11 @@
 import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import fg from 'fast-glob';
 import { SECRET_EXCLUDES } from '../core/bundle.js';
 import type { ReviewContext, ReviewTarget } from './types.js';
 
-/** The bound of the diff of the bundle — a bigger change is cut, not hidden. */
+/** The bound of the diff of a change that has no page on GitHub. */
 export const MAX_DIFF_CHARS = 120_000;
-
-/** The bound of the files of the bundle. */
-export const MAX_CONTEXT_FILES = 25;
 
 interface CommandResult {
   stdout: string;
@@ -78,6 +74,24 @@ export function repositoryOf(remoteUrl: string): string {
   const url = ssh ? ssh[1] : trimmed.replace(/^[a-z+]+:\/\//, '').replace(/^[^/]+\//, '');
   const parts = url.split('/').filter((part) => part !== '');
   return parts.length >= 2 ? `${parts[parts.length - 2]}/${parts[parts.length - 1]}` : '';
+}
+
+/**
+ * The web page of a repository — `undefined` when the remote is not a URL.
+ *
+ * The reviewers read the change on GitHub, so the page is where the change is.
+ * A local path of a remote (`/tmp/repo`, `../repo`) is no page: a change of
+ * such a repository is reviewed from its diff.
+ */
+export function webRepositoryUrl(remoteUrl: string): string | undefined {
+  const trimmed = remoteUrl.trim().replace(/\.git$/, '');
+  // `git@github.com:owner/name` — the form of a remote over ssh.
+  const scp = /^[^@/]+@([^:/]+):(.+)$/.exec(trimmed);
+  if (scp) return `https://${scp[1]}/${scp[2]}`;
+  // `https://host/owner/name` and `ssh://git@host/owner/name`.
+  const url = /^[a-z+]+:\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/i.exec(trimmed);
+  if (url) return `https://${url[1]}/${url[2]}`;
+  return undefined;
 }
 
 /**
@@ -218,6 +232,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   const repoRoot = await git(['rev-parse', '--show-toplevel'], cwd);
   const remoteUrl = await git(['remote', 'get-url', 'origin'], cwd).catch(() => '');
   const repository = repositoryOf(remoteUrl) || repoRoot;
+  const repositoryUrl = webRepositoryUrl(remoteUrl);
 
   let baseRef: string;
   let baseSha: string;
@@ -244,9 +259,8 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     title = await git(['log', '-1', '--format=%s', headSha], cwd).catch(() => '');
   }
 
-  // The bundle and the evidence of the verification are read from the
-  // checkout: the checkout must be the revision under review, or they are the
-  // evidence of the wrong code.
+  // The evidence of the verification is read from the checkout: the checkout
+  // must be the revision under review, or it is the evidence of the wrong code.
   const checkoutSha = await git(['rev-parse', 'HEAD^{commit}'], cwd);
   if (checkoutSha !== headSha) {
     throw new Error(
@@ -261,12 +275,31 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     );
   }
   // A file whose flag hides its modification from the status is not the file
-  // of the revision: the bundle and the evidence are read from the disk.
+  // of the revision: the evidence is read from the disk.
   const hidden = await modifiedBehindTheFlag(repoRoot, headSha);
   if (hidden.length > 0) {
     throw new Error(
       `The checkout hides changes of ${hidden.join(', ')} behind a git flag (skip-worktree or assume-unchanged) — the review reads the files of the disk, and they must be the ones of the head.`,
     );
+  }
+
+  // The reviewers read the change on GitHub, so the commits of the comparison
+  // must be there. A comparison of a commit that `origin` does not have shows
+  // nothing, and a review of nothing reads like a clean review. A pull request
+  // is on GitHub by its own definition.
+  if (repositoryUrl && prUrl === undefined) {
+    for (const ref of [
+      { name: baseRef, sha: baseSha },
+      { name: headRef, sha: headSha },
+    ]) {
+      const branches = await git(['branch', '-r', '--contains', ref.sha], cwd).catch(() => '');
+      if (branches === '') {
+        throw new Error(
+          `The commit of ${ref.name} (${ref.sha.slice(0, 7)}) is not on origin — push it first` +
+            ` (git push origin ${ref.name.replace(/^origin\//, '')}): the reviewers read the change on GitHub.`,
+        );
+      }
+    }
   }
 
   // The merge base is the real difference: a branch that lags behind its base
@@ -336,10 +369,15 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     ...new Set([...tracked.filter((file) => !readable.has(file)), ...baseSecret, ...inherited]),
   ];
 
-  const diffOutput = await git(
-    ['diff', range, '--', ':(top)**', ...secretPathspecs(), ...literalExcludes(inherited)],
-    cwd,
-  );
+  // The diff is the fallback of a change that has no page on GitHub: a
+  // reviewer that can open the change reads it itself, and a pasted diff only
+  // burns the window of the model — a long one is refused outright.
+  const diffOutput = repositoryUrl
+    ? ''
+    : await git(
+        ['diff', range, '--', ':(top)**', ...secretPathspecs(), ...literalExcludes(inherited)],
+        cwd,
+      );
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
     ? `${diffOutput.slice(0, MAX_DIFF_CHARS)}\n\n[the diff was cut here — ${diffOutput.length - MAX_DIFF_CHARS} characters are missing]`
@@ -348,6 +386,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   return {
     repoRoot,
     repository,
+    ...(repositoryUrl ? { repositoryUrl } : {}),
     ...(pr !== undefined ? { pr } : {}),
     ...(prUrl ? { prUrl } : {}),
     ...(title ? { title } : {}),
@@ -365,64 +404,9 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
 }
 
 /**
- * The files of the bundle: the changed files, bounded.
- *
- * The diff already carries the change — the files are the context around it.
- *
- * The content of a file that may hold a secret is never in the bundle: the
- * name of such a file is in the changed files, but the file itself is not.
- */
-export function contextFiles(context: ReviewContext): string[] {
-  return context.changedFiles
-    .filter((file) => !context.secretFiles.includes(file))
-    .slice(0, MAX_CONTEXT_FILES);
-}
-
-/**
- * The patterns of the bundle.
- *
- * A name of a file is a name, not a pattern: `src/[id].ts` and a name that
- * starts with `!` would be read by the glob as something else entirely.
- */
-export function bundlePatterns(files: string[]): string[] {
-  return files.map((file) => `./${fg.escapePath(file)}`);
-}
-
-/**
- * The convention files of the repository — the ones that are there.
- *
- * The reviewers are told to read them; a backend that cannot browse the
- * repository must find them in the bundle.
- *
- * A convention file is a file of the revision under review: it is taken from
- * the commit, not from the disk. An untracked `AGENTS.md` of the checkout is
- * no convention of the repository — it is a file that nobody committed, and it
- * would steer the reviewers away from the change.
- */
-export async function conventionFiles(repoRoot: string, headSha: string): Promise<string[]> {
-  const names = ['AGENTS.md', 'CONTRIBUTING.md', 'README.md'];
-  const found: string[] = [];
-  for (const name of names) {
-    const listed = await git(
-      ['ls-tree', '--name-only', headSha, '--', `:(literal)${name}`],
-      repoRoot,
-    ).catch(() => '');
-    if (
-      listed
-        .split('\n')
-        .map((line) => line.trim())
-        .includes(name)
-    ) {
-      found.push(`./${name}`);
-    }
-  }
-  return found;
-}
-
-/**
  * The pathspecs of the files that may hold a secret.
  *
- * The patterns are the patterns of the bundle — git reads them as a glob.
+ * The patterns are the patterns of the secrets — git reads them as a glob.
  */
 function secretPathspecs(): string[] {
   return SECRET_EXCLUDES.map((pattern) => `:(exclude,glob)${pattern}`);
