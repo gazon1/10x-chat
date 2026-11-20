@@ -57,7 +57,8 @@ const FAILURE_KIND_OF: Record<string, KnowledgeFailureKind> = {
  *
  * Every other code — and every answer without a code — leaves the state of a
  * mutation unknown: the request may have been executed before the answer went
- * wrong.
+ * wrong. A rate limit is not a proof either: the command may have executed
+ * one step and been refused on the next one.
  */
 const DEFINITE_REFUSALS = new Set([
   'AUTH_ERROR',
@@ -65,7 +66,6 @@ const DEFINITE_REFUSALS = new Set([
   'CONFIG_ERROR',
   'NOTEBOOK_LIMIT',
   'NOT_FOUND',
-  'RATE_LIMITED',
 ]);
 
 /** Is the value a JSON object? */

@@ -88,4 +88,26 @@ describe('the knowledge command (CLI)', () => {
     expect(res.code).toBe(1);
     expect(res.stderr).toMatch(/Invalid --timeout value/);
   });
+
+  it('says that a mutation with an unknown state may have run', async () => {
+    const res = await runCli(
+      [
+        'knowledge',
+        'sources',
+        'add',
+        '--notebook',
+        'nb1',
+        '--url',
+        'https://example.com',
+        '--json',
+      ],
+      await stubEnv('{"source":{"title":"no id"}}'),
+    );
+
+    expect(res.code).toBe(1);
+    const envelope = JSON.parse(res.stdout);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.kind).toBe('invalid_output');
+    expect(envelope.error.mayHaveRun).toBe(true);
+  });
 });

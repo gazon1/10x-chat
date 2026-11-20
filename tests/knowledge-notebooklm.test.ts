@@ -433,6 +433,23 @@ describe('the NotebookLM provider', () => {
       expect(outcome.failure.mayHaveRun).toBeUndefined();
     }
   });
+
+  it('does not treat a rate limit as a proof that the mutation never ran', async () => {
+    const { runner } = fakeRunner([
+      ok({ error: true, code: 'RATE_LIMITED', message: 'Rate limited. Retry after 30s.' }),
+    ]);
+    const provider = createNotebookLmProvider({ runner });
+
+    const outcome = await provider.addSource('nb1', 'https://example.com');
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure.kind).toBe('rate_limited');
+      // The command may have executed one step and been refused on the next
+      // one: the source may be there.
+      expect(outcome.failure.mayHaveRun).toBe(true);
+    }
+  });
 });
 
 describe('the registry of the knowledge providers', () => {

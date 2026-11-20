@@ -112,7 +112,9 @@ A failure that carries `mayHaveRun: true` is an operation that may have reached
 NotebookLM — a mutation that timed out, or one that answered with something
 unexpected. It must not be sent again blind: the provider never retries a
 mutation by itself. A refusal that never reached the server (no session, a bad
-request, a quota) carries no such flag — the operation can be sent again.
+request, a quota) carries no such flag — the operation can be sent again. A
+rate limit is not such a proof either: the command may have executed one step
+and been refused on the next one, so a rate-limited mutation carries the flag.
 
 ## The state of the provider
 
