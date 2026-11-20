@@ -1332,7 +1332,8 @@ async function assessImprovements(options: {
   }
   // A malformed entry is not a recommendation: the answer is read, and the
   // invalid parts are named instead of being turned into advice.
-  const detail = parsed.invalid.length > 0 ? `${parsed.invalid.length} invalid recommendation(s)` : undefined;
+  const detail =
+    parsed.invalid.length > 0 ? `${parsed.invalid.length} invalid recommendation(s)` : undefined;
   return {
     status: 'completed',
     recommendations: parsed.recommendations,

@@ -467,7 +467,9 @@ function improvementsSection(improvements: ReviewImprovements | undefined): stri
     if (improvements.recommendations.length === 0) {
       lines.push('No follow-up improvements recommended.');
     } else {
-      lines.push('| # | Priority | Recommendation | Rationale | Evidence | Benefit | Scope | Existing solution | Separate Issue/PR |');
+      lines.push(
+        '| # | Priority | Recommendation | Rationale | Evidence | Benefit | Scope | Existing solution | Separate Issue/PR |',
+      );
       lines.push('|---|---|---|---|---|---|---|---|---|');
       improvements.recommendations.forEach((recommendation, index) => {
         lines.push(

@@ -4369,7 +4369,6 @@ describe('the boundaries of the rules', () => {
   });
 });
 
-
 describe('the advisory follow-up improvements', () => {
   const RECOMMENDATIONS = [
     {
@@ -4432,9 +4431,7 @@ describe('the advisory follow-up improvements', () => {
     expect(run.improvements?.recommendations[0].evidence.length).toBeGreaterThan(0);
     // Recommendations are not findings.
     expect(run.findings).toHaveLength(1);
-    expect(
-      run.findings.some((finding) => finding.title === RECOMMENDATIONS[0].title),
-    ).toBe(false);
+    expect(run.findings.some((finding) => finding.title === RECOMMENDATIONS[0].title)).toBe(false);
     expect(run.report).toContain('## Follow-up improvements');
     expect(run.report).toContain('Extract the prompt builder');
     expect(run.report).toContain('RECOMMENDED');
@@ -4531,7 +4528,10 @@ describe('the advisory follow-up improvements', () => {
 
     const saved = JSON.parse(
       await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
-    ) as { improvements?: { status: string; recommendations: { title: string }[] }; findings: unknown[] };
+    ) as {
+      improvements?: { status: string; recommendations: { title: string }[] };
+      findings: unknown[];
+    };
     expect(saved.improvements?.status).toBe('completed');
     expect(saved.improvements?.recommendations[0].title).toBe('Extract the prompt builder');
     expect(saved.findings).toEqual([]);

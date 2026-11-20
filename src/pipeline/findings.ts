@@ -1095,7 +1095,10 @@ export function parseImprovementRecommendations(text: string): ParsedImprovement
   if (!Array.isArray(record.recommendations)) {
     return {
       recommendations: [],
-      invalid: ['the answer carries a recommendations field that is not a list of recommendations', ...notes],
+      invalid: [
+        'the answer carries a recommendations field that is not a list of recommendations',
+        ...notes,
+      ],
       missing: false,
     };
   }
