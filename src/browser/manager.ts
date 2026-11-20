@@ -48,9 +48,14 @@ export interface BrowserSession {
 }
 
 const ownedSessions = new Set<BrowserSession>();
+let pendingLaunches = 0;
 
 export function hasOwnedBrowserSessions(): boolean {
   return ownedSessions.size > 0;
+}
+
+export function hasPendingBrowserLaunches(): boolean {
+  return pendingLaunches > 0;
 }
 
 function trackOwnedSession(session: BrowserSession): BrowserSession {
@@ -81,14 +86,20 @@ export async function closeOwnedBrowserSessions(): Promise<void> {
 }
 
 /**
- * Clean up the browser resources this process owns on exit.
+ * Clean up the browser resources this process owns or is opening on exit.
  *
  * Only the sessions this process opened are closed. The shared daemon is
  * stopped only through its own safety barrier, so a daemon used by another
  * invocation is never terminated.
  */
 export async function cleanupBrowserOnProcessExit(): Promise<void> {
-  if (!hasOwnedBrowserSessions()) return;
+  if (ownedSessions.size === 0 && pendingLaunches === 0) return;
+  // Wait for in-flight launches so a session created for this process can be
+  // registered and closed; unrelated commands never reach this point.
+  const deadline = Date.now() + 15_000;
+  while (pendingLaunches > 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
   await closeOwnedBrowserSessions().catch(() => {});
   await requestDaemonStop().catch(() => {});
 }
@@ -186,15 +197,20 @@ async function finalizeDebug(
 export async function launchBrowser(opts: LaunchOptions): Promise<BrowserSession> {
   const { profileMode = 'shared', persistent = false, profile } = opts;
 
-  if (profile || profileMode === 'isolated') {
-    return launchIsolatedBrowser(opts);
-  }
+  pendingLaunches++;
+  try {
+    if (profile || profileMode === 'isolated') {
+      return await launchIsolatedBrowser(opts);
+    }
 
-  if (persistent) {
-    return launchSharedPersistentBrowser(opts);
-  }
+    if (persistent) {
+      return await launchSharedPersistentBrowser(opts);
+    }
 
-  return launchSharedBrowser(opts);
+    return await launchSharedBrowser(opts);
+  } finally {
+    pendingLaunches--;
+  }
 }
 
 /**

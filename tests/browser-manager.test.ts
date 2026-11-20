@@ -73,11 +73,12 @@ vi.mock('../src/browser/diagnostics.js', async () => {
   };
 });
 
-import { requestDaemonStop } from '../src/browser/daemon.js';
+import { launchSharedBrowserSession, requestDaemonStop } from '../src/browser/daemon.js';
 import {
   cleanupBrowserOnProcessExit,
   closeOwnedBrowserSessions,
   hasOwnedBrowserSessions,
+  hasPendingBrowserLaunches,
   launchBrowser,
 } from '../src/browser/manager.js';
 
@@ -185,12 +186,47 @@ describe('browser session ownership cleanup', () => {
   });
 
   it('does not stop a daemon used by another invocation when an unrelated command exits', async () => {
-    // Commands that never opened a browser own no session. Their process-exit
-    // cleanup must not stop the shared daemon (including one busy with another
-    // invocation's session).
+    // Commands that never opened a browser own no session and have no launch in
+    // progress. Their process-exit cleanup must never touch the shared daemon,
+    // so a daemon busy with another invocation's active session stays running.
     expect(hasOwnedBrowserSessions()).toBe(false);
+    expect(hasPendingBrowserLaunches()).toBe(false);
     await cleanupBrowserOnProcessExit();
     expect(requestDaemonStop).not.toHaveBeenCalled();
+  });
+
+  it('cleans up an owned shared session whose launch is still in progress on exit', async () => {
+    const sharedClose = vi.fn(async () => {});
+    let resolveLaunch!: (value: {
+      context: unknown;
+      page: unknown;
+      close: () => Promise<void>;
+    }) => void;
+    vi.mocked(launchSharedBrowserSession).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLaunch = resolve;
+      }) as never,
+    );
+
+    const sessionPromise = launchBrowser({ provider: 'chatgpt', operation: 'chat' });
+    // The launch is in progress: nothing is owned yet, but this process must
+    // not be treated as an unrelated command.
+    expect(hasOwnedBrowserSessions()).toBe(false);
+    expect(hasPendingBrowserLaunches()).toBe(true);
+
+    const cleanupPromise = cleanupBrowserOnProcessExit();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(requestDaemonStop).not.toHaveBeenCalled();
+
+    resolveLaunch({ context: mocks.context, page: mocks.page, close: sharedClose });
+    await sessionPromise;
+    await cleanupPromise;
+
+    expect(sharedClose).toHaveBeenCalledTimes(1);
+    expect(requestDaemonStop).toHaveBeenCalledTimes(1);
+    expect(hasOwnedBrowserSessions()).toBe(false);
+    expect(hasPendingBrowserLaunches()).toBe(false);
   });
 
   it('closes an owned isolated session and asks the daemon barrier on exit', async () => {
@@ -207,7 +243,6 @@ describe('browser session ownership cleanup', () => {
 
   it('closes an owned shared daemon session and asks the daemon barrier on exit', async () => {
     const sharedClose = vi.fn(async () => {});
-    const { launchSharedBrowserSession } = await import('../src/browser/daemon.js');
     vi.mocked(launchSharedBrowserSession).mockResolvedValue({
       context: mocks.context as never,
       page: mocks.page as never,
