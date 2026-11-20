@@ -163,7 +163,13 @@ prose introduces as an example — "for example", "a sample answer", "e.g." —
 is not the answer and never passes as one, not even when it is the last
 payload of the text: it carries the entries of the example and not the
 entries the reviewer found. An answer that carries nothing but an example has
-not answered, and the step of the reviewer fails. The prose that introduces a
+not answered, and the step of the reviewer fails. The word must introduce the
+payload that follows it: the marker and the payload belong to the same sentence,
+and no full stop lies between them. A sentence that talks about an example of
+the problem, and not of the format of the answer, says nothing about the payload
+that comes after it — "one example of this problem is the missing validation.
+Here are my actual findings:" introduces the answer, not an example. The prose
+that introduces a
 payload is the prose between it and the payload before it: a word of a payload
 says nothing about the payload that follows it. A preamble that only names
 the format — "the format I use is" — introduces no example: the payload that

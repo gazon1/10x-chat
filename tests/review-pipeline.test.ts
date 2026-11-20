@@ -3411,6 +3411,43 @@ describe('the parsing of the answers', () => {
     expect(parsed.findings[0].title).toBe(FINDING.title);
   });
 
+  it('does not take a mention of an example for the introduction of the answer', () => {
+    // The prose talks about an example of the problem and then introduces the
+    // answer: a word of an earlier sentence says nothing about the payload
+    // that follows it, and the answer is not lost.
+    const answer = [
+      'One example of this problem is the missing validation in the previous implementation.',
+      'Here are my actual findings:',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.invalid).toEqual([]);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].title).toBe(FINDING.title);
+  });
+
+  it('takes a payload that a label with a full stop introduces for an example', () => {
+    // The label of the payload ends with a full stop: the marker and the
+    // payload are still of the same sentence, and the payload is an example.
+    const answer = [
+      'Here is an example of the format.',
+      JSON.stringify({ findings: [FINDING] }),
+    ].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(parsed.invalid[0]).toContain('no JSON payload of findings');
+  });
+
+  it('takes a payload that an abbreviation introduces for an example', () => {
+    // The abbreviation carries its own full stop: the marker and the payload
+    // are still of the same sentence, and the payload is an example.
+    const answer = ['e.g.:', JSON.stringify({ findings: [FINDING] })].join('\n');
+    const parsed = parseReviewerFindings(answer, 'correctness');
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.invalid).toHaveLength(1);
+  });
+
   it('keeps an answer that repeats the example', () => {
     // The example and the answer carry the same value: the example does not
     // erase the answer, and the answer comes last.

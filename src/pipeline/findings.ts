@@ -822,6 +822,14 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * made, or the audit of the decisions would pass on an answer that never
  * answered.
  *
+ * The word must introduce the payload that follows it: the marker and the
+ * payload belong to the same sentence, and no full stop, exclamation mark or
+ * question mark lies between them. A sentence that talks about an example of
+ * the problem, and not of the format of the answer, says nothing about the
+ * payload that comes after it — "one example of this problem is the missing
+ * validation. Here are my actual findings:" introduces the answer, not an
+ * example.
+ *
  * A preamble that only names the format — "the format I use is" — introduces
  * no example: the payload that follows it may be the answer itself.
  *
@@ -829,11 +837,27 @@ export function parseReviewerDecisions(text: string): ParsedDecisions {
  * a payload says nothing about the payload that follows it.
  */
 function introducesAsExample(prose: string): boolean {
-  return EXAMPLE_WORDS.test(prose);
+  // The abbreviations carry their own full stops: they are masked before the
+  // prose is read, so that they do not end a sentence.
+  const masked = prose.replace(/\be\.g\./gi, EXAMPLE_EG).replace(/\bi\.e\./gi, EXAMPLE_IE);
+  const markers = [...masked.matchAll(EXAMPLE_PATTERN)];
+  const last = markers.at(-1);
+  if (!last) return false;
+  // The full stop that ends the label of the payload is not a sentence of its
+  // own: only the punctuation that lies between the marker and the payload
+  // tells that another sentence came in between.
+  const between = masked.slice(last.index + last[0].length).replace(/[\s.!?]+$/, '');
+  return !/[.!?]/.test(between);
 }
 
 /** The words that introduce an example of the format of an answer. */
-const EXAMPLE_WORDS = /\b(example|examples|sample)\b|e\.g\./i;
+const EXAMPLE_PATTERN = /\b(example|examples|sample)\b|\bexampleabbreviation\b/gi;
+
+/** The abbreviation that introduces an example. */
+const EXAMPLE_EG = 'exampleabbreviation';
+
+/** The abbreviation that carries a full stop but introduces no example. */
+const EXAMPLE_IE = 'ieabbreviation';
 
 /**
  * The payload of the answer — the last payload of the text.
