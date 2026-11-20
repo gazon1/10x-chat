@@ -285,6 +285,11 @@ revision under review:
   a tag or a link of a finding is shown as text and never becomes markup of
   the report. A bare URL is a link of a viewer that opens the report: it is
   escaped as well, and it stays text.
+- The metadata of the context is **data in the report** too: the name of the
+  repository, the name of the branch and the URL of the pull request come from
+  the repository, and they are escaped the same way, so a name that carries
+  the markup of Markdown is shown as text and never becomes markup of the
+  report.
 - The identifier of a run is a **name, not a path**: it names the directory of
   the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
   a `..` is refused the way a name of a profile is refused.

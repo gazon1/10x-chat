@@ -250,11 +250,11 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const lines: string[] = [];
   lines.push(`# PR review — ${literal(subject)}`);
   lines.push('');
-  lines.push(`- Repository: ${context?.repository ?? 'unknown'}`);
-  lines.push(`- Target: ${target}`);
+  lines.push(`- Repository: ${literal(context?.repository ?? 'unknown')}`);
+  lines.push(`- Target: ${literal(target)}`);
   lines.push(
     context
-      ? `- Base → Head: ${context.baseRef} (${context.baseSha}) → ${context.headRef} (${context.headSha})`
+      ? `- Base → Head: ${literal(context.baseRef)} (${context.baseSha}) → ${literal(context.headRef)} (${context.headSha})`
       : '- Base → Head: unknown — the context could not be collected',
   );
   lines.push(`- Reviewed at: ${run.finishedAt}`);

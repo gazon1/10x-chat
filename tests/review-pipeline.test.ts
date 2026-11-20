@@ -656,6 +656,31 @@ describe('the review pipeline', () => {
     expect(run.report).toContain('https\\://attacker.example');
   });
 
+  it('keeps the markup of Markdown of the context out of the report', async () => {
+    // The metadata of the context comes from the repository: a name of a
+    // branch or a name of a repository is text of the report, not markup of
+    // it.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () =>
+        contextOf({
+          repository: 'owner/name](https://attacker.example)',
+          headRef: 'feature *bold*',
+        }),
+    });
+
+    expect(run.report).not.toContain('](https://attacker.example)');
+    expect(run.report).not.toContain('feature *bold*');
+    expect(run.report).toContain('owner/name\\]');
+  });
+
   it('clears the C1 control characters of a reviewer from the report', async () => {
     // The 8-bit introducers drive a terminal as well: the CSI of U+009B moves
     // the cursor of the reader of the report.
