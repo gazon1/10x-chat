@@ -82,7 +82,9 @@ export async function runBackendChat(
   }
   // An inherited default model must not be forced onto a backend that has no
   // model selection — only an explicit --model is rejected above.
-  const model = backend.capabilities.modelSelection ? (options.model ?? config.defaultModel) : undefined;
+  const model = backend.capabilities.modelSelection
+    ? (options.model ?? config.defaultModel)
+    : undefined;
 
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 

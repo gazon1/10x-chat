@@ -14,14 +14,14 @@ Chosen after checking the capability matrix (`docs/capability-matrix.md`) and
 the documented `chrome-use` interface (`chrome-use skills get core`): smallest
 capability surface and fewest special cases among non-ChatGPT providers.
 
-| Provider | Attach | Model | Stream | Cancel | Conv. reuse | Images | Special cases |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| perplexity | no | no | poll | no | no (URL id only) | no | bot-protected/headed in Playwright; works signed out |
-| deepseek | no | toggle | poll | no | no | no | DeepThink toggle (model selection) |
-| claude | yes | picker | poll | no | no | no | headed-only, attachments, thinking strip |
-| grok | yes | picker | poll | no | no | yes | attachments + image output |
-| gemini | yes | modes | poll | no | no | yes | modes/tools, Deep Think waits, images |
-| chatgpt | — | — | — | — | — | — | out of scope (use `chatgpt-use`) |
+| Provider   | Attach | Model  | Stream | Cancel | Conv. reuse      | Images | Special cases                                        |
+| ---------- | ------ | ------ | ------ | ------ | ---------------- | ------ | ---------------------------------------------------- |
+| perplexity | no     | no     | poll   | no     | no (URL id only) | no     | bot-protected/headed in Playwright; works signed out |
+| deepseek   | no     | toggle | poll   | no     | no               | no     | DeepThink toggle (model selection)                   |
+| claude     | yes    | picker | poll   | no     | no               | no     | headed-only, attachments, thinking strip             |
+| grok       | yes    | picker | poll   | no     | no               | yes    | attachments + image output                           |
+| gemini     | yes    | modes  | poll   | no     | no               | yes    | modes/tools, Deep Think waits, images                |
+| chatgpt    | —      | —      | —      | —      | —                | —      | out of scope (use `chatgpt-use`)                     |
 
 Perplexity needs only: open page, ensure composer, submit prompt, wait for a
 new `.prose` answer to stabilize, read text. No file upload, no model picker,
@@ -32,16 +32,16 @@ by Perplexity).
 
 ## Required capability matrix (before implementation)
 
-| Capability | Existing browser provider (`src/providers/perplexity.ts`) | chrome-use POC backend | Notes |
-| --- | --- | --- | --- |
-| attachments | no | **no** (rejected explicitly) | no silent loss |
-| streaming (`onChunk`) | yes (poll chunks to terminal) | **no** (declared; full answer returned) | explicit difference vs browser path |
-| cancellation | no | **no** (declared; `cancel` reports not cancelled) | explicit |
-| conversation reuse | no app actions; orchestrator stores/reopens URL | **no** (declared; fresh open per ask) | explicit loss vs orchestrator reuse |
-| model selection | no | **no** (rejected explicitly if requested) | no silent loss |
-| image output | no | **no** | no silent loss |
-| prompt submit + capture | yes | **yes** | core end-to-end path |
-| login/session reuse | shared/isolated 10x-chat profiles | **yes** via user's Chrome profile/cookies | different ownership model (see below) |
+| Capability              | Existing browser provider (`src/providers/perplexity.ts`) | chrome-use POC backend                            | Notes                                 |
+| ----------------------- | --------------------------------------------------------- | ------------------------------------------------- | ------------------------------------- |
+| attachments             | no                                                        | **no** (rejected explicitly)                      | no silent loss                        |
+| streaming (`onChunk`)   | yes (poll chunks to terminal)                             | **no** (declared; full answer returned)           | explicit difference vs browser path   |
+| cancellation            | no                                                        | **no** (declared; `cancel` reports not cancelled) | explicit                              |
+| conversation reuse      | no app actions; orchestrator stores/reopens URL           | **no** (declared; fresh open per ask)             | explicit loss vs orchestrator reuse   |
+| model selection         | no                                                        | **no** (rejected explicitly if requested)         | no silent loss                        |
+| image output            | no                                                        | **no**                                            | no silent loss                        |
+| prompt submit + capture | yes                                                       | **yes**                                           | core end-to-end path                  |
+| login/session reuse     | shared/isolated 10x-chat profiles                         | **yes** via user's Chrome profile/cookies         | different ownership model (see below) |
 
 Unsupported capabilities are declared in `BackendCapabilities` and rejected or
 reported explicitly by the adapter/runner; the backend never silently drops a
@@ -69,32 +69,34 @@ requested capability.
 - **Cleanup:** every ask uses a dedicated `chrome-use` session name and always
   attempts `chrome-use … done` in `finally` to close tabs it opened.
 - **Timeout:** respects `request.timeoutMs` without exceeding it per command; if the
-  prompt was confirmed sent, timeout is reported as `timeout/submitted`. A deadline
-  that expires before any submit attempt is reported as `unavailable/not_submitted`
-  (safe to retry, nothing sent). Ambiguous submit cases report unknown submission
-  (never retried automatically).
+  prompt was confirmed sent, timeout is reported as `timeout/submitted`. A command
+  timeout or deadline expiry before any submit attempt is reported as
+  `unavailable/not_submitted` (safe to retry, nothing sent). Any failed/timed-out
+  submit click is treated as potentially sent and reported as unknown submission
+  (never retried/resubmitted automatically).
 - **Cancellation:** capability `false`; `cancel` returns `{cancelled:false}`.
 - **Browser disconnect / chrome-use unavailable:** start/connect failures before
-  submit → `unavailable/not_submitted`. Ambiguous submit/connection loss after a
-  possible send → `unknown_submission/unknown` (no automatic retry/resend).
-  Definite post-submit loss while waiting → `unknown_submission/unknown` with an
-  explicit message. The prompt is delivered via `fill --stdin` (argv-safe) with
-  a stdin-based eval fallback; a failed fill is not submitted.
+  submit → `unavailable/not_submitted`. Submit-click failures and connection loss
+  after a possible send → `unknown_submission/unknown` (no automatic retry/resend).
+  Post-submit loss while waiting → `unknown_submission/unknown` with an explicit
+  message. The prompt is delivered via `fill --stdin` (argv-safe) with a stdin-based
+  eval fallback; a failed fill is not submitted.
 - **Conversation reuse:** not implemented in this POC; each ask opens the
   landing page in a fresh chrome-use session (explicitly declared unsupported).
   `status()` reports in-process submission state only (no persistent receipt); an unknown id is reported as `unknown` (never as safe-to-retry `not_submitted`).
+  Answer capture waits for several consecutive unchanged polls before returning (POC stability heuristic).
 
 ## Comparison with existing Playwright provider path
 
-| Aspect | Playwright (`--provider perplexity`) | chrome-use backend (POC) |
-| --- | --- | --- |
-| Browser ownership | 10x-chat-managed CloakBrowser/Chromium daemon & profiles | User's real Chrome via chrome-use extension relay |
-| Session/profile storage | `~/.10x-chat/profiles` (shared/isolated) | Chrome's own profile/cookies |
-| Bot/Cloudflare handling | `requiresHeaded`/`botProtected` flows in app | Real browser; challenges are the user's browser state |
-| Conversation reuse across runs | Yes (orchestrator stores/reopens URL per repo+branch) | No (declared unsupported) |
-| Streaming chunks to terminal | Yes | No (full answer) |
-| Attach/model/images/cancel | Unsupported by provider | Unsupported, explicitly declared/rejected |
-| Raw DOM/page objects | Confined to provider/orchestrator (Playwright) | None; CLI JSON only (safe for backend boundary) |
+| Aspect                         | Playwright (`--provider perplexity`)                     | chrome-use backend (POC)                              |
+| ------------------------------ | -------------------------------------------------------- | ----------------------------------------------------- |
+| Browser ownership              | 10x-chat-managed CloakBrowser/Chromium daemon & profiles | User's real Chrome via chrome-use extension relay     |
+| Session/profile storage        | `~/.10x-chat/profiles` (shared/isolated)                 | Chrome's own profile/cookies                          |
+| Bot/Cloudflare handling        | `requiresHeaded`/`botProtected` flows in app             | Real browser; challenges are the user's browser state |
+| Conversation reuse across runs | Yes (orchestrator stores/reopens URL per repo+branch)    | No (declared unsupported)                             |
+| Streaming chunks to terminal   | Yes                                                      | No (full answer)                                      |
+| Attach/model/images/cancel     | Unsupported by provider                                  | Unsupported, explicitly declared/rejected             |
+| Raw DOM/page objects           | Confined to provider/orchestrator (Playwright)           | None; CLI JSON only (safe for backend boundary)       |
 
 ## Verification
 

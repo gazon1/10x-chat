@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type {
   AiBackend,
@@ -10,6 +9,10 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
+import { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './process-runner.js';
+
+export type { ProcessResult, ProcessRunner };
+export { nodeProcessRunner };
 
 /**
  * Perplexity POC driven by the `chrome-use` CLI (user's real Chrome via the
@@ -20,64 +23,6 @@ import type {
  * output, streaming chunks, conversation reuse, or cancellation. One ask = one
  * chrome-use session; tabs are closed with `done` on every path.
  */
-
-export interface ProcessResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
-
-export interface ProcessRunner {
-  run(
-    command: string,
-    args: string[],
-    options?: { timeoutMs?: number; input?: string },
-  ): Promise<ProcessResult>;
-}
-
-const KILL_GRACE_MS = 2_000;
-
-export const nodeProcessRunner: ProcessRunner = {
-  run(command, args, options = {}) {
-    return new Promise((resolve, reject) => {
-      const child = spawn(command, args, {
-        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      let timedOut = false;
-      let killTimer: NodeJS.Timeout | undefined;
-      if (options.input !== undefined) {
-        child.stdin?.on('error', () => {});
-        child.stdin?.end(options.input);
-      }
-      const timer = options.timeoutMs
-        ? setTimeout(() => {
-            timedOut = true;
-            child.kill('SIGTERM');
-            killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
-          }, options.timeoutMs)
-        : undefined;
-      child.stdout?.on('data', (chunk) => {
-        stdout += String(chunk);
-      });
-      child.stderr?.on('data', (chunk) => {
-        stderr += String(chunk);
-      });
-      child.on('error', (error) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
-        reject(error);
-      });
-      child.on('close', (code) => {
-        if (timer) clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
-        resolve({ code, stdout, stderr, timedOut });
-      });
-    });
-  },
-};
 
 export const CHROME_USE_PERPLEXITY_BACKEND_NAME = 'chrome-use-perplexity';
 
@@ -148,10 +93,16 @@ function failure(
   message: string,
   partialText?: string,
 ): FailureOutcome {
-  return { ok: false, failure: { kind, submission, message, ...(partialText ? { partialText } : {}) } };
+  return {
+    ok: false,
+    failure: { kind, submission, message, ...(partialText ? { partialText } : {}) },
+  };
 }
 
-function unavailable(message: string, submission: BackendSubmission = 'not_submitted'): FailureOutcome {
+function unavailable(
+  message: string,
+  submission: BackendSubmission = 'not_submitted',
+): FailureOutcome {
   return failure('unavailable', submission, message);
 }
 
@@ -167,12 +118,18 @@ function classifyCommandError(
   timedOut: boolean,
 ): FailureOutcome {
   if (timedOut) {
+    if (submitted) {
+      return failure(
+        'timeout',
+        'submitted',
+        `Timed out waiting for the Perplexity answer: ${detail}`,
+      );
+    }
+    // Pre-submit command timeout: no submit attempt was made from this call.
     return failure(
-      submitted ? 'timeout' : 'unknown_submission',
-      submitted ? 'submitted' : 'unknown',
-      submitted
-        ? `Timed out waiting for the Perplexity answer: ${detail}`
-        : `Timed out before the prompt was confirmed sent (it may have reached Perplexity): ${detail}`,
+      'unavailable',
+      'not_submitted',
+      `Timed out before the prompt was sent to Perplexity: ${detail}`,
     );
   }
   if (disconnectLike(detail)) {
@@ -202,7 +159,7 @@ export function createChromeUsePerplexityBackend(
   const runner = options.runner ?? nodeProcessRunner;
   const sessionPrefix = options.sessionPrefix ?? '10x-pplx';
   const pollMs = options.pollMs ?? 800;
-  const stablePolls = options.stablePolls ?? 3;
+  const stablePolls = options.stablePolls ?? 5;
   // Best-effort in-process record: this POC has no persistent receipt, but
   // status() must not lie about a request it already handled in this process.
   const known = new Map<
@@ -242,53 +199,122 @@ export function createChromeUsePerplexityBackend(
     timeoutMs: number | undefined,
     submitted: boolean,
     input?: string,
+    submitAttempt = false,
   ): Promise<
-    | { ok: true; json?: ChromeJson; result: ProcessResult }
-    | { ok: false; outcome: FailureOutcome }
+    { ok: true; json?: ChromeJson; result: ProcessResult } | { ok: false; outcome: FailureOutcome }
   > => {
     // Respect the caller/request budget: never run a command longer than the
     // remaining deadline (a floor above it would violate timeoutMs).
     const budget = timeoutMs ?? CMD_TIMEOUT_FLOOR_MS;
     const runTimeout =
       timeoutMs === undefined ? Math.max(budget, CMD_TIMEOUT_FLOOR_MS) : Math.max(budget, 1);
-    const { result, started, startError } = await run(['--session', session, ...sub], runTimeout, input);
+    const { result, started, startError } = await run(
+      ['--session', session, ...sub],
+      runTimeout,
+      input,
+    );
     if (!started || !result) {
       const detail = startError ?? 'failed to start chrome-use';
       if (/ENOENT/i.test(detail)) {
-        if (submitted) {
+        if (submitted || submitAttempt) {
           return {
             ok: false,
             outcome: failure(
               'unknown_submission',
               'unknown',
-              `chrome-use could not be started after submission (prompt may have been submitted): ${detail}`,
+              `chrome-use could not be started (prompt may have been submitted): ${detail}`,
             ),
           };
         }
         return { ok: false, outcome: unavailable(`chrome-use could not be started: ${detail}`) };
       }
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'unknown_submission',
+            'unknown',
+            `Failed to start submit command (prompt may have been submitted): ${detail}`,
+          ),
+        };
+      }
       return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
     }
     if (result.timedOut) {
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'timeout',
+            'submitted',
+            `command timed out (${sub[0] ?? 'chrome-use'}) - prompt may have been submitted`,
+          ),
+        };
+      }
       return {
         ok: false,
-        outcome: classifyCommandError(`command timed out (${sub[0] ?? 'chrome-use'})`, submitted, true),
+        outcome: classifyCommandError(
+          `command timed out (${sub[0] ?? 'chrome-use'})`,
+          submitted,
+          true,
+        ),
       };
     }
     const json = parseJson(result.stdout);
     if (json && json.success === false) {
-      const detail = typeof json.error === 'string' ? json.error : JSON.stringify(json.error ?? json);
+      const detail =
+        typeof json.error === 'string' ? json.error : JSON.stringify(json.error ?? json);
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'unknown_submission',
+            'unknown',
+            `Submit command failed (prompt may have been submitted): ${detail}`,
+          ),
+        };
+      }
       return { ok: false, outcome: classifyCommandError(detail, submitted, false) };
     }
     if (result.code !== 0) {
       const detail =
         (typeof json?.error === 'string' ? json.error : undefined) ||
         (result.stderr || result.stdout || `exit ${result.code}`).trim();
-      return { ok: false, outcome: classifyCommandError(detail || 'chrome-use failed', submitted, false) };
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'unknown_submission',
+            'unknown',
+            `Submit command failed (prompt may have been submitted): ${detail || 'chrome-use failed'}`,
+          ),
+        };
+      }
+      return {
+        ok: false,
+        outcome: classifyCommandError(detail || 'chrome-use failed', submitted, false),
+      };
     }
-    if (!json || json.success !== true) {
+    if (json?.success !== true) {
       const detail = (result.stderr || result.stdout || 'invalid chrome-use JSON envelope').trim();
-      return { ok: false, outcome: classifyCommandError(detail || 'invalid chrome-use JSON envelope', submitted, false) };
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'unknown_submission',
+            'unknown',
+            `Submit command returned invalid result (prompt may have been submitted): ${detail || 'invalid chrome-use JSON envelope'}`,
+          ),
+        };
+      }
+      return {
+        ok: false,
+        outcome: classifyCommandError(
+          detail || 'invalid chrome-use JSON envelope',
+          submitted,
+          false,
+        ),
+      };
     }
     return { ok: true, json, result };
   };
@@ -379,7 +405,8 @@ export function createChromeUsePerplexityBackend(
         const f = waited.outcome.failure;
         // Before submit nothing reached Perplexity; keep submission valid
         // (timeout kind requires submitted, so map pre-submit timeout to unavailable).
-        const kind = f.kind === 'timeout' || f.kind === 'unknown_submission' ? 'unavailable' : f.kind;
+        const kind =
+          f.kind === 'timeout' || f.kind === 'unknown_submission' ? 'unavailable' : f.kind;
         const out = failure(
           kind,
           'not_submitted',
@@ -438,9 +465,12 @@ export function createChromeUsePerplexityBackend(
         }
       }
 
-      await cmd(session, ['press', 'Escape', '--json'], Math.min(remaining() ?? 3_000, 3_000), false).catch(
-        () => undefined,
-      );
+      await cmd(
+        session,
+        ['press', 'Escape', '--json'],
+        Math.min(remaining() ?? 3_000, 3_000),
+        false,
+      ).catch(() => undefined);
 
       t = ensureTime(false);
       if (t) return t;
@@ -450,33 +480,13 @@ export function createChromeUsePerplexityBackend(
         ['click', SUBMIT, '--json'],
         Math.min(remaining() ?? 10_000, 10_000),
         false,
+        undefined,
+        true,
       );
       if (!clicked.ok) {
-        const f = clicked.outcome.failure;
-        const ambiguous = f.kind === 'timeout' || f.kind === 'unknown_submission' || disconnectLike(f.message);
-        if (ambiguous) {
-          // A failed/timed-out click may still have submitted; do not send
-          // Enter (it could submit again). Report the ambiguous state.
-          const sub: BackendSubmission = f.kind === 'timeout' ? 'submitted' : 'unknown';
-          known.set(request.requestId, { submission: sub });
-          return failure(
-            f.kind === 'timeout' ? 'timeout' : 'unknown_submission',
-            sub,
-            `Submitting the prompt via click is ambiguous (it may have been sent): ${f.message}`,
-          );
-        }
-        // Definite pre-submit click failure: try Enter as a fallback.
-        const pressed = await cmd(
-          session,
-          ['press', 'Enter', '--json'],
-          Math.min(remaining() ?? 5_000, 5_000),
-          false,
-        );
-        if (!pressed.ok) {
-          const pf = pressed.outcome.failure;
-          known.set(request.requestId, { submission: pf.submission });
-          return pressed.outcome;
-        }
+        // A failed click cannot be proven unexecuted; never retry with Enter.
+        known.set(request.requestId, { submission: clicked.outcome.failure.submission });
+        return clicked.outcome;
       }
       submitted = true;
       known.set(request.requestId, { submission: 'submitted' });
@@ -488,7 +498,11 @@ export function createChromeUsePerplexityBackend(
         t = ensureTime(true);
         if (t) {
           if (partialText) t.failure.partialText = partialText;
-          known.set(request.requestId, { submission: t.failure.submission, text: partialText || undefined, truncated: true });
+          known.set(request.requestId, {
+            submission: t.failure.submission,
+            text: partialText || undefined,
+            truncated: true,
+          });
           return t;
         }
         const snap = await cmd(
@@ -503,12 +517,18 @@ export function createChromeUsePerplexityBackend(
         );
         if (!snap.ok) {
           if (partialText) snap.outcome.failure.partialText = partialText;
-          known.set(request.requestId, { submission: snap.outcome.failure.submission, text: partialText || undefined });
+          known.set(request.requestId, {
+            submission: snap.outcome.failure.submission,
+            text: partialText || undefined,
+          });
           return snap.outcome;
         }
         const data = dataRecord(snap.json?.data);
-        const resultObj = isRecord(data?.result) ? (data?.result as Record<string, unknown>) : undefined;
-        const count = typeof resultObj?.count === 'number' ? resultObj.count : Number(resultObj?.count ?? 0);
+        const resultObj = isRecord(data?.result)
+          ? (data?.result as Record<string, unknown>)
+          : undefined;
+        const count =
+          typeof resultObj?.count === 'number' ? resultObj.count : Number(resultObj?.count ?? 0);
         const text = typeof resultObj?.text === 'string' ? resultObj.text : '';
         const html = typeof resultObj?.html === 'string' ? resultObj.html : '';
         if (Number.isFinite(count) && count > baseIndex && text) {
@@ -527,7 +547,11 @@ export function createChromeUsePerplexityBackend(
                 truncated: false,
                 submission: 'submitted',
               };
-              known.set(request.requestId, { submission: 'submitted', text: lastText, truncated: false });
+              known.set(request.requestId, {
+                submission: 'submitted',
+                text: lastText,
+                truncated: false,
+              });
               return { ok: true, value };
             }
           }
@@ -539,7 +563,10 @@ export function createChromeUsePerplexityBackend(
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const out = classifyCommandError(detail, submitted, false);
-      known.set(request.requestId, { submission: out.failure.submission, text: partialText || undefined });
+      known.set(request.requestId, {
+        submission: out.failure.submission,
+        text: partialText || undefined,
+      });
       return out;
     } finally {
       await cleanup();

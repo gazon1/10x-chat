@@ -13,11 +13,21 @@ interface Call {
 }
 
 function ok(data: unknown = {}): ProcessResult {
-  return { code: 0, stdout: JSON.stringify({ success: true, data, error: null }), stderr: '', timedOut: false };
+  return {
+    code: 0,
+    stdout: JSON.stringify({ success: true, data, error: null }),
+    stderr: '',
+    timedOut: false,
+  };
 }
 
 function failJson(error: string): ProcessResult {
-  return { code: 1, stdout: JSON.stringify({ success: false, data: null, error }), stderr: '', timedOut: false };
+  return {
+    code: 1,
+    stdout: JSON.stringify({ success: false, data: null, error }),
+    stderr: '',
+    timedOut: false,
+  };
 }
 
 describe('chrome-use Perplexity backend (POC)', () => {
@@ -48,7 +58,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
           if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
           if (script.includes('return { count:n')) {
             prosePolls++;
-            // 1: partial, 2-4: final text unchanged -> 3 consecutive stable polls
+            // 1: partial, 2-6: final text unchanged -> 5 consecutive stable polls
             const text = prosePolls >= 2 ? 'Paris is the capital of France.' : 'Paris is the';
             return ok({ result: { count: 1, text, html: `<p>${text}</p>` } });
           }
@@ -127,7 +137,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
     expect(out.failure.submission).toBe('unknown');
   });
 
-  it('treats ambiguous click failure as unknown submission and does not press Enter', async () => {
+  it('treats click failure as unknown submission and does not press Enter', async () => {
     const calls: Call[] = [];
     const runner: ProcessRunner = {
       run: async (_cmd, args) => {
@@ -137,6 +147,29 @@ describe('chrome-use Perplexity backend (POC)', () => {
         if (sub === 'eval') return ok({ result: 0 });
         if (sub === 'press') return ok();
         if (sub === 'click') return failJson('relay connection lost');
+        if (sub === 'done') return ok();
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1 });
+    const out = await backend.ask({ requestId: 'req-1', prompt: 'hi' });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('unknown_submission');
+    expect(out.failure.submission).toBe('unknown');
+    expect(calls.filter((c) => c.args[2] === 'press' && c.args[3] === 'Enter')).toHaveLength(0);
+  });
+
+  it('treats ordinary click command failure as unknown submission (no retry)', async () => {
+    const calls: Call[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        const sub = args[2];
+        if (sub === 'open' || sub === 'wait' || sub === 'fill') return ok();
+        if (sub === 'eval') return ok({ result: 0 });
+        if (sub === 'press') return ok();
+        if (sub === 'click') return failJson('element not clickable');
         if (sub === 'done') return ok();
         return ok();
       },
@@ -190,7 +223,11 @@ describe('chrome-use Perplexity backend (POC)', () => {
     // 0 or negative timeout => deadline already passed before any submit attempt.
     for (const timeoutMs of [0, -1]) {
       calls.length = 0;
-      const out = await backend.ask({ requestId: `req-timeout-${timeoutMs}`, prompt: 'hi', timeoutMs });
+      const out = await backend.ask({
+        requestId: `req-timeout-${timeoutMs}`,
+        prompt: 'hi',
+        timeoutMs,
+      });
       expect(out.ok).toBe(false);
       if (out.ok) return;
       expect(out.failure.kind).toBe('unavailable');
@@ -231,15 +268,23 @@ describe('chrome-use Perplexity backend (POC)', () => {
     const runner: ProcessRunner = {
       run: async (_cmd, args) => {
         const sub = args[2];
-        if (sub === 'open' || sub === 'wait' || sub === 'fill' || sub === 'press' || sub === 'click' || sub === 'done') return ok();
+        if (
+          sub === 'open' ||
+          sub === 'wait' ||
+          sub === 'fill' ||
+          sub === 'press' ||
+          sub === 'click' ||
+          sub === 'done'
+        )
+          return ok();
         if (sub === 'eval') {
           const script = args[3] ?? '';
           if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
           if (script.includes('return { count:n')) {
             prosePolls++;
-            // 1: partial, 2: same (pause, 1 stable), 3: longer (resumes), 4-6: final stable x3
+            // 1: partial, 2-4: same (pause, 3 stable < threshold), 5: longer (resumes), 6-10: final stable x5
             let text = 'Part 1';
-            if (prosePolls >= 3) text = 'Part 1 and Part 2 complete';
+            if (prosePolls >= 5) text = 'Part 1 and Part 2 complete';
             return ok({ result: { count: 1, text, html: `<p>${text}</p>` } });
           }
           return ok({ result: 0 });
@@ -247,7 +292,8 @@ describe('chrome-use Perplexity backend (POC)', () => {
         return ok();
       },
     };
-    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 3 });
+    // Threshold 5: a 3-poll pause must not be treated as complete.
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 5 });
     const out = await backend.ask({ requestId: 'req-pause', prompt: 'hi', timeoutMs: 5_000 });
     expect(out.ok).toBe(true);
     if (!out.ok) return;
