@@ -197,7 +197,11 @@ revision under review:
   that says more than the secret too — the line of the secret, and the value it
   holds, which is the secret itself: the key is a name that the code of the
   repository uses on purpose (`process.env.DATABASE_URL`), and a file that
-  reads the name is not a file that holds the secret.
+  reads the name is not a file that holds the secret. The value is looked for
+  when it is distinctive: twelve characters or more, or six characters or more
+  with a letter and a digit in it (`s3cr3t`). A short value of letters only
+  (`changeme`) is an ordinary word — many files of a repository hold it, and
+  withholding all of them would leave the review nothing to read.
 - The file behind a **tracked symlink** decides what may be read: the content
   of a link that points at a file that may hold a secret is never read.
 - The title, the names of the files, the diff and the excerpts of the source are
@@ -208,6 +212,12 @@ revision under review:
   the category `security`. The names of the withheld files and the claims of the
   reviewers — a reviewer quotes the change it is about — are fenced the same
   way, and the verifier is told that a claim is data too.
+- The text of a reviewer is **data in the report** too: the control characters
+  are cleared and the markup of HTML is escaped, so a tag in a finding is shown
+  as text and never becomes markup of the report.
+- The identifier of a run is a **name, not a path**: it names the directory of
+  the run under `~/.10x-chat/reviews/`, and a name that carries a separator or
+  a `..` is refused the way a name of a profile is refused.
 
 ## The verdict of the report
 

@@ -494,8 +494,12 @@ async function carryingTheSecret(
  * The value of a line of a secret — the part after the first `=`.
  *
  * The value is the secret, the key is a name that the code of the repository
- * uses on purpose (`process.env.DATABASE_URL`). A value of twelve characters
- * or more is distinctive enough to be looked for in the files of the change.
+ * uses on purpose (`process.env.DATABASE_URL`). A value is looked for in the
+ * files of the change when it is long enough to be distinctive (twelve
+ * characters or more) or when it looks like a credential — six characters or
+ * more, with a letter and a digit in it (`s3cr3t`). A short value of letters
+ * only (`changeme`) is an ordinary word: many files of a repository hold it,
+ * and withholding all of them would leave the review nothing to read.
  */
 function secretValue(line: string): string | undefined {
   const at = line.indexOf('=');
@@ -505,7 +509,11 @@ function secretValue(line: string): string | undefined {
     .trim()
     .replace(/^["']/, '')
     .replace(/["']$/, '');
-  return value.length >= 12 ? value : undefined;
+  if (value.length >= 12) return value;
+  const long = value.length >= 6;
+  const letter = /[A-Za-z]/.test(value);
+  const digit = /[0-9]/.test(value);
+  return long && letter && digit ? value : undefined;
 }
 
 /**

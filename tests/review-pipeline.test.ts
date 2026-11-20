@@ -570,6 +570,31 @@ describe('the review pipeline', () => {
     expect(run.report).toContain('Unchecked input');
   });
 
+  it('clears the markup of HTML of a reviewer from the report', async () => {
+    // A reviewer is an untrusted source: a tag in its text would be the tag
+    // of the report in a viewer that renders HTML.
+    const loud = {
+      ...FINDING,
+      title: '<img src=x onerror=alert(1)>',
+      problem: '<script>alert(1)</script> The input of run() reaches exec().',
+    };
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([loud]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.report).not.toContain('<script>');
+    expect(run.report).not.toContain('<img');
+    expect(run.report).toContain('&lt;script&gt;');
+  });
+
   it('rejects a finding about a deleted file whose line is outside it', async () => {
     // The line of a deleted file is the line it had in the base revision.
     const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-deleted-'));
@@ -934,6 +959,50 @@ describe('the review pipeline', () => {
       const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
       expect(context.secretFiles).not.toContain('config.ts');
       expect(context.diff).toContain('process.env.TOKEN');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the secret of a file that stays out of a short secret', async () => {
+    // A secret does not have to be long to be a secret: the copy of a short
+    // value hides in a line that says more than the secret.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-short-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'TOKEN=s3cr3t\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'config.ts'), 'const token = "s3cr3t";\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).toContain('config.ts');
+      expect(context.diff).not.toContain('s3cr3t');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a file that holds an ordinary value of a secret', async () => {
+    // The value of a secret is a word as often as a credential: a file of the
+    // repository that writes `development` is not a file that holds a secret.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-review-secret-word-'));
+    try {
+      await gitIn(cwd, 'init', '--initial-branch=main');
+      await writeFile(path.join(cwd, '.env'), 'NODE_ENV=development\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'first');
+      await gitIn(cwd, 'checkout', '-b', 'feature');
+      await writeFile(path.join(cwd, 'config.ts'), 'export const mode = "development";\n', 'utf-8');
+      await gitIn(cwd, 'add', '.');
+      await gitIn(cwd, 'commit', '-m', 'second');
+
+      const context = await collectReviewContext({ cwd, base: 'main', head: 'feature' });
+      expect(context.secretFiles).not.toContain('config.ts');
+      expect(context.diff).toContain('development');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

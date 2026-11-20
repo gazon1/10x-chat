@@ -5,6 +5,7 @@ import {
   getAppDir,
   getConfigPath,
   getIsolatedProfileDir,
+  getReviewDir,
   getSessionDir,
   getSessionsDir,
   getSharedProfileDir,
@@ -69,5 +70,10 @@ describe('Paths', () => {
 
   it('should reject unsafe profile names', () => {
     expect(() => getIsolatedProfileDir('../gemini')).toThrow(/Profile name/);
+  });
+
+  it('should reject a review id that is a path', () => {
+    expect(() => getReviewDir('../../etc')).toThrow(/Review id/);
+    expect(() => getReviewDir('..')).toThrow(/Review id/);
   });
 });

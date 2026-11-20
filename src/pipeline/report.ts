@@ -96,11 +96,26 @@ function endOfSequence(characters: string[], start: number): number {
   return start + 1;
 }
 
+/**
+ * The text of a reviewer, without the markup of HTML.
+ *
+ * A reviewer is an untrusted source: the text of a finding may hold a tag,
+ * and a report that is opened in a viewer that renders HTML shows the tag —
+ * the markup of the reviewer becomes the markup of the report.
+ */
+function html(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** A cell of a table — a pipe or a newline would break the table. */
 function cell(value: string): string {
   // A backslash is escaped before a pipe: the escape of a pipe in a table
   // eats the backslash in front of it, and a name of a path has backslashes.
-  return plain(value).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+  return html(plain(value))
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
+    .trim();
 }
 
 /**
@@ -267,12 +282,12 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const notVerified = run.findings.filter((finding) => finding.verification === 'unverified');
   for (const finding of notVerified) {
     lines.push(
-      `- ${plain(finding.title)} — ${plain(finding.verificationNote ?? 'the verification did not settle it')}`,
+      `- ${html(plain(finding.title))} — ${html(plain(finding.verificationNote ?? 'the verification did not settle it'))}`,
     );
   }
   for (const step of run.steps) {
     if (step.status === 'failed' || step.status === 'skipped') {
-      lines.push(`- ${step.id} — ${plain(step.detail ?? step.status)}`);
+      lines.push(`- ${step.id} — ${html(plain(step.detail ?? step.status))}`);
     }
   }
   if (
@@ -315,7 +330,7 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   } else {
     for (const finding of risks) {
       lines.push(
-        `- ${plain(finding.title)} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
+        `- ${html(plain(finding.title))} — ${finding.verification === 'unverified' ? 'not verified' : 'a confirmed defect'} (${finding.severity})`,
       );
     }
   }
