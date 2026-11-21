@@ -123,6 +123,14 @@ export interface WorkflowIteration {
   baseSha: string;
   /** The commit the iteration ended at. */
   headSha?: string;
+  /**
+   * The Dispatch of the worker of the iteration.
+   *
+   * It is the identity of the agent: an iteration that was started twice is
+   * one iteration with one Dispatch, and the worker of the previous
+   * iterations is not a candidate for the adoption of the next one.
+   */
+  dispatchId?: string;
   /** The review of the iteration. */
   review?: WorkflowReview;
 }

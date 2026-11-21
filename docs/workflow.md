@@ -79,6 +79,7 @@ proved to be ours:
 | the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout |
 | a worktree with a comment of somebody else | refuses it — the workflow does not take a worktree it cannot prove |
 | a worktree that already carries changes | refuses it — the work of somebody else is not taken over |
+| a worktree with changes that are not committed | refuses it — the agent would carry the work of somebody else into the change of the Issue |
 | the worktree of this workflow, untouched at the base | adopts it — the answer of a lost command is not a reason to make a second worktree |
 
 The worktrees of the repository are read for the same reason: the list is how a
@@ -112,6 +113,17 @@ repository of another host.
 resolved, never assumed: when the checkout has no local branch of that name —
 a detached checkout that fetched the remote only — the ref of origin is used
 (`origin/main`), and a worktree is created from the commit it names.
+
+**The worktree starts at the base.** The commit the worktree is at is read and
+compared with the commit the workflow asked for: a worktree at another commit
+is refused, because the review compares the change with the commit the
+worktree started from, and a change of another commit is a change of another
+code. The commit that is proved this way is the base of the review.
+
+**The agent works in a clean worktree.** The agent is started only when the
+worktree has no changes that are not committed: the review reads the committed
+state, and the changes of somebody else would be approved as a part of the
+change of the Issue.
 
 ## The commands
 
@@ -153,9 +165,14 @@ a detached checkout that fetched the remote only — the ref of origin is used
 
 - **`gh`** — installed and authenticated (`gh auth status`). The Issue is read
   through it, and the requirements of the change are its title and its body.
-- **The Orca runtime** — ready, with the `orchestration.*` and `worktree.*`
-  capabilities. The repository of the checkout must be registered in Orca
-  (`orca repo add --path <path>`).
+- **The Orca runtime** — ready, with the whole lifecycle of the worktrees and
+  of the orchestration: the aggregate contract `orchestration.contract.v1`, or
+  every verb of it (`run-create`, `run-list`, `worker-start`, `worker-show`,
+  `worker-list`, `worker-stop`, `check`), and the family of the worktrees
+  (`worktree.*`). A family of capabilities says nothing about the operations
+  the workflow needs, so the check is a contract and not a prefix — and the
+  workflow refuses to start before it creates anything. The repository of the
+  checkout must be registered in Orca (`orca repo add --path <path>`).
 - **A review backend** — the same ones the `review` command uses
   (`--backend chatgpt-use` by default). The review of the change is the
   pipeline of the repository, not a second one.
@@ -182,7 +199,10 @@ The workflow reports `completed` only when **all** of these hold:
    reevaluation instead of waiting for a change that was made against
    requirements that are not the current ones;
 6. the worktree is clean — the review reads the committed state only, and a
-   change that is not committed is a change that nobody judged.
+   change that is not committed is a change that nobody judged;
+7. the approval is bound to the version of the requirements that the review
+   really read — the record keeps the hash of that version, not the hash the
+   workflow remembers.
 
 Anything else ends in `blocked` with the reason. **An approval of the model is
 not an approval of a human**: the worktree of the workflow stays for a human,
@@ -196,6 +216,11 @@ and nothing is published.
 - It never starts a second agent for the same workflow. A worker that is
   already there is adopted — the answer of a lost command is not a reason to
   run the agent twice. A worktree of the same Issue is adopted the same way.
+  A worker that has **finished** is adopted too: the agent of an interrupted
+  start may have ended before its Dispatch was written down, and a second agent
+  would work in the same worktree. Its result is read by the wait — and a
+  result that nobody confirmed blocks the workflow instead of approving a
+  change.
 - It never reports a stop it did not confirm. The state of the worker is
   checked: a worker that cannot be stopped leaves the workflow `blocked` with
   the reason, because an agent that still works in the worktree is not a
@@ -217,6 +242,19 @@ Task — the outcome of the Dispatch or the message of the mailbox. A state that
 says `succeeded` is terminal, not successful: a worker that reports no
 structured outcome leaves the result of its Task unknown, and the workflow
 blocks instead of approving a change nobody confirmed.
+
+## The brief carries the instructions of the repository
+
+The brief of the agent is not only the Issue: it carries the instructions of the
+repository — the `AGENTS.md` of the worktree — and says that the files that
+`AGENTS.md` names are to be read before the change is written. A rule that says
+"read AGENTS.md" is not the rule itself: an agent that does not know the
+conventions of the repository writes a change the repository does not want.
+
+The instructions are **data of the task**, like the body of the Issue: they
+decide how the change is written, and they never override the rules of the
+brief. The corrections of a review are a new worker with a brief of their own,
+and it gets the same instructions.
 
 ## The stop stops every worker
 
@@ -297,7 +335,10 @@ step of the review is the gate that says that the Issue did not drift.
 | The command was interrupted | The record of the last completed step is on the disk. `resume` continues from there. |
 | The agent changed nothing | The workflow blocks — there is no change to review. |
 | The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. A Dispatch that says `succeeded` without a structured outcome is unknown. |
-| The worktree is not clean | The workflow blocks — the review reads the committed state only. |
+| The worktree is not clean | The workflow blocks — the review reads the committed state only. The same check keeps the agent from starting in a dirty checkout. |
+| The worktree is at another commit than the base | The worktree is refused — the agent would work on another commit than the one the change is compared with. |
+| The worktree of the record is not in Orca anymore | The workflow does not continue — the record remembers a worktree, Orca owns it, and a worktree that is not there is not the worktree of the workflow. |
+| The worktree of Orca is on another branch | The workflow does not continue — the worktree of the workflow is not the worktree of Orca. |
 | The Issue changed | The workflow blocks — the change was judged against older requirements. |
 | The agent could not be stopped | The workflow blocks — the agent may still work in the worktree. |
 | The workers of the Run could not be read | The workflow blocks — an agent of the Run may still work in the worktree. |
@@ -322,6 +363,7 @@ tests need no Orca, no GitHub and no model:
 | `WorkflowGit` | `git` (`src/workflow/git.ts`) | a fake with a variable head |
 | the review | `runReviewPipeline()` (`src/pipeline/review.ts`) | a fake that answers with a verdict |
 | the Issue | `gh` (`src/pipeline/requirements.ts`) | a fake that answers with a version |
+| the instructions of the repository | the `AGENTS.md` of the worktree | a fake that answers with the rules of the change |
 
 A local change — the change of a worktree that was never pushed — is reviewed
 from its diff: the reviewers have no page of it on GitHub. That is the one

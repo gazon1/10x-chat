@@ -350,7 +350,7 @@ human. Orca is not required for any other command.
 | A real Orca runtime | **not verified against a site** | the adapter was exercised against the real `orca` CLI of the machine during the development (status, repo list, worktree list, orchestration), but no workflow was run end to end against a real coding agent |
 | A real GitHub Issue | **not verified against a site** | the Issue is read through `gh`; the flow was not run against a live Issue |
 
-The check set of that change: typecheck, lint, knip, test (63 files / **1154 tests**), e2e (22
+The check set of that change: typecheck, lint, knip, test (63 files / **1201 tests**), e2e (22
 CLI scenarios, the 10 live provider scenarios skipped) and build — all pass.
 
 ## 13. The review of pull request #74
@@ -509,3 +509,28 @@ the record is now refused everywhere, and a broken record of the Issue stops
 the second workflow with the reason instead of letting a second agent into the
 same worktree. The check set after it: typecheck, lint, knip, test (63 files /
 **1188 tests**), e2e and build — all pass.
+
+### The eighth round
+
+The eighth round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with nine findings: five of the severity MAJOR
+and four MINOR ones. The verification settled the five MAJOR ones: they were
+real. The four that stayed unsettled are the reading of the reviewers, and each
+of them was checked against the source — two of them were real as well and are
+fixed in the same round.
+
+| Finding of the eighth round | The answer |
+|---|---|
+| a worktree that was adopted was not checked for changes that are not committed, so the agent carried the work of somebody else into the change of the Issue | the check of the cleanliness is part of the proof of the ownership now: a worktree with uncommitted changes is refused with the paths that are dirty, and the agent is never started in a dirty checkout |
+| the commit the worktree started at was not compared with the base the workflow asked for, so the review compared the change with another commit | the commit of the worktree is read and compared with the base: a worktree at another commit is refused, and the base of the review is the commit that was proved |
+| a worker that had already finished was ignored when the workflow was recovered, so a second agent was started in the same worktree | a terminal worker is adopted too: the agent of an interrupted start may have ended before its Dispatch was written down, and its result is read by the wait — a result that nobody confirmed blocks the workflow instead of starting a second agent |
+| the approval of the review was bound to the version of the Issue that the workflow remembered, and not to the version that the review really read | the record of the review carries the hash of the requirements of the run: the approval is bound to the version that was read |
+| the preflight checked the prefixes `orchestration.` and `worktree.`, which say nothing about the operations the workflow needs | the check is a contract and not a prefix: the aggregate contract `orchestration.contract.v1`, or every verb of it, and the family of the worktrees. The workflow refuses to start before it creates anything |
+| `resume` did not compare the worktree of the record with the worktrees of Orca | the worktree of the record is compared with the runtime once per run: a worktree that is not there anymore, and a worktree that is on another branch, are a refusal |
+| there was no test that the agent receives the instructions of the repository — the brief only said "read AGENTS.md" | the brief carries the instructions of the repository now (`AGENTS.md` of the worktree), and the brief of the corrections carries them too |
+| there was no test of a concurrent start | two processes that start the same Issue at the same time: one of them is refused, and only one agent is started |
+| there were no tests of the recovery of the creation of the Run | the Run of the objective is adopted, no Run is an error, two Runs are an ambiguity that is refused, and a listing of the Runs that cannot be read is the error of the lost answer |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1201
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

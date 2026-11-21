@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
@@ -88,6 +88,11 @@ export interface WorkflowContext {
   review?: (request: WorkflowReviewRequest) => Promise<ReviewRun>;
   /** The requirements of the Issue — the `gh` CLI by default. */
   readRequirements?: (issue: number, repository: string, cwd: string) => Promise<IssueRequirements>;
+  /**
+   * The instructions of the repository — the `AGENTS.md` of the checkout by
+   * default. They are carried by the brief of the agent.
+   */
+  readInstructions?: (cwd: string) => Promise<string>;
   /** The check that the `gh` CLI is there and authenticated. */
   assertAuthenticated?: (cwd: string) => Promise<void>;
 }
@@ -127,6 +132,52 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** How long one wait for the mailbox of the Run lasts. */
 const CHECK_SLICE_MS = 60_000;
+
+/**
+ * The contract of the orchestration of the Orca runtime.
+ *
+ * `orchestration.contract.v1` is the aggregate of the runtime: it promises the
+ * whole lifecycle — the Run, the Dispatch, the mailbox. A runtime that does
+ * not advertise it has to advertise every verb of it: a runtime that offers
+ * `orchestration.check` alone cannot create a Run, and the workflow would only
+ * find it out in the middle of the run, after it created a worktree.
+ */
+const ORCHESTRATION_CONTRACT = 'orchestration.contract.v1';
+
+/** The verbs of the orchestration that the workflow uses. */
+const REQUIRED_ORCHESTRATION_VERBS = [
+  'orchestration.run-create',
+  'orchestration.run-list',
+  'orchestration.worker-start',
+  'orchestration.worker-show',
+  'orchestration.worker-list',
+  'orchestration.worker-stop',
+  'orchestration.check',
+];
+
+/**
+ * What the runtime of Orca is missing for the workflow.
+ *
+ * The check is a contract and not a prefix: a family of capabilities that
+ * happens to be named `orchestration.` says nothing about the operations the
+ * workflow needs, and the workflow refuses to create anything before it knows
+ * that the whole lifecycle is there.
+ */
+export function missingCapabilities(capabilities: string[]): string[] {
+  const missing: string[] = [];
+  // The worktrees: Orca publishes the features of the worktrees as separate
+  // flags and no aggregate contract, so the family is what it promises.
+  if (!capabilities.some((capability) => capability.startsWith('worktree.'))) {
+    missing.push('worktree.*');
+  }
+  // The orchestration: the aggregate contract, or every verb of it.
+  if (!capabilities.includes(ORCHESTRATION_CONTRACT)) {
+    for (const verb of REQUIRED_ORCHESTRATION_VERBS) {
+      if (!capabilities.includes(verb)) missing.push(verb);
+    }
+  }
+  return missing;
+}
 
 /**
  * How long the mailbox is asked for the result of a worker that is already
@@ -345,6 +396,7 @@ export function createWorkflowContext(options: {
   waitTimeoutMs?: number;
   review?: (request: WorkflowReviewRequest) => Promise<ReviewRun>;
   readRequirements?: (issue: number, repository: string, cwd: string) => Promise<IssueRequirements>;
+  readInstructions?: (cwd: string) => Promise<string>;
   assertAuthenticated?: (cwd: string) => Promise<void>;
 }): WorkflowContext {
   return {
@@ -358,6 +410,7 @@ export function createWorkflowContext(options: {
     waitTimeoutMs: options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
     ...(options.review ? { review: options.review } : {}),
     ...(options.readRequirements ? { readRequirements: options.readRequirements } : {}),
+    ...(options.readInstructions ? { readInstructions: options.readInstructions } : {}),
     ...(options.assertAuthenticated ? { assertAuthenticated: options.assertAuthenticated } : {}),
   };
 }
@@ -557,9 +610,9 @@ function resolveRepo(
  */
 const WORK_RULES = `## How to work
 
-- Read the instructions of the repository first (AGENTS.md and the files it
-  names) and follow them: the conventions of the repository decide how the
-  change is written.
+- Follow the instructions of the repository that are part of this brief (AGENTS.md
+  and the files it names): the conventions of the repository decide how the
+  change is written. Read the files that AGENTS.md names before you write.
 - Stay inside the scope of the Issue. A requirement that the Issue does not
   state is not yours to decide silently — say it in your report.
 - Run the checks the repository defines (type check, lint, tests) and report
@@ -568,6 +621,51 @@ const WORK_RULES = `## How to work
   an uncommitted change cannot be reviewed.
 - Never push, never open a pull request and never merge. The worktree stays
   for a human.`;
+
+/**
+ * The instructions of the repository — the rules of the change.
+ *
+ * The brief of the agent carries them: an agent that does not know the
+ * conventions of the repository writes a change that the repository does not
+ * want, and a rule that says "read AGENTS.md" is not the rule itself.
+ *
+ * They are data of the task: they never override the rules of the brief and
+ * they are never an instruction to run a command outside of the worktree.
+ */
+function instructionsBlock(instructions: string): string {
+  const text = instructions.trim();
+  if (text === '') return '';
+  const fence = fenceFor(text);
+  return `## The instructions of the repository
+
+The instructions below are the ones of the repository of this task. They decide
+how the change is written.
+
+${fence}text
+${text}
+${fence}
+`;
+}
+
+/** The instructions of the repository of a checkout — `AGENTS.md` of its root. */
+async function defaultInstructions(cwd: string): Promise<string> {
+  try {
+    const content = await readFile(path.join(cwd, 'AGENTS.md'), 'utf-8');
+    return content.trim();
+  } catch {
+    // A checkout without AGENTS.md has no instructions to carry.
+    return '';
+  }
+}
+
+/** The instructions of the repository — the seam the tests replace. */
+async function instructionsOf(ctx: WorkflowContext, cwd: string): Promise<string> {
+  if (cwd.trim() === '') return '';
+  const content = ctx.readInstructions
+    ? await ctx.readInstructions(cwd)
+    : await defaultInstructions(cwd);
+  return content.trim();
+}
 
 /** What the agent has to report when it is done. */
 const REPORT_RULES = `## What you report
@@ -579,7 +677,7 @@ When you are done, report:
 - what is still open, and every decision you took that the Issue did not state.`;
 
 /** The brief of the agent — the requirements of the Issue and nothing else. */
-export function buildSpec(record: WorkflowRecord): string {
+export function buildSpec(record: WorkflowRecord, instructions = ''): string {
   const issue = record.issue;
   const bodyFence = fenceFor(issue.body);
   const worktree = record.worktree;
@@ -603,6 +701,7 @@ ${bodyFence}text
 ${issue.body}
 ${bodyFence}
 
+${instructionsBlock(instructions)}
 ${WORK_RULES}
 
 ${REPORT_RULES}
@@ -616,7 +715,11 @@ ${REPORT_RULES}
  * iteration is finished, and a finished Dispatch does not wake up. The agent of
  * the corrections is a new worker, and its brief carries the findings.
  */
-export function buildFixSpec(record: WorkflowRecord, iteration: WorkflowIteration): string {
+export function buildFixSpec(
+  record: WorkflowRecord,
+  iteration: WorkflowIteration,
+  instructions = '',
+): string {
   const issue = record.issue;
   const worktree = record.worktree;
   return `# The corrections of the task
@@ -633,6 +736,7 @@ corrections below are the open work.
 
 ${buildFixRequest(record, iteration)}
 
+${instructionsBlock(instructions)}
 ${WORK_RULES}
 
 ${REPORT_RULES}
@@ -695,14 +799,16 @@ function findingsOf(run: ReviewRun): WorkflowFinding[] {
 }
 
 /** The review of an iteration — the record of the run, bound to the change. */
-function reviewOf(run: ReviewRun, record: WorkflowRecord, reportPath: string): WorkflowReview {
+function reviewOf(run: ReviewRun, reportPath: string): WorkflowReview {
   return {
     runId: run.id,
     verdict: run.verdict,
     verdictReason: run.verdictReason,
     baseSha: run.context?.baseSha ?? '',
     headSha: run.context?.headSha ?? '',
-    requirementsHash: record.issue.hash,
+    // The version of the requirements that the review actually read: the
+    // approval is bound to it, not to the version the workflow remembers.
+    requirementsHash: run.context?.requirements?.hash ?? '',
     steps: run.steps.map((step) => ({ id: step.id, status: step.status })),
     findings: findingsOf(run),
     reportPath,
@@ -873,12 +979,11 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The Orca runtime is not ready — ${status.detail ?? 'it did not answer'}.`,
     );
   }
-  for (const prefix of ['orchestration.', 'worktree.']) {
-    if (!status.capabilities.some((capability) => capability.startsWith(prefix))) {
-      throw new WorkflowError(
-        `The Orca runtime does not support the '${prefix}*' capability — the workflow cannot run without it.`,
-      );
-    }
+  const missing = missingCapabilities(status.capabilities);
+  if (missing.length > 0) {
+    throw new WorkflowError(
+      `The Orca runtime does not support the capability of the workflow — ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing: the workflow needs the whole lifecycle of the worktrees and of the orchestration, and it refuses to start before it creates anything.`,
+    );
   }
   const repos = await ctx.orca.repoList();
   const repo = resolveRepo(
@@ -906,7 +1011,7 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   let worktree: OrcaWorktree;
   let adopted = false;
   if (candidate) {
-    const refusal = refusalOf(candidate, record, repo.path, baseSha, branch);
+    const refusal = await refusalOf(ctx, candidate, record, repo.path, baseSha, branch);
     if (refusal) throw new WorkflowError(refusal);
     worktree = candidate;
     adopted = true;
@@ -935,12 +1040,20 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
     if (refusal) throw new WorkflowError(refusal);
   }
   const startSha = await ctx.git.revParse(worktree.path, 'HEAD');
+  // The worktree has to start at the commit the workflow asked for: the review
+  // compares the change with the commit the worktree started from, and a
+  // worktree of another commit is a change of another code.
+  if (startSha !== baseSha) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} starts at ${startSha.slice(0, 7)} — the workflow asked for ${baseSha.slice(0, 7)} (${baseRef}). The agent would work on another commit than the one the change is compared with.`,
+    );
+  }
   record.worktree = {
     id: worktree.id,
     path: worktree.path,
     branch: adopted ? (worktree.branch ?? branch) : branch,
     baseRef,
-    baseSha: startSha,
+    baseSha,
   };
   record.orca = {
     repoId: repo.id,
@@ -958,6 +1071,43 @@ function sameBranch(branch: string | undefined, expected: string): boolean {
   if (!branch) return false;
   const normalized = branch.replace(/^refs\/heads\//, '');
   return normalized === expected;
+}
+
+/**
+ * The worktree of the record has to be the worktree of Orca.
+ *
+ * The record remembers a worktree; the runtime of Orca owns it. A worktree
+ * that was removed, renamed or moved to another branch is not the worktree the
+ * workflow started, and an agent that works in it works somewhere else. The
+ * check is a refusal, not a repair: the workflow never takes a worktree of
+ * another workflow and never creates a second one for the same Issue.
+ */
+async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
+  const worktree = record.worktree;
+  const repoId = record.orca?.repoId;
+  if (!worktree || !repoId) return;
+  let list: OrcaWorktree[];
+  try {
+    list = await ctx.orca.worktreeList(repoId);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new WorkflowError(
+      `The worktrees of the repository could not be read (${reason}) — the workflow does not continue on an unknown worktree.`,
+    );
+  }
+  const found =
+    list.find((entry) => entry.id === worktree.id) ??
+    list.find((entry) => samePath(entry.path, worktree.path));
+  if (!found) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} of the workflow is not in Orca anymore — the workflow does not continue on a worktree it does not own.`,
+    );
+  }
+  if (found.branch && !sameBranch(found.branch, worktree.branch)) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} is on the branch ${found.branch} — the workflow started it on ${worktree.branch}. The worktree of the workflow is not the worktree of Orca.`,
+    );
+  }
 }
 
 /** Whether two paths are the same checkout. */
@@ -1019,13 +1169,14 @@ async function refusalOfCreated(
  * taken, and a worktree that already carries changes is never taken over:
  * the agent of the workflow would work in a checkout that is not its own.
  */
-function refusalOf(
+async function refusalOf(
+  ctx: WorkflowContext,
   candidate: OrcaWorktree,
   record: WorkflowRecord,
   repoPath: string,
   baseSha: string,
   branch: string,
-): string | undefined {
+): Promise<string | undefined> {
   if (candidate.isMainWorktree || samePath(candidate.path, repoPath)) {
     return `The worktree ${candidate.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
   }
@@ -1042,11 +1193,19 @@ function refusalOf(
   if (candidate.head && candidate.head !== baseSha) {
     return `The worktree ${candidate.path} already has changes (${candidate.head.slice(0, 7)}) — the workflow does not take over a worktree with work in it.`;
   }
+  // A worktree with changes that are not committed is never taken over: the
+  // agent would carry them into the change of the Issue, and the review would
+  // approve them as a part of it.
+  const dirty = await ctx.git.dirty(candidate.path);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 10).join('; ');
+    return `The worktree ${candidate.path} has changes that are not committed (${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}) — the workflow does not take over a worktree with work in it.`;
+  }
   return undefined;
 }
 
 /** How a worker came to be — the message of the workflow says which one. */
-type WorkerOrigin = 'adopted' | 'started' | 'lost';
+type WorkerOrigin = 'adopted' | 'settled' | 'started' | 'lost';
 
 /**
  * The state of the record on the disk — the truth about the workflow.
@@ -1106,8 +1265,35 @@ async function startOrAdoptWorker(
       (worker) => worker.dispatchId !== options.exclude && !TERMINAL.test(worker.state ?? ''),
     );
   if (options.adopt) {
-    const adopted = alive(await ctx.orca.workerList(runId));
-    if (adopted) return { worker: adopted, origin: 'adopted' };
+    // The workers of the previous iterations are not candidates: they were
+    // judged already, and a correction that reuses one would read the result
+    // of the work that was judged.
+    const used = new Set(
+      [...record.iterations.map((iteration) => iteration.dispatchId), options.exclude].filter(
+        (id): id is string => typeof id === 'string' && id !== '',
+      ),
+    );
+    const candidates = (await ctx.orca.workerList(runId)).filter(
+      (worker) => !used.has(worker.dispatchId),
+    );
+    const running = candidates.find((worker) => !TERMINAL.test(worker.state ?? ''));
+    if (running) return { worker: running, origin: 'adopted' };
+    // The agent of an interrupted start may have finished before its Dispatch
+    // was written down. A second agent would work in the same worktree, so the
+    // worker that is there is taken: its result is read by the wait, and a
+    // result that nobody confirmed blocks the workflow instead of starting a
+    // second agent.
+    const settled = candidates.find((worker) => TERMINAL.test(worker.state ?? ''));
+    if (settled) return { worker: settled, origin: 'settled' };
+  }
+  // The agent works in a clean worktree: the review reads the committed state
+  // only, and the changes that are not committed are nobody's change.
+  const dirty = await ctx.git.dirty(worktree.path);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 10).join('; ');
+    throw new WorkflowError(
+      `The worktree ${worktree.path} is not clean — the agent works in the committed state only: ${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}.`,
+    );
   }
   let worker: OrcaWorker;
   try {
@@ -1184,10 +1370,10 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
 
   // The iteration of the work of the agent — it is opened before the agent
   // starts, so that an interrupted start is still an iteration with a report.
-  ensureIteration(record, ctx);
+  const iteration = ensureIteration(record, ctx);
 
   const started = await startOrAdoptWorker(record, ctx, {
-    spec: buildSpec(record),
+    spec: buildSpec(record, await instructionsOf(ctx, worktree.path)),
     taskTitle: `Issue #${record.issue.number}: ${record.issue.title}`,
     adopt: true,
   });
@@ -1197,11 +1383,21 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     dispatchId: started.worker.dispatchId,
     ...(started.worker.taskId ? { taskId: started.worker.taskId } : {}),
   };
+  iteration.dispatchId = started.worker.dispatchId;
   if (started.origin === 'adopted') {
     await move(
       record,
       'implementation-running',
       `the worker ${started.worker.dispatchId} was already running — it was not started again`,
+      ctx,
+    );
+    return;
+  }
+  if (started.origin === 'settled') {
+    await move(
+      record,
+      'implementation-running',
+      `the worker ${started.worker.dispatchId} had already finished — a second agent was not started in the same worktree`,
       ctx,
     );
     return;
@@ -1320,7 +1516,7 @@ async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promis
     runId,
     runDir,
   });
-  iteration.review = reviewOf(run, record, path.join(runDir, 'report.md'));
+  iteration.review = reviewOf(run, path.join(runDir, 'report.md'));
   await move(
     record,
     'review-running',
@@ -1445,9 +1641,9 @@ async function sendFindings(record: WorkflowRecord, ctx: WorkflowContext): Promi
   // not wake the agent up. The findings go to a new worker, whose brief
   // carries them.
   const started = await startOrAdoptWorker(record, ctx, {
-    spec: buildFixSpec(record, iteration),
+    spec: buildFixSpec(record, iteration, await instructionsOf(ctx, record.worktree?.path ?? '')),
     taskTitle: `Issue #${record.issue.number}: the corrections of the iteration ${iteration.index}`,
-    adopt: false,
+    adopt: true,
     ...(previous ? { exclude: previous } : {}),
   });
   record.orca = {
@@ -1458,7 +1654,8 @@ async function sendFindings(record: WorkflowRecord, ctx: WorkflowContext): Promi
   };
   // The corrections are a new iteration: the work of the agent that follows is
   // judged on its own.
-  ensureIteration(record, ctx);
+  const next = ensureIteration(record, ctx);
+  next.dispatchId = started.worker.dispatchId;
   await move(
     record,
     'implementation-running',
@@ -1479,9 +1676,17 @@ export async function advanceWorkflow(
   ctx: WorkflowContext,
 ): Promise<WorkflowRecord> {
   try {
+    // The worktree of the record is checked against the runtime once per run:
+    // the record remembers it, Orca owns it, and a worktree that is not there
+    // anymore is not the worktree the workflow started.
+    let worktreeVerified = false;
     while (!isTerminal(record.state)) {
       let keepGoing = true;
       try {
+        if (!worktreeVerified && record.worktree) {
+          await verifyWorktree(record, ctx);
+          worktreeVerified = true;
+        }
         switch (record.state) {
           case 'created':
             await loadIssue(record, ctx);

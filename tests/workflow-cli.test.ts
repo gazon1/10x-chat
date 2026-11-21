@@ -296,8 +296,8 @@ describe('the command of the workflow (CLI)', () => {
 case "$1 $2" in
 "status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create"]},"graph":{"state":"ready"}}}' ;;
 "repo list") printf '%s\\n' '{"ok":true,"result":{"repos":[{"id":"repo-1","path":"${checkout}","gitRemoteIdentity":{"canonicalKey":"github.com/gazon1/10x-chat"}}]}}' ;;
-"worktree list") printf '%s\\n' '{"ok":true,"result":{"worktrees":[]}}' ;;
-"worktree create") printf '%s\\n' '{"ok":true,"result":{"worktree":{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}}}' ;;
+"worktree list") if [ -f "${home}/worktree-created" ]; then printf '%s\\n' '{"ok":true,"result":{"worktrees":[{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}]}}'; else printf '%s\\n' '{"ok":true,"result":{"worktrees":[]}}'; fi ;;
+"worktree create") : > "${home}/worktree-created"; printf '%s\\n' '{"ok":true,"result":{"worktree":{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}}}' ;;
 "orchestration run-create") printf '%s\\n' '{"ok":true,"result":{"runId":"run-1"}}' ;;
 "orchestration worker-start") printf '%s\\n' '{"ok":true,"result":{"dispatchId":"dispatch-1","taskId":"task-1","state":"working"}}' ;;
 "orchestration worker-list") printf '%s\\n' '{"ok":true,"result":{"workers":[]}}' ;;
@@ -407,7 +407,7 @@ esac
 case "$1 $2" in
 "status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create"]},"graph":{"state":"ready"}}}' ;;
 "repo list") printf '%s\\n' '{"ok":true,"result":{"repos":[{"id":"repo-1","path":"${checkout}","gitRemoteIdentity":{"canonicalKey":"github.com/gazon1/10x-chat"}}]}}' ;;
-"worktree list") printf '%s\\n' '{"ok":true,"result":{"worktrees":[]}}' ;;
+"worktree list") printf '%s\\n' '{"ok":true,"result":{"worktrees":[{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}]}}' ;;
 "orchestration worker-list") printf '%s\\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dispatch-1","taskId":"task-1","state":"working"}]}}' ;;
 "orchestration worker-show") printf '%s\\n' '{"ok":true,"result":{"dispatchId":"dispatch-1","state":"working"}}' ;;
 "orchestration worker-start") printf '%s\\n' 'started' > "${marker}"; printf '%s\\n' '{"ok":true,"result":{"dispatchId":"dispatch-2","taskId":"task-2","state":"working"}}' ;;
