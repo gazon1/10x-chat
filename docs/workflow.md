@@ -168,11 +168,16 @@ change of the Issue.
 - **The Orca runtime** — ready, with the whole lifecycle of the worktrees and
   of the orchestration: the aggregate contract `orchestration.contract.v1`, or
   every verb of it (`run-create`, `run-list`, `worker-start`, `worker-show`,
-  `worker-list`, `worker-stop`, `check`), and the family of the worktrees
-  (`worktree.*`). A family of capabilities says nothing about the operations
-  the workflow needs, so the check is a contract and not a prefix — and the
-  workflow refuses to start before it creates anything. The repository of the
-  checkout must be registered in Orca (`orca repo add --path <path>`).
+  `worker-list`, `worker-stop`, `check`), and the verbs of the worktrees
+  (`worktree.list`, `worktree.create`, `worktree.comment`). A runtime that
+  names a verb of the worktrees has to name all of them — a runtime that
+  offers `worktree.list` alone cannot create a worktree. A runtime that names
+  no verb of the worktrees at all publishes them as the features they are
+  (`worktree.*`), and the family is what it promises. A family of capabilities
+  says nothing about the operations the workflow needs, so the check is a
+  contract and not a prefix — and the workflow refuses to start before it
+  creates anything. The repository of the checkout must be registered in Orca
+  (`orca repo add --path <path>`).
 - **A review backend** — the same ones the `review` command uses
   (`--backend chatgpt-use` by default). The review of the change is the
   pipeline of the repository, not a second one.
@@ -201,8 +206,9 @@ The workflow reports `completed` only when **all** of these hold:
 6. the worktree is clean — the review reads the committed state only, and a
    change that is not committed is a change that nobody judged;
 7. the approval is bound to the version of the requirements that the review
-   really read — the record keeps the hash of that version, not the hash the
-   workflow remembers.
+   really read — the record keeps the hash of that version, and the hash the
+   workflow remembers has to be the same one: an approval of another version of
+   the Issue is not an approval of this change, whatever the verdict says.
 
 Anything else ends in `blocked` with the reason. **An approval of the model is
 not an approval of a human**: the worktree of the workflow stays for a human,
@@ -255,6 +261,11 @@ The instructions are **data of the task**, like the body of the Issue: they
 decide how the change is written, and they never override the rules of the
 brief. The corrections of a review are a new worker with a brief of their own,
 and it gets the same instructions.
+
+An `AGENTS.md` that is not there is a checkout without rules of its own. An
+`AGENTS.md` that is there and cannot be read is another thing: the rules of the
+repository are unknown, and an agent that does not know them works against
+them — the agent is not started.
 
 ## The stop stops every worker
 

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
-  appendFile,
   chmod,
   lstat,
   mkdir,
@@ -228,31 +227,57 @@ export async function loadWorkflow(id: string): Promise<WorkflowRecord> {
   return parsed;
 }
 
-/** The ids of the workflows of the store — the newest first. */
+/**
+ * The ids of the workflows of the store — the newest first.
+ *
+ * A store that is not there yet holds no workflow. A store that cannot be
+ * read holds an unknown number of them: the error is not swallowed, because
+ * an empty list would let a second workflow of an Issue start next to the
+ * first one.
+ */
 export async function listWorkflows(): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(getWorkflowsDir());
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new Error(
+      `The workflows cannot be listed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return entries.sort();
 }
 
-/** Append an event to the history of a workflow. */
+/**
+ * Append an event to the history of a workflow.
+ *
+ * The history is a part of the evidence of the run: it stays in the store, it
+ * is a file of the owner alone, and it is never a link to another file.
+ */
 export async function appendEvent(id: string, event: WorkflowEvent): Promise<void> {
   const dir = getWorkflowDir(id);
   await privateDir(dir);
-  await appendFile(eventsPath(id), `${JSON.stringify(event)}\n`, {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
+  const file = eventsPath(id);
+  await refuseLinks(file);
+  await enforcePrivacy(file);
+  const handle = await open(
+    file,
+    constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    if (process.platform !== 'win32') await handle.chmod(0o600);
+    await handle.writeFile(`${JSON.stringify(event)}\n`, 'utf-8');
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The history of a workflow — the events, in the order they happened. */
 export async function readEvents(id: string): Promise<WorkflowEvent[]> {
   let content: string;
   try {
+    await refuseLinks(eventsPath(id));
     content = await readFile(eventsPath(id), 'utf-8');
   } catch {
     return [];

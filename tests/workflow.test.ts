@@ -33,7 +33,13 @@ import {
   type WorkflowContext,
   type WorkflowReviewRequest,
 } from '../src/workflow/orchestrator.js';
-import { listWorkflows, loadWorkflow, readEvents, saveWorkflow } from '../src/workflow/store.js';
+import {
+  appendEvent,
+  listWorkflows,
+  loadWorkflow,
+  readEvents,
+  saveWorkflow,
+} from '../src/workflow/store.js';
 import { assertTransition, canTransition, isTerminal } from '../src/workflow/transitions.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
 
@@ -74,7 +80,7 @@ class FakeOrca implements OrcaApi {
   /** The checkpoints the workflow wrote into the comment of the worktree. */
   readonly comments: { selector: string; comment: string }[] = [];
   ready = true;
-  capabilities = ['orchestration.contract.v1', 'worktree.create'];
+  capabilities = ['orchestration.contract.v1', 'worktree.create-agent-options.v1'];
   repos: OrcaRepo[] = [
     {
       id: 'repo-1',
@@ -225,13 +231,15 @@ class FakeGit implements WorkflowGit {
   commonDirs: Record<string, string> = {};
   /** The branches of the paths — the map of the paths that are on a branch. */
   branches: Record<string, string> = {};
+  /** The repositories of the paths — the map of the paths of another repository. */
+  repositories: Record<string, string> = {};
   /** The branch of the worktree of the Issue — the branch the workflow wants. */
   defaultBranch = '10x-chat/issue-59';
   /** The URL of the origin remote of the checkout. */
   remote = 'https://github.com/gazon1/10x-chat.git';
 
-  async repository() {
-    return this.repositoryName;
+  async repository(cwd: string) {
+    return this.repositories[cwd] ?? this.repositoryName;
   }
 
   async remoteUrl() {
@@ -934,7 +942,7 @@ describe('the development workflow', () => {
   it('does not create a worktree when the runtime cannot orchestrate', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
-    orca.capabilities = ['worktree.create'];
+    orca.capabilities = ['worktree.create-agent-options.v1'];
     const ctx = contextOf(orca, git);
 
     await expect(
@@ -1550,7 +1558,15 @@ describe('the development workflow', () => {
     orca.onCheck = () => {
       git.head = 'head-sha-1';
     };
-    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    const { review } = fakeReview(git, [
+      {
+        verdict: 'APPROVE',
+        reason: 'the change is correct',
+        // The version of the requirements that the review read — the same
+        // version the workflow started with.
+        requirementsHash: hashRequirements('The issue of the workflow', 'The body of the issue.'),
+      },
+    ]);
     const ctx = contextOf(orca, git, { review, useRealGh: true, cwd: checkout, ghEnv });
 
     const record = await startWorkflow(
@@ -1974,7 +1990,7 @@ describe('the development workflow', () => {
     expect(seen).toHaveLength(1);
   });
 
-  it('binds the verdict to the requirements that the review really read', async () => {
+  it('blocks when the review judged another version of the requirements', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
     orca.onCheck = () => {
@@ -1994,9 +2010,13 @@ describe('the development workflow', () => {
       ctx,
     );
 
-    // The approval is bound to the version of the requirements that the
-    // review read — not to the version the workflow remembers.
+    // The version of the requirements that the review read is recorded — it
+    // is the evidence of what the reviewers judged.
     expect(record.iterations[0]?.review?.requirementsHash).toBe('hash-of-the-read-requirements');
+    // An approval of another version of the Issue is not an approval of this
+    // change: the workflow does not complete.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toMatch(/another version/);
   });
 
   it('needs the whole lifecycle of the orchestration, not a family of capabilities', async () => {
@@ -2005,7 +2025,7 @@ describe('the development workflow', () => {
     // The runtime advertises the family of the orchestration but not the
     // operations of it.
     orca.capabilities = [
-      'worktree.create',
+      'worktree.create-agent-options.v1',
       'orchestration.run-create',
       'orchestration.run-list',
       'orchestration.worker-start',
@@ -2027,7 +2047,7 @@ describe('the development workflow', () => {
     const git = new FakeGit();
     // No aggregate contract — every verb of the lifecycle is advertised.
     orca.capabilities = [
-      'worktree.create',
+      'worktree.create-agent-options.v1',
       'orchestration.run-create',
       'orchestration.run-list',
       'orchestration.worker-start',
@@ -2069,6 +2089,112 @@ describe('the development workflow', () => {
     const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
 
     await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/another branch|is on the branch/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not continue on a worktree that Orca moved to another path', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-77777777', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    // The same worktree of Orca — but it is at another path now.
+    orca.worktrees = [{ id: 'wt-1', path: '/wt/other', branch: '10x-chat/issue-59' }];
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/is at \/wt\/other/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not continue on a worktree whose branch Orca does not name', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-66666666', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    // The branch of the worktree is not named: nothing proves that the agent
+    // would work on the branch of the workflow.
+    orca.worktrees = [{ id: 'wt-1', path: '/wt/issue-59' }];
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/does not name the branch/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not continue on a worktree that belongs to another repository', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-55555555', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.worktrees = [anOrcaWorktree()];
+    // The checkout of the worktree belongs to another repository.
+    git.repositories = { '/wt/issue-59': 'other/repo' };
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/belongs to the repository/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses to start a workflow when the store cannot be listed', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The store of the workflows is there, but its content cannot be read.
+    const store = path.join(home, 'workflows');
+    await mkdir(store, { recursive: true });
+    await chmod(store, 0o300);
+    const ctx = contextOf(orca, git);
+
+    // A store that cannot be read may still hold a workflow of this Issue:
+    // the start is refused instead of started next to it.
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/cannot be listed/);
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('refuses a runtime that names only one verb of the worktrees', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The runtime names a verb of the worktrees — and not the others. A
+    // runtime that cannot create a worktree cannot run the workflow.
+    orca.capabilities = ['orchestration.contract.v1', 'worktree.create'];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/worktree\.list/);
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('refuses to start an agent when the instructions of the repository cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The AGENTS.md of the worktree is there and cannot be read: it is a
+    // directory, not a file.
+    const worktree = path.join(home, 'wt');
+    await mkdir(path.join(worktree, 'AGENTS.md'), { recursive: true });
+    const record = aRecord('issue-59-44444444', 'worktree-created');
+    record.worktree = {
+      id: 'wt-1',
+      path: worktree,
+      branch: '10x-chat/issue-59',
+      baseRef: 'main',
+      baseSha: 'base-sha',
+    };
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    orca.worktrees = [{ id: 'wt-1', path: worktree, branch: '10x-chat/issue-59' }];
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    // The rules of the repository are unknown — the agent is not started.
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/instructions of the repository/);
 
     expect(orca.started).toHaveLength(0);
   });
@@ -2202,6 +2328,39 @@ describe('the store of the workflows', () => {
     // The record of a workflow is its owner's: a link in the store would take
     // the read outside of it.
     await expect(loadWorkflow(record.id)).rejects.toThrow('symbolic link');
+  });
+
+  it('refuses to write the events of a workflow through a link', async () => {
+    if (process.platform === 'win32') return;
+    const record = aRecord();
+    await saveWorkflow(record);
+    const dir = getWorkflowDir(record.id);
+    const file = path.join(dir, 'events.jsonl');
+    const outside = path.join(home, 'outside.jsonl');
+    await writeFile(outside, '', 'utf-8');
+    await symlink(outside, file);
+
+    // The history of a workflow is its evidence: a link would take the write
+    // outside of the store.
+    await expect(
+      appendEvent(record.id, { at: '2026-01-01T00:00:00.000Z', state: 'created', detail: 'x' }),
+    ).rejects.toThrow('symbolic link');
+  });
+
+  it('keeps the events of a workflow private', async () => {
+    const record = aRecord();
+    await saveWorkflow(record);
+    await appendEvent(record.id, {
+      at: '2026-01-01T00:00:00.000Z',
+      state: 'created',
+      detail: 'the workflow started',
+    });
+
+    const file = path.join(getWorkflowDir(record.id), 'events.jsonl');
+    const info = await stat(file);
+    // The history of the run belongs to the owner of the run alone.
+    if (process.platform !== 'win32') expect(info.mode & 0o777).toBe(0o600);
+    expect(await readEvents(record.id)).toHaveLength(1);
   });
 });
 

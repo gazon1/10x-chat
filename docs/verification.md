@@ -551,3 +551,25 @@ own CLI, and it does not depend on the machine it runs on any more. The
 environment of the process is also changed in place in the tests of the
 workflow: a copy of it is not the environment that the child processes
 inherit.
+
+### The ninth round
+
+The ninth round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with seven findings: five of the severity MAJOR
+and two MINOR ones. The verification settled six of them: four MAJOR and both
+MINOR ones were real. The one that stayed unsettled is the reading of the
+reviewers, and it was checked against the source — it was real as well and is
+fixed in the same round.
+
+| Finding of the ninth round | The answer |
+|---|---|
+| the preflight accepted any capability of the family `worktree.*`, so a runtime that can create a worktree but cannot list or comment in one was accepted | the verbs of the worktrees are required one by one: a runtime that names one of them (`worktree.list`, `worktree.create`, `worktree.comment`) must name all of them, and a runtime that names none of them — the real Orca names none — is judged by the family `worktree.*`. The family alone still says nothing about the operations the workflow needs |
+| `verifyWorktree` accepted a worktree by its id alone, without comparing the path, and skipped the branch when Orca did not name it | the identity of the worktree is proved and not assumed: the id, the path, the branch of Orca (a branch that is not named is a refusal, not a pass) and the repository of the git (`commonDir` and `repository` against the repository of the record) |
+| `listWorkflows` swallowed every error of the read of the directory and answered an empty store, so a store that cannot be read looked like a store without workflows and a second workflow of the same Issue was allowed | a directory that does not exist is an empty store, every other failure is an error: the workflow refuses to start when the workflows of the store cannot be listed |
+| the instructions of the repository were read into an empty brief when `AGENTS.md` could not be read | an `AGENTS.md` that does not exist is no instructions, and an `AGENTS.md` that cannot be read is a refusal: the agent never starts with a brief that silently lost the rules of the repository |
+| the file of the events was appended without the protections of the store: a link in the store was followed and the mode of an existing file was not set | the file of the events is a file of the store now: the directory is made private before the write, a link is refused, the file is opened without following a link (`O_NOFOLLOW`) and it keeps the mode `0600` |
+| the verdict of the review was not compared with the version of the requirements the workflow started with, so an approval of another version of the Issue completed the workflow | the review carries the hash of the requirements it really read (`review.requirementsHash`), and the settlement refuses the run when that hash is empty or differs from the hash of the Issue the workflow started with — an approval of another version of the requirements blocks the workflow |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1209
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

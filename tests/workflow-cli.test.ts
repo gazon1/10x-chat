@@ -294,7 +294,7 @@ describe('the command of the workflow (CLI)', () => {
       path.join(bin, 'orca'),
       `#!/bin/sh
 case "$1 $2" in
-"status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create"]},"graph":{"state":"ready"}}}' ;;
+"status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create-agent-options.v1"]},"graph":{"state":"ready"}}}' ;;
 "repo list") printf '%s\\n' '{"ok":true,"result":{"repos":[{"id":"repo-1","path":"${checkout}","gitRemoteIdentity":{"canonicalKey":"github.com/gazon1/10x-chat"}}]}}' ;;
 "worktree list") if [ -f "${home}/worktree-created" ]; then printf '%s\\n' '{"ok":true,"result":{"worktrees":[{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}]}}'; else printf '%s\\n' '{"ok":true,"result":{"worktrees":[]}}'; fi ;;
 "worktree create") : > "${home}/worktree-created"; printf '%s\\n' '{"ok":true,"result":{"worktree":{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}}}' ;;
@@ -405,7 +405,7 @@ esac
       path.join(bin, 'orca'),
       `#!/bin/sh
 case "$1 $2" in
-"status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create"]},"graph":{"state":"ready"}}}' ;;
+"status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create-agent-options.v1"]},"graph":{"state":"ready"}}}' ;;
 "repo list") printf '%s\\n' '{"ok":true,"result":{"repos":[{"id":"repo-1","path":"${checkout}","gitRemoteIdentity":{"canonicalKey":"github.com/gazon1/10x-chat"}}]}}' ;;
 "worktree list") printf '%s\\n' '{"ok":true,"result":{"worktrees":[{"id":"wt-1","path":"${worktree}","branch":"10x-chat/issue-59"}]}}' ;;
 "orchestration worker-list") printf '%s\\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dispatch-1","taskId":"task-1","state":"working"}]}}' ;;

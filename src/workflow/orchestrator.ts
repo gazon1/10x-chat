@@ -161,6 +161,9 @@ const REQUIRED_ORCHESTRATION_VERBS = [
   'orchestration.check',
 ];
 
+/** The verbs of the worktrees that the workflow uses. */
+const REQUIRED_WORKTREE_VERBS = ['worktree.list', 'worktree.create', 'worktree.comment'];
+
 /**
  * What the runtime of Orca is missing for the workflow.
  *
@@ -168,12 +171,21 @@ const REQUIRED_ORCHESTRATION_VERBS = [
  * happens to be named `orchestration.` says nothing about the operations the
  * workflow needs, and the workflow refuses to create anything before it knows
  * that the whole lifecycle is there.
+ *
+ * The worktrees are the same: a runtime that names its verbs has to name all
+ * of them — a runtime that offers `worktree.list` alone cannot create a
+ * worktree. A runtime that names no verb of the worktrees at all publishes
+ * them as the features they are, and the family is what it promises.
  */
 export function missingCapabilities(capabilities: string[]): string[] {
   const missing: string[] = [];
-  // The worktrees: Orca publishes the features of the worktrees as separate
-  // flags and no aggregate contract, so the family is what it promises.
-  if (!capabilities.some((capability) => capability.startsWith('worktree.'))) {
+  // The worktrees: the verbs, or the family of the features of the worktrees.
+  const named = REQUIRED_WORKTREE_VERBS.filter((verb) => capabilities.includes(verb));
+  if (named.length > 0) {
+    for (const verb of REQUIRED_WORKTREE_VERBS) {
+      if (!capabilities.includes(verb)) missing.push(verb);
+    }
+  } else if (!capabilities.some((capability) => capability.startsWith('worktree.'))) {
     missing.push('worktree.*');
   }
   // The orchestration: the aggregate contract, or every verb of it.
@@ -660,9 +672,15 @@ async function defaultInstructions(cwd: string): Promise<string> {
   try {
     const content = await readFile(path.join(cwd, 'AGENTS.md'), 'utf-8');
     return content.trim();
-  } catch {
-    // A checkout without AGENTS.md has no instructions to carry.
-    return '';
+  } catch (error) {
+    // A checkout without AGENTS.md has no instructions to carry. A file that
+    // is there and cannot be read is another thing: the rules of the
+    // repository are unknown, and an agent that does not know them works
+    // against them.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw new WorkflowError(
+      `The instructions of the repository (AGENTS.md of ${cwd}) cannot be read: ${error instanceof Error ? error.message : String(error)} — the agent is not started without the rules of the repository.`,
+    );
   }
 }
 
@@ -1085,10 +1103,16 @@ function sameBranch(branch: string | undefined, expected: string): boolean {
  * The worktree of the record has to be the worktree of Orca.
  *
  * The record remembers a worktree; the runtime of Orca owns it. A worktree
- * that was removed, renamed or moved to another branch is not the worktree the
- * workflow started, and an agent that works in it works somewhere else. The
- * check is a refusal, not a repair: the workflow never takes a worktree of
- * another workflow and never creates a second one for the same Issue.
+ * that was removed, renamed, moved to another path or moved to another branch
+ * is not the worktree the workflow started, and an agent that works in it
+ * works somewhere else. The check is a refusal, not a repair: the workflow
+ * never takes a worktree of another workflow and never creates a second one
+ * for the same Issue.
+ *
+ * The identity is proved, not assumed: the id, the path, the branch of Orca,
+ * the branch of the git of the checkout and the repository the checkout
+ * belongs to. A runtime that does not name the branch of a worktree cannot
+ * prove anything about it, and a worktree it cannot prove is not taken.
  */
 async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   const worktree = record.worktree;
@@ -1103,17 +1127,50 @@ async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The worktrees of the repository could not be read (${reason}) — the workflow does not continue on an unknown worktree.`,
     );
   }
-  const found =
-    list.find((entry) => entry.id === worktree.id) ??
-    list.find((entry) => samePath(entry.path, worktree.path));
+  const found = list.find((entry) => entry.id === worktree.id);
   if (!found) {
     throw new WorkflowError(
       `The worktree ${worktree.path} of the workflow is not in Orca anymore — the workflow does not continue on a worktree it does not own.`,
     );
   }
-  if (found.branch && !sameBranch(found.branch, worktree.branch)) {
+  if (!samePath(found.path, worktree.path)) {
+    throw new WorkflowError(
+      `The worktree ${worktree.id} of Orca is at ${found.path} — the workflow started it at ${worktree.path}. The worktree of the workflow is not the worktree of Orca.`,
+    );
+  }
+  if (!found.branch) {
+    throw new WorkflowError(
+      `Orca does not name the branch of the worktree ${worktree.path} — the workflow cannot prove that the agent works on ${worktree.branch}.`,
+    );
+  }
+  if (!sameBranch(found.branch, worktree.branch)) {
     throw new WorkflowError(
       `The worktree ${worktree.path} is on the branch ${found.branch} — the workflow started it on ${worktree.branch}. The worktree of the workflow is not the worktree of Orca.`,
+    );
+  }
+  // The checkout itself: the branch of its git and the repository it belongs
+  // to. Orca names the worktree, the git is the proof of the ownership.
+  const branch = await ctx.git.branch(worktree.path);
+  if (branch === '') {
+    throw new WorkflowError(
+      `The branch of the worktree ${worktree.path} cannot be read — the workflow cannot prove that the agent works on ${worktree.branch}.`,
+    );
+  }
+  if (!sameBranch(branch, worktree.branch)) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} works on the branch ${branch} — the workflow of this Issue works on the branch ${worktree.branch}.`,
+    );
+  }
+  const common = await ctx.git.commonDir(worktree.path);
+  if (common === '') {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} is not a checkout of a repository — the workflow cannot prove that the agent works in the repository of the Issue.`,
+    );
+  }
+  const repository = await ctx.git.repository(worktree.path);
+  if (repository && repository !== record.repository) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} belongs to the repository ${repository} — the workflow of this Issue works in ${record.repository}.`,
     );
   }
 }
@@ -1611,6 +1668,26 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
     return;
   }
 
+  // The review must have judged the version of the requirements that the
+  // workflow started with: an approval of another version of the Issue is not
+  // an approval of this change, whatever the verdict says.
+  if (!review.requirementsHash) {
+    await block(
+      record,
+      `The review did not read the requirements of the issue #${record.issue.number} — the workflow cannot prove what the reviewers judged.`,
+      ctx,
+    );
+    return;
+  }
+  if (review.requirementsHash !== record.issue.hash) {
+    await block(
+      record,
+      `The review judged the issue #${record.issue.number} in another version — the workflow started with ${record.issue.hash.slice(0, 7)} and the review read ${review.requirementsHash.slice(0, 7)}.`,
+      ctx,
+    );
+    return;
+  }
+
   if (review.verdict === 'APPROVE') {
     await move(
       record,
@@ -1854,7 +1931,18 @@ async function activeWorkflowOf(
   repository: string,
   issue: number,
 ): Promise<WorkflowRecord | undefined> {
-  for (const id of await listWorkflows()) {
+  let ids: string[];
+  try {
+    ids = await listWorkflows();
+  } catch (error) {
+    // A store that cannot be listed may still hold a workflow of this Issue:
+    // an empty list would let a second workflow start next to the first one,
+    // and two agents would work in the same worktree.
+    throw new WorkflowError(
+      `The workflows of the store cannot be listed: ${error instanceof Error ? error.message : String(error)} — no second workflow of the Issue ${issue} is started.`,
+    );
+  }
+  for (const id of ids) {
     let record: WorkflowRecord | undefined;
     try {
       record = await storedRecord(id);
