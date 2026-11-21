@@ -1854,6 +1854,10 @@ describe('the development workflow', () => {
       } catch (caught) {
         error = caught;
       }
+      // The workflow is blocked with the reason — it is not a workflow that
+      // runs, and it did not create anything.
+      const [id] = await listWorkflows();
+      expect((await loadWorkflow(id)).state).toBe('blocked');
       return { orca, error };
     }
 
