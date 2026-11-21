@@ -748,6 +748,43 @@ describe('the development workflow', () => {
     expect(record.blocked).toContain('changed during the review');
   });
 
+  it('blocks when a commit lands after the review and before the approval', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review: fake } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    // The review is done: from now on, the next clean read of the worktree —
+    // the one the approval makes — is followed by a commit from somebody else.
+    let reviewed = false;
+    const review = async (request: WorkflowReviewRequest) => {
+      const run = await fake(request);
+      reviewed = true;
+      return run;
+    };
+    // Every check of the approval is asynchronous, and the commit lands between
+    // two of them: the review read `head-sha-1`, and the worktree is at
+    // `head-sha-2` when the workflow would approve it. The worktree is clean —
+    // the change is committed — so the dirty check does not see it either.
+    const originalDirty = git.dirty.bind(git);
+    git.dirty = async (cwd: string) => {
+      const paths = await originalDirty(cwd);
+      if (reviewed) git.head = 'head-sha-2';
+      return paths;
+    };
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, { review }),
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('changed under the approval');
+  });
+
   it('blocks when the issue changed while the workflow ran', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();

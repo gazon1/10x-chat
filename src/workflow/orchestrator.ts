@@ -2621,6 +2621,19 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
   }
 
   if (review.verdict === 'APPROVE') {
+    // The head is read once more immediately before the approval: every check
+    // above is asynchronous, and a commit that lands between two of them is a
+    // change the review never read. The head that is there **now** is the head
+    // the approval is bound to.
+    const approved = await ctx.git.revParse(worktree.path, 'HEAD');
+    if (approved !== review.headSha) {
+      await block(
+        record,
+        `The head of the worktree changed under the approval — the review read ${review.headSha.slice(0, 7)} and it is ${approved.slice(0, 7)}.`,
+        ctx,
+      );
+      return;
+    }
     await move(
       record,
       'completed',

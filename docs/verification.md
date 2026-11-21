@@ -966,3 +966,22 @@ nothing was merged.
 The check set of the tree is the one of the round before it: typecheck, lint,
 knip, test (63 files / **1294 tests**), e2e (22 CLI scenarios, the 10 live
 provider scenarios skipped) and build — all pass.
+
+### The twenty-fourth round — the approval of the head that is there
+
+The twenty-fourth round ran completely and returned **REQUEST CHANGES** with two
+findings. The first one is a real defect and was confirmed by the verification
+of the pipeline; the second one is not — the test it says is missing is there.
+
+| Finding of the twenty-fourth round | The answer |
+|---|---|
+| `settleReview()` compared the head of the worktree with the head the review read, and then ran several asynchronous checks — the Issue, the identity of the worktree, the cleanliness of the checkout — before the approval. A commit that landed between two of them was approved without ever being reviewed, and the clean check of the checkout did not see it, because the change was committed | the head is read **once more, immediately before the approval**: every check above is asynchronous, and the head that is there now is the head the approval is bound to. A commit that lands under the approval blocks the workflow |
+| the duplicate-start guarantee is not covered by a concurrent test | it is: `does not start two agents when two processes start the same Issue` starts two workflows of the same Issue with `Promise.allSettled()`, and asserts that one of them is refused by the lock of the Issue and that a single agent was started |
+
+A test was added with the fix, and it fails without it: a commit that lands
+after the review and before the approval blocks the workflow instead of
+completing it.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1295
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
