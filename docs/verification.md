@@ -912,3 +912,26 @@ before the workflow blocks.
 The check set of that round: typecheck, lint, knip, test (63 files /**1291
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twenty-second round
+
+The twenty-second round ran completely — every step of the pipeline passed and
+the baseline of the Issue advanced — and returned **REQUEST CHANGES** with three
+findings: two of the severity MAJOR and one MINOR. Two of them are real defects
+and were confirmed by the verification of the pipeline; the third is a gap of
+the tests.
+
+| Finding of the twenty-second round | The answer |
+|---|---|
+| a worker that the workflow **found** and that named no worktree was adopted on the strength of its branch alone. Another checkout of the same repository holds the same branch names, so the agent may have been changing the checkout of the user while the workflow reviewed a different worktree | a worker that names no worktree is not adopted at all: a branch is a name, not the identity of a checkout — the proof of a worker is the checkout it really is, and a worker that cannot be proved is refused and stopped (unless it provably works elsewhere) |
+| `defaultInstructions()` read `AGENTS.md` with `readFile()`, which follows a symbolic link. A repository whose `AGENTS.md` is a link to a private file would carry that file into the brief of the agent | the file is opened with `O_NOFOLLOW`: a link is a checkout whose instructions cannot be read as a text of the repository, the agent is not started, and the file never reaches a brief |
+| the command line refuses an invalid `--issue` but the tests never exercise `--max-iterations` and `--wait`, which are two separate validation branches of the same parser | the test walks the three invalid forms (a zero, a negative number, a word) through both options: each of them is a failure of the command, and the workflow is never started with a limit that would approve nothing |
+
+Three tests were added with the fixes, and the three that prove a defect fail
+without it: a worker on the branch alone is not adopted, the instructions of the
+repository are not read through a link, and the two numeric options of the
+command line refuse every value that is not a positive integer.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1294
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

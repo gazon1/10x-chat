@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
@@ -820,9 +821,24 @@ ${fence}
 
 /** The instructions of the repository of a checkout — `AGENTS.md` of its root. */
 async function defaultInstructions(cwd: string): Promise<string> {
+  const file = path.join(cwd, 'AGENTS.md');
+  let content: string;
   try {
-    const content = await readFile(path.join(cwd, 'AGENTS.md'), 'utf-8');
-    return content.trim();
+    // The instructions are a file of the repository, and a repository may hold
+    // a link where a file belongs: `readFile()` follows a link, and an
+    // `AGENTS.md` that points at a file of the user would carry that file —
+    // a private key, a token — into the brief of an agent of somebody else.
+    // The file is opened without following a link, and a link is a checkout
+    // whose instructions cannot be read as a text of the repository.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      content = await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     // A checkout without AGENTS.md has no instructions to carry. A file that
     // is there and cannot be read is another thing: the rules of the
@@ -833,6 +849,7 @@ async function defaultInstructions(cwd: string): Promise<string> {
       `The instructions of the repository (AGENTS.md of ${cwd}) cannot be read: ${error instanceof Error ? error.message : String(error)} — the agent is not started without the rules of the repository.`,
     );
   }
+  return content.trim();
 }
 
 /** The instructions of the repository — the seam the tests replace. */
@@ -1784,13 +1801,16 @@ async function proveWorkerWorktree(
         reason: `The worker ${worker.dispatchId} works in ${workerPath} — the workflow of this Issue works in ${worktree.path}. It is not the worker of this workflow.`,
       };
     }
-  } else if (options.found && !worker.branch) {
-    // The worker of the Run names neither its worktree nor its branch: the
-    // workflow cannot prove that it works in the worktree of the workflow.
+  } else if (options.found) {
+    // The worker of the Run names no worktree: the branch of a checkout is not
+    // the proof of it — another checkout of the repository holds the same
+    // branch names, and the worker may be changing the checkout of the user.
+    // The workflow adopts a worker it can prove, and this one it cannot: a
+    // branch that matches is a name, not an identity.
     return {
       proved: false,
       elsewhere: false,
-      reason: `The worker ${worker.dispatchId} names neither the worktree it works in nor its branch — the workflow cannot prove that it works in ${worktree.path}, and it does not adopt a worker it cannot identify.`,
+      reason: `The worker ${worker.dispatchId} does not name the worktree it works in — the workflow cannot prove that it works in ${worktree.path}, and it does not adopt a worker it cannot identify.`,
     };
   }
   if (worker.branch && !sameBranch(worker.branch, worktree.branch)) {

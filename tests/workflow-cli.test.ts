@@ -111,6 +111,28 @@ describe('the command of the workflow (CLI)', () => {
     expect(res.output).toContain('Invalid --issue value');
   });
 
+  it('refuses a limit of the iterations and a wait that are not numbers', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+
+    // A zero, a negative number and a word are not a limit: the iteration
+    // bound is the gate that turns a loop into a `blocked` workflow, and a
+    // negative one would approve nothing.
+    for (const value of ['0', '-1', 'three']) {
+      const limit = await runCli(
+        ['workflow', 'start', '--issue', '59', '--max-iterations', value],
+        { TEN_X_CHAT_HOME: home },
+      );
+      expect(limit.code).toBe(1);
+      expect(limit.output).toContain('Invalid --max-iterations value');
+
+      const wait = await runCli(['workflow', 'start', '--issue', '59', '--wait', value], {
+        TEN_X_CHAT_HOME: home,
+      });
+      expect(wait.code).toBe(1);
+      expect(wait.output).toContain('Invalid --wait value');
+    }
+  });
+
   it('stops a workflow that waits for its agent', async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
     const original = process.env.TEN_X_CHAT_HOME;

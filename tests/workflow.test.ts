@@ -2073,6 +2073,29 @@ describe('the development workflow', () => {
     expect(orca.started).toHaveLength(0);
   });
 
+  it('does not adopt a worker on the branch alone when it names no worktree', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The worker of the Run names the branch of the Issue but no checkout.
+    // Another checkout of the same repository holds the same branch name, and
+    // the worker may be changing the checkout of the user: the branch is a
+    // name, not the identity of a checkout.
+    const nameless = orca.workerOf('dispatch-nameless', 'task-nameless');
+    delete nameless.worktreePath;
+    nameless.branch = '10x-chat/issue-59';
+    orca.workers = [nameless];
+    orca.messages = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/does not name the worktree it works in/);
+
+    // The worker was neither adopted nor left to work in a checkout nobody
+    // proved: it was started by somebody else, and the workflow blocks.
+    expect(orca.started).toHaveLength(0);
+  });
+
   it('takes the worker of a lost answer instead of starting a second one', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -2975,6 +2998,36 @@ describe('the development workflow', () => {
     // The rules of the repository are unknown — the agent is not started.
     await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/instructions of the repository/);
 
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses to read the instructions of the repository through a link', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The AGENTS.md of the worktree is a link to a private file. `readFile()`
+    // follows a link, and the workflow would carry that file into the brief of
+    // an agent of somebody else: the link is not a text of the repository.
+    const worktree = path.join(home, 'wt-link');
+    await mkdir(worktree, { recursive: true });
+    const secret = path.join(home, 'id_ed25519');
+    await writeFile(secret, 'PRIVATE KEY', 'utf-8');
+    await symlink(secret, path.join(worktree, 'AGENTS.md'));
+    const record = aRecord('issue-59-45454545', 'worktree-created');
+    record.worktree = {
+      id: 'wt-1',
+      path: worktree,
+      branch: '10x-chat/issue-59',
+      baseRef: 'main',
+      baseSha: 'base-sha',
+    };
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    orca.worktrees = [{ id: 'wt-1', path: worktree, branch: '10x-chat/issue-59' }];
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/instructions of the repository/);
+
+    // The agent was not started, and the private file reached no brief.
     expect(orca.started).toHaveLength(0);
   });
 
