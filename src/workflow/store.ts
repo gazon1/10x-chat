@@ -228,7 +228,10 @@ export async function loadWorkflow(id: string): Promise<WorkflowRecord> {
 }
 
 /**
- * The ids of the workflows of the store — the newest first.
+ * The ids of the workflows of the store — sorted by their id.
+ *
+ * The id of a workflow carries its Issue and the moment of its creation, so
+ * the order of the ids is the order of the runs.
  *
  * A store that is not there yet holds no workflow. A store that cannot be
  * read holds an unknown number of them: the error is not swallowed, because
@@ -249,6 +252,27 @@ export async function listWorkflows(): Promise<string[]> {
 }
 
 /**
+ * Write a file of a workflow — the report of the run, for example.
+ *
+ * The file belongs to its owner alone: the links of the store are refused
+ * before the write, the directory is made private, and the file is written
+ * atomically with the mode of a private file. A report that is a link to
+ * another file would write outside of the store.
+ */
+export async function writeWorkflowFile(
+  id: string,
+  name: string,
+  content: string,
+): Promise<string> {
+  const file = path.join(getWorkflowDir(id), name);
+  await refuseLinks(file);
+  await privateDir(getWorkflowsDir());
+  await privateDir(getWorkflowDir(id));
+  await writeAtomic(file, content);
+  return file;
+}
+
+/**
  * Append an event to the history of a workflow.
  *
  * The history is a part of the evidence of the run: it stays in the store, it
@@ -256,9 +280,12 @@ export async function listWorkflows(): Promise<string[]> {
  */
 export async function appendEvent(id: string, event: WorkflowEvent): Promise<void> {
   const dir = getWorkflowDir(id);
-  await privateDir(dir);
   const file = eventsPath(id);
+  // The links are refused before the directory is touched: `mkdir()` and
+  // `chmod()` follow a link, and a refused append must not change anything
+  // outside of the store either.
   await refuseLinks(file);
+  await privateDir(dir);
   await enforcePrivacy(file);
   const handle = await open(
     file,
@@ -273,14 +300,24 @@ export async function appendEvent(id: string, event: WorkflowEvent): Promise<voi
   }
 }
 
-/** The history of a workflow — the events, in the order they happened. */
+/**
+ * The history of a workflow — the events, in the order they happened.
+ *
+ * A workflow that has no history yet has no file of events: that is an empty
+ * history. Every other failure is an error — a history that cannot be read is
+ * evidence that cannot be seen, and it is never reported as an empty one.
+ */
 export async function readEvents(id: string): Promise<WorkflowEvent[]> {
+  const file = eventsPath(id);
   let content: string;
   try {
-    await refuseLinks(eventsPath(id));
-    content = await readFile(eventsPath(id), 'utf-8');
-  } catch {
-    return [];
+    await refuseLinks(file);
+    content = await readFile(file, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new Error(
+      `Cannot read the history of the workflow ${id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const events: WorkflowEvent[] = [];
   for (const line of content.split('\n')) {

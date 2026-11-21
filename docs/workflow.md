@@ -206,11 +206,14 @@ change of the Issue.
   names a verb of the worktrees has to name all of them — a runtime that
   offers `worktree.list` alone cannot create a worktree. A runtime that names
   no verb of the worktrees at all publishes them as the features they are
-  (`worktree.*`), and the family is what it promises. A family of capabilities
-  says nothing about the operations the workflow needs, so the check is a
-  contract and not a prefix — and the workflow refuses to start before it
-  creates anything. The repository of the checkout must be registered in Orca
-  (`orca repo add --path <path>`).
+  (`worktree.*`) — the real Orca publishes twenty-six capabilities of that
+  family and not one verb of them — and then the family has to promise the
+  creation of a worktree (`worktree.create…`): a family that promises nothing
+  about the creation cannot create one. The operations of the worktrees are
+  never taken from the names: they are **proved**. The workflow reads the
+  worktrees of the repository before it creates anything, and a runtime whose
+  worktrees cannot be read is a refusal, not a promise. The repository of the
+  checkout must be registered in Orca (`orca repo add --path <path>`).
 - **A review backend** — the same ones the `review` command uses
   (`--backend chatgpt-use` by default). The review of the change is the
   pipeline of the repository, not a second one.
@@ -282,6 +285,16 @@ says `succeeded` is terminal, not successful: a worker that reports no
 structured outcome leaves the result of its Task unknown, and the workflow
 blocks instead of approving a change nobody confirmed.
 
+The message of the mailbox belongs to the Dispatch that names it. The Run is
+shared between the iterations of the workflow, so a message of another worker
+of the Run is not the result of this iteration: it is skipped, and the
+workflow reconciles against the state of its own worker instead. A message
+without a Dispatch belongs to the worker that still works — when every worker
+of the Run is done, only a Run with a single worker may answer it, and a Run
+with several of them leaves the message ambiguous. An ambiguous message is
+never the result of an iteration: the workflow waits for the state of its own
+worker.
+
 ## The brief carries the instructions of the repository
 
 The brief of the agent is not only the Issue: it carries the instructions of the
@@ -308,6 +321,13 @@ Dispatch of the record: the Dispatch is written down after the start command
 answers, and a stop in that window would leave an agent in the worktree that
 nobody knows about. A stop that cannot be confirmed leaves the workflow
 `blocked`: an agent that still works in the worktree is not a stopped workflow.
+
+The stop reaches a workflow that is **over** as well. A workflow that was
+blocked may still have an agent in its worktree — the block of an iteration
+does not stop the agent it blocked on — and the stop of such a workflow stops
+the workers of its Run all the same. The state of a workflow that is over does
+not move: a stop is not the cancellation of it, and the reason of the stop is
+written into the history of the run and into the reason of the block.
 
 ## The stop and the start never meet
 

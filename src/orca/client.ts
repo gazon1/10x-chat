@@ -203,6 +203,16 @@ function collectByType(payload: unknown, type: string): Record<string, unknown>[
   return found;
 }
 
+/**
+ * The fields a message of the mailbox may name its Dispatch with.
+ *
+ * The shape of the answer of the CLI is not a contract of this repository: the
+ * Dispatch is looked up by name, so that a version of Orca that writes it
+ * differently still answers. A message that names no Dispatch is ambiguous
+ * when the Run has more than one worker.
+ */
+const DISPATCH_FIELDS = ['dispatchId', 'dispatch', 'dispatch_id', 'workerDispatchId'];
+
 /** The message of an error of the CLI. */
 function messageOf(value: unknown): string | undefined {
   if (typeof value === 'string' && value !== '') return value;
@@ -548,21 +558,19 @@ export class OrcaClient implements OrcaApi {
     for (const entry of collectByType(result, 'worker_done')) {
       const outcome = findString(entry, ['outcome']);
       const text = findString(entry, ['result', 'report', 'text', 'body', 'summary']) ?? undefined;
+      const dispatch = findString(entry, DISPATCH_FIELDS);
       messages.push({
         type: 'worker_done',
-        ...(findString(entry, ['dispatchId'])
-          ? { dispatchId: findString(entry, ['dispatchId']) }
-          : {}),
+        ...(dispatch ? { dispatchId: dispatch } : {}),
         ...(outcome ? { outcome } : {}),
         ...(text ? { text } : {}),
       });
     }
     for (const entry of collectByType(result, 'escalation')) {
+      const dispatch = findString(entry, DISPATCH_FIELDS);
       messages.push({
         type: 'escalation',
-        ...(findString(entry, ['dispatchId'])
-          ? { dispatchId: findString(entry, ['dispatchId']) }
-          : {}),
+        ...(dispatch ? { dispatchId: dispatch } : {}),
         ...(findString(entry, ['reason', 'stopReason', 'message'])
           ? { text: findString(entry, ['reason', 'stopReason', 'message']) }
           : {}),

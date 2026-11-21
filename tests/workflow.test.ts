@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createFakeBackend } from '../src/backend/fake.js';
+import type { AiBackend } from '../src/backend/contract.js';
+import { createFakeBackend, FAKE_BACKEND_CAPABILITIES } from '../src/backend/fake.js';
 import type {
   OrcaApi,
   OrcaMessage,
@@ -45,6 +46,16 @@ import type { WorkflowRecord } from '../src/workflow/types.js';
 
 const execFileAsync = promisify(execFile);
 
+/** Run a git command in a directory and say what it printed. */
+async function gitIn(cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-c', 'user.email=t@example.com', '-c', 'user.name=Test', ...args],
+    { cwd },
+  );
+  return String(stdout).trim();
+}
+
 /**
  * The tests of the development workflow.
  *
@@ -52,6 +63,48 @@ const execFileAsync = promisify(execFile);
  * the checkout and the review of the change are the seams of the workflow, and
  * every test replaces them with a fake that answers the way the real one does.
  */
+
+/**
+ * A backend that records the prompts it got — the evidence of the review.
+ *
+ * The answers are the ones of a reviewer without a finding: the review of the
+ * change is the pipeline of the repository, and the backend is the only part
+ * of it that is faked.
+ */
+function recordingBackend(): { backend: AiBackend; prompts: string[] } {
+  const prompts: string[] = [];
+  const backend: AiBackend = {
+    name: 'fake',
+    capabilities: FAKE_BACKEND_CAPABILITIES,
+    testDouble: true,
+    async ask(request) {
+      prompts.push(request.prompt);
+      const answer = request.prompt.startsWith('# Verification')
+        ? JSON.stringify({ verdicts: [] })
+        : JSON.stringify({ findings: [], decisions: [] });
+      return {
+        ok: true,
+        value: {
+          requestId: request.requestId,
+          text: answer,
+          markdown: answer,
+          truncated: false,
+          submission: 'submitted',
+        },
+      };
+    },
+    async status(requestId) {
+      return { requestId, submission: 'submitted' };
+    },
+    async resume(request) {
+      return backend.ask(request);
+    },
+    async cancel() {
+      return { ok: true, value: { cancelled: true } };
+    },
+  };
+  return { backend, prompts };
+}
 
 /** The Orca of the tests — it records what the workflow asked of it. */
 class FakeOrca implements OrcaApi {
@@ -77,6 +130,16 @@ class FakeOrca implements OrcaApi {
   messages: OrcaMessage[] = [
     { type: 'worker_done', outcome: 'succeeded', text: 'the work is done' },
   ];
+  /**
+   * Whether the runtime names the Dispatch of the worker that reported.
+   *
+   * The Run is reused between the iterations of the workflow: a message that
+   * names no Dispatch belongs to the worker that still works, and to nobody
+   * else when the Run has more than one of them.
+   */
+  nameTheDispatch = true;
+  /** The worktrees cannot be read — the runtime does not offer the operation. */
+  worktreeListError?: Error;
   /** The state the worker reports. */
   workerState = 'working';
   /** The structured outcome the worker reports — it settles the Task. */
@@ -118,7 +181,7 @@ class FakeOrca implements OrcaApi {
   /** What the runtime does when the Run is created. */
   onRunCreate?: () => void;
   /** What the runtime does when the worker is started. */
-  onWorkerStart?: () => void;
+  onWorkerStart?: () => void | Promise<void>;
 
   async status() {
     return { ready: this.ready, capabilities: this.capabilities };
@@ -152,6 +215,7 @@ class FakeOrca implements OrcaApi {
   }
 
   async worktreeList() {
+    if (this.worktreeListError) throw this.worktreeListError;
     return this.worktrees;
   }
 
@@ -185,7 +249,7 @@ class FakeOrca implements OrcaApi {
     // The runtime knows the worker — a workflow that starts a second one is
     // visible to the next run.
     this.workers.push(worker);
-    this.onWorkerStart?.();
+    await this.onWorkerStart?.();
     return worker;
   }
 
@@ -222,7 +286,15 @@ class FakeOrca implements OrcaApi {
       const worker = this.workers[this.workers.length - 1];
       if (worker) worker.state = 'settled';
     }
-    return this.messages;
+    // The runtime names the Dispatch of the worker that reported: the Run is
+    // reused between the iterations of the workflow, and a message without a
+    // Dispatch belongs to nobody that the workflow can prove.
+    const current = this.workers[this.workers.length - 1]?.dispatchId;
+    return this.messages.map((message) =>
+      message.dispatchId || !current || !this.nameTheDispatch
+        ? message
+        : { ...message, dispatchId: current },
+    );
   }
 }
 
@@ -2567,6 +2639,240 @@ describe('the development workflow', () => {
       /already has a running workflow/,
     );
     expect(orca.started).toHaveLength(1);
+  });
+
+  it('does not accept the result of another worker of the Run', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The Run is reused between the iterations of the workflow: a message of
+    // another worker is not the result of this one.
+    orca.messages = [
+      {
+        type: 'worker_done',
+        dispatchId: 'dispatch-other',
+        outcome: 'succeeded',
+        text: 'the work of another worker is done',
+      },
+    ];
+    orca.workerState = 'settled';
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 100 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The result of another worker does not close this iteration.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('The state of the agent is unknown');
+  });
+
+  it('does not accept an ambiguous message of the Run', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The runtime names no Dispatch: the message belongs to the worker that
+    // still works — and to nobody when the Run holds two of them.
+    orca.nameTheDispatch = false;
+    orca.workerState = 'settled';
+    let commits = 0;
+    orca.onCheck = () => {
+      git.head = `head-sha-${++commits}`;
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the check does not run', findings: [aFinding()] },
+    ]);
+    const ctx = contextOf(orca, git, { review, waitTimeoutMs: 100 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The second iteration shares its Run with the first one: the message of
+    // the mailbox belongs to nobody that the workflow can prove.
+    expect(record.iterations).toHaveLength(2);
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('The state of the agent is unknown');
+  });
+
+  it('stops the worker of the Run of a workflow that is blocked already', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-blocked', 'blocked');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    // The agent of the workflow still works in the worktree.
+    orca.workers = [{ dispatchId: 'dispatch-1', taskId: 'task-1', state: 'working' }];
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    const stopped = await stopWorkflow(record.id, ctx);
+
+    // The state of a workflow that is over does not move, and the agent that
+    // still works in the worktree is stopped all the same.
+    expect(stopped.state).toBe('blocked');
+    expect(orca.stopped).toContain('dispatch-1');
+  });
+
+  it('does not claim that the workers of a blocked workflow are stopped when they are not', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-blocked', 'blocked');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.workers = [{ dispatchId: 'dispatch-1', taskId: 'task-1', state: 'working' }];
+    orca.stopError = new Error('the runtime refused the stop');
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    const stopped = await stopWorkflow(record.id, ctx);
+
+    // The reason is in the record: a workflow that is blocked does not hide
+    // the agent that still works in the worktree.
+    expect(stopped.state).toBe('blocked');
+    expect(stopped.blocked).toContain('could not be stopped');
+  });
+
+  it('refuses a runtime whose family of the worktrees does not promise their creation', async () => {
+    const orca = new FakeOrca();
+    // The family of the worktrees is a promise: it has to promise the
+    // creation of a worktree, or the workflow cannot create one.
+    orca.capabilities = ['orchestration.contract.v1', 'worktree.set.folder-parent.v1'];
+    const ctx = contextOf(orca, new FakeGit());
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/worktree\.\*/);
+  });
+
+  it('refuses a runtime that does not support the operations of the worktrees', async () => {
+    const orca = new FakeOrca();
+    // The family of the features is not a proof of the operations: the
+    // workflow proves them by calling them, before it creates anything.
+    orca.worktreeListError = new Error('unknown command');
+    const ctx = contextOf(orca, new FakeGit());
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/does not support the operations of the worktrees/);
+  });
+
+  it('refuses a worktree whose changes cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The changes of the worktree cannot be read: the workflow does not take
+    // over a worktree whose changes it cannot see.
+    git.dirty = async () => {
+      throw new Error('git status failed');
+    };
+    orca.worktrees = [
+      { id: 'wt-1', path: '/wt/issue-59', branch: '10x-chat/issue-59', name: 'issue-59' },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/cannot be read/);
+  });
+
+  it('reviews the change of the worktree with the real pipeline of the repository', async () => {
+    // The real integration: the review of the workflow is the pipeline of the
+    // repository, it reads the diff of a commit that was never pushed, and
+    // the reviewers get it as it is.
+    const dir = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-review-'));
+    const repo = path.join(dir, 'repo');
+    await mkdir(repo, { recursive: true });
+    await gitIn(repo, 'init', '--initial-branch=main');
+    await gitIn(repo, 'remote', 'add', 'origin', 'https://github.com/gazon1/10x-chat.git');
+    await writeFile(path.join(repo, 'src.txt'), 'one\n', 'utf-8');
+    await gitIn(repo, 'add', '.');
+    await gitIn(repo, 'commit', '-m', 'first');
+    const baseSha = await gitIn(repo, 'rev-parse', 'HEAD');
+    // The worktree of the Issue is a worktree of the repository: the workflow
+    // never works in the checkout of the user.
+    const worktree = path.join(dir, 'worktree');
+    await gitIn(repo, 'worktree', 'add', '-b', '10x-chat/issue-59', worktree);
+
+    // The `gh` CLI of the PATH answers with the Issue: the workflow and the
+    // pipeline read the same requirements.
+    const bin = path.join(dir, 'bin');
+    await mkdir(bin, { recursive: true });
+    const issueFile = path.join(dir, 'issue.json');
+    await writeFile(
+      issueFile,
+      JSON.stringify({
+        number: 59,
+        url: 'https://github.com/gazon1/10x-chat/issues/59',
+        title: 'The issue of the workflow',
+        body: 'The body of the issue.',
+      }),
+      'utf-8',
+    );
+    const gh = path.join(bin, 'gh');
+    await writeFile(
+      gh,
+      `#!/bin/sh\ncase "$1 $2" in\n"auth status") exit 0;;\n"issue view") cat "${issueFile}";;\nesac\n`,
+      'utf-8',
+    );
+    await chmod(gh, 0o755);
+    const pathBefore = process.env.PATH;
+    process.env.PATH = `${bin}:${pathBefore ?? ''}`;
+
+    try {
+      const { backend, prompts } = recordingBackend();
+      const orca = new FakeOrca();
+      orca.worktreePath = worktree;
+      orca.repos = [
+        {
+          id: 'repo-1',
+          path: repo,
+          displayName: '10x-chat',
+          canonicalKey: 'github.com/gazon1/10x-chat',
+        },
+      ];
+      // The agent of the workflow commits its change in the worktree.
+      orca.onWorkerStart = async () => {
+        await writeFile(path.join(worktree, 'src.txt'), 'one\ntwo\n', 'utf-8');
+        await gitIn(worktree, 'add', '.');
+        await gitIn(worktree, 'commit', '-m', 'second');
+      };
+      const ctx = createWorkflowContext({
+        orca,
+        backend,
+        cwd: repo,
+        git: nodeWorkflowGit,
+        now: () => new Date(Date.UTC(2026, 0, 1)),
+        waitTimeoutMs: 30_000,
+      });
+
+      const record = await startWorkflow({ issue: 59, cwd: repo, backend, baseRef: 'main' }, ctx);
+
+      expect(record.state).toBe('completed');
+      // The review compared the exact commits of the worktree.
+      const headSha = await gitIn(worktree, 'rev-parse', 'HEAD');
+      expect(record.iterations[0]?.review?.baseSha).toBe(baseSha);
+      expect(record.iterations[0]?.review?.headSha).toBe(headSha);
+      // The reviewers got the diff of the commit that was never pushed.
+      expect(prompts[0]).toContain('+two');
+      // The run of the review is written next to the record of the workflow:
+      // it carries the diff of the change that was never pushed.
+      const run = JSON.parse(
+        await readFile(
+          path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1', 'review.json'),
+          'utf-8',
+        ),
+      ) as { context: { diff: string; changedFiles: string[]; baseSha: string } };
+      expect(run.context.changedFiles).toContain('src.txt');
+      expect(run.context.diff).toContain('+two');
+      expect(run.context.baseSha).toBe(baseSha);
+      // The report of the review is written next to it.
+      const report = await readFile(
+        path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1', 'report.md'),
+        'utf-8',
+      );
+      expect(report).toContain('src.txt');
+    } finally {
+      process.env.PATH = pathBefore;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('reports the lost answer of the runCreate when the Runs cannot be read', async () => {

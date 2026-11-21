@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
 import { acquireLock } from '../core/lock.js';
-import type { OrcaApi, OrcaWorker, OrcaWorktree } from '../orca/client.js';
+import type { OrcaApi, OrcaMessage, OrcaWorker, OrcaWorktree } from '../orca/client.js';
 import { getWorkflowDir, getWorkflowsDir } from '../paths.js';
 import { assertRepository, collectRequirements, runGh } from '../pipeline/requirements.js';
 import { runReviewPipeline } from '../pipeline/review.js';
@@ -16,6 +16,7 @@ import {
   loadWorkflow,
   saveWorkflow,
   WorkflowNotFoundError,
+  writeWorkflowFile,
 } from './store.js';
 import { assertTransition, isTerminal } from './transitions.js';
 import type {
@@ -165,6 +166,18 @@ const REQUIRED_ORCHESTRATION_VERBS = [
 const REQUIRED_WORKTREE_VERBS = ['worktree.list', 'worktree.create', 'worktree.comment'];
 
 /**
+ * The capability of the family of the worktrees that promises their creation.
+ *
+ * A runtime that names no verb of the worktrees publishes them as the features
+ * they are — the family is a promise and not a proof of the operations: the
+ * real Orca publishes twenty-six capabilities of the family and not one verb
+ * of them. The workflow needs the promise of the worktree it creates — a
+ * runtime that names no worktree at all cannot create one — and it proves the
+ * operations by calling them before it creates anything.
+ */
+const WORKTREE_CREATION = /^worktree\.create\b/;
+
+/**
  * What the runtime of Orca is missing for the workflow.
  *
  * The check is a contract and not a prefix: a family of capabilities that
@@ -175,7 +188,9 @@ const REQUIRED_WORKTREE_VERBS = ['worktree.list', 'worktree.create', 'worktree.c
  * The worktrees are the same: a runtime that names its verbs has to name all
  * of them — a runtime that offers `worktree.list` alone cannot create a
  * worktree. A runtime that names no verb of the worktrees at all publishes
- * them as the features they are, and the family is what it promises.
+ * them as the features they are, and the family is what it promises: the
+ * family has to promise the creation of a worktree, and the workflow proves
+ * the operations by calling them.
  */
 export function missingCapabilities(capabilities: string[]): string[] {
   const missing: string[] = [];
@@ -185,7 +200,11 @@ export function missingCapabilities(capabilities: string[]): string[] {
     for (const verb of REQUIRED_WORKTREE_VERBS) {
       if (!capabilities.includes(verb)) missing.push(verb);
     }
-  } else if (!capabilities.some((capability) => capability.startsWith('worktree.'))) {
+  } else if (
+    !capabilities.some(
+      (capability) => capability.startsWith('worktree.') && WORKTREE_CREATION.test(capability),
+    )
+  ) {
     missing.push('worktree.*');
   }
   // The orchestration: the aggregate contract, or every verb of it.
@@ -362,11 +381,29 @@ function mergeRecords(stored: WorkflowRecord, mine: WorkflowRecord): WorkflowRec
   const richer =
     mine.iterations.length > stored.iterations.length ||
     (mine.iterations.length === stored.iterations.length &&
-      (mineIteration?.review !== undefined || mineIteration?.headSha !== undefined) &&
-      storedIteration?.review === undefined &&
-      storedIteration?.headSha === undefined);
+      iterationWeight(mineIteration) > iterationWeight(storedIteration));
   if (richer) merged.iterations = mine.iterations;
   return merged;
+}
+
+/**
+ * How much an iteration knows about its run — the more, the richer.
+ *
+ * The review of an iteration is the fullest evidence of it, and the outcome of
+ * the agent is the proof that it did something. An iteration that knows its
+ * outcome is richer than an iteration that knows nothing: the report of a
+ * workflow must not tell that an agent that failed did not report.
+ */
+function iterationWeight(iteration: WorkflowIteration | undefined): number {
+  if (!iteration) return 0;
+  let weight = 0;
+  if (iteration.review) weight += 16;
+  if (iteration.headSha) weight += 4;
+  if (iteration.agentOutcome) weight += 2;
+  if (iteration.finishedAt) weight += 1;
+  if (iteration.agentReport) weight += 1;
+  if (iteration.dispatchId) weight += 1;
+  return weight;
 }
 
 /**
@@ -867,6 +904,45 @@ function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
   return undefined;
 }
 
+/**
+ * The Dispatch a message of the mailbox is about.
+ *
+ * The Run of a workflow is reused between its iterations: the corrections of
+ * the findings start a second Dispatch in the same Run. A message that names
+ * another Dispatch is not the result of this worker, and a message that names
+ * no Dispatch at all can be the result of any of them — the workflow does not
+ * guess which one.
+ *
+ * A message without a Dispatch belongs to the worker that still works: a
+ * worker that is done cannot send a message any more. When every worker of
+ * the Run is done, the message may be the last one of any of them, and only a
+ * Run with a single worker may answer it.
+ */
+async function dispatchOfMessage(
+  message: OrcaMessage,
+  ctx: WorkflowContext,
+  runId: string,
+  known: { dispatches?: string[] },
+): Promise<string | undefined> {
+  if (message.dispatchId) return message.dispatchId;
+  if (!known.dispatches) {
+    try {
+      const workers = await ctx.orca.workerList(runId);
+      const working = workers.filter((worker) => !TERMINAL.test(worker.state ?? ''));
+      // Every worker of the Run is done: the message is the last one of one
+      // of them, and the Run may answer it only when it has a single worker.
+      known.dispatches = (working.length > 0 ? working : workers).map(
+        (worker) => worker.dispatchId,
+      );
+    } catch {
+      // The workers of the Run cannot be read: the message belongs to nobody
+      // that the workflow can prove.
+      known.dispatches = [];
+    }
+  }
+  return known.dispatches.length === 1 ? known.dispatches[0] : undefined;
+}
+
 /** Wait for the worker of the workflow — its outcome, or that it is still running. */
 async function waitForWorker(
   record: WorkflowRecord,
@@ -886,6 +962,9 @@ async function waitForWorker(
   // workflow has to stop for the reevaluation instead of waiting for a change
   // that was judged against another version of the Issue.
   let lastRead = 0;
+  // The workers of the Run are read once, and only when a message of the
+  // mailbox names no Dispatch.
+  const known: { dispatches?: string[] } = {};
 
   for (;;) {
     if (Date.now() - lastRead >= REQUIREMENTS_POLL_MS) {
@@ -934,7 +1013,11 @@ async function waitForWorker(
     }
 
     for (const message of messages) {
-      if (message.dispatchId && message.dispatchId !== orca.dispatchId) continue;
+      // A message of another worker of the Run is not the result of this
+      // worker: the Run is reused between the iterations of the workflow, and
+      // the result of another iteration must never close this one.
+      const dispatchId = await dispatchOfMessage(message, ctx, orca.runId, known);
+      if (dispatchId !== orca.dispatchId) continue;
       if (message.type === 'escalation') {
         return {
           kind: 'failed',
@@ -1032,7 +1115,19 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   // worktree of this workflow: the answer of a lost command is not a reason to
   // make a second worktree of the same Issue — and it is never a reason to
   // take the worktree of somebody else.
-  const existing = await ctx.orca.worktreeList(repo.id);
+  //
+  // The call is the proof of the operations of the worktrees: a runtime that
+  // names the family of the features but does not offer the operations is
+  // refused here, before anything is created.
+  let existing: OrcaWorktree[];
+  try {
+    existing = await ctx.orca.worktreeList(repo.id);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new WorkflowError(
+      `The Orca runtime does not support the operations of the worktrees — the worktrees of the repository ${record.repository} could not be read: ${reason}`,
+    );
+  }
   const candidates = existing.filter((worktree) => sameBranch(worktree.branch, branch));
   if (candidates.length > 1) {
     // Two worktrees of one branch are an ambiguity: the workflow does not
@@ -1365,7 +1460,13 @@ async function refusalOf(
   // A worktree with changes that are not committed is never taken over: the
   // agent would carry them into the change of the Issue, and the review would
   // approve them as a part of it.
-  const dirty = await ctx.git.dirty(candidate.path);
+  let dirty: string[];
+  try {
+    dirty = await ctx.git.dirty(candidate.path);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return `The state of the worktree ${candidate.path} cannot be read — the workflow does not take over a worktree whose changes it cannot see: ${reason}`;
+  }
   if (dirty.length > 0) {
     const shown = dirty.slice(0, 10).join('; ');
     return `The worktree ${candidate.path} has changes that are not committed (${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}) — the workflow does not take over a worktree with work in it.`;
@@ -1643,9 +1744,21 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     return false;
   }
   if (outcome.kind === 'unknown') {
+    // The workflow gives up on the agent: a worker that still works in the
+    // worktree is stopped before the workflow is blocked, so that the
+    // worktree is not left to an agent that nobody watches.
+    const dispatch = record.orca?.dispatchId;
+    let stopped: { stopped: boolean; failure?: string } = { stopped: false };
+    if (dispatch) stopped = await stopWorker(ctx, dispatch);
     await block(
       record,
-      `The state of the agent is unknown — ${outcome.detail ?? 'the worker did not report an outcome'}.`,
+      `The state of the agent is unknown — ${outcome.detail ?? 'the worker did not report an outcome'}.${
+        stopped.stopped
+          ? ' The agent was stopped.'
+          : stopped.failure
+            ? ` The agent could not be stopped — ${stopped.failure}.`
+            : ''
+      }`,
       ctx,
     );
     return true;
@@ -2179,15 +2292,96 @@ async function markStopping(record: WorkflowRecord, ctx: WorkflowContext): Promi
   return marked;
 }
 
+/**
+ * The Dispatch of the workers that still work.
+ *
+ * A workflow that is over may have an agent that still runs in the worktree:
+ * the stop reaches it even then. A worker that is done — settled, stopped,
+ * failed — works no more, and it is left alone.
+ */
+async function outstandingDispatches(
+  ctx: WorkflowContext,
+  dispatches: Iterable<string>,
+): Promise<string[]> {
+  const outstanding: string[] = [];
+  for (const dispatch of dispatches) {
+    try {
+      const worker = await ctx.orca.workerShow(dispatch);
+      if (!TERMINAL.test(worker.state ?? '')) outstanding.push(dispatch);
+    } catch {
+      // The state of the worker cannot be read: the workflow does not know
+      // that it is done, and it stops it.
+      outstanding.push(dispatch);
+    }
+  }
+  return outstanding;
+}
+
+/**
+ * Note what the stop of a workflow did — the state of a workflow that is over
+ * does not move.
+ *
+ * The reason of a failure is added to the history of the run and to the
+ * reason of the block: the evidence of a stop that did not reach the agent is
+ * not lost.
+ */
+async function noteStop(
+  record: WorkflowRecord,
+  ctx: WorkflowContext,
+  detail: string,
+): Promise<void> {
+  await withStateLock(record.id, async () => {
+    const stored = await storedRecord(record.id);
+    const target = stored ? mergeRecords(stored, record) : record;
+    if (target.state === 'blocked') {
+      target.blocked = target.blocked ? `${target.blocked} ${detail}` : detail;
+      target.updatedAt = ctx.now().toISOString();
+      target.revision = (target.revision ?? 0) + 1;
+      await saveWorkflow(target);
+    }
+    Object.assign(record, target);
+  });
+  await appendEvent(record.id, {
+    at: record.updatedAt,
+    state: record.state,
+    detail,
+  });
+}
+
+/**
+ * The stop of a workflow failed — the workflow is blocked, or it is blocked
+ * already.
+ *
+ * A workflow that is over does not change its state: the reason is noted, so
+ * that the failure of the stop is not hidden behind a workflow that says it
+ * is done.
+ */
+async function failStop(
+  record: WorkflowRecord,
+  reason: string,
+  ctx: WorkflowContext,
+): Promise<void> {
+  if (isTerminal(record.state)) {
+    await noteStop(record, ctx, reason);
+    return;
+  }
+  await block(record, reason, ctx);
+}
+
 /** Stop a workflow — the state and the worktree stay for the inspection. */
 export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<WorkflowRecord> {
   const record = await loadWorkflow(id);
-  if (isTerminal(record.state)) return record;
+  // A workflow that is over may still have an agent in its worktree: the stop
+  // reaches it even then. The state of a workflow that is over does not move,
+  // and the stop of such a workflow is not the cancellation of it.
+  const terminal = isTerminal(record.state);
 
-  // The workflow is marked as stopping before the workers are looked for: a
-  // process that starts an agent at that moment sees the mark and does not
-  // start a second agent in a workflow that is on its way out.
-  if (!(await markStopping(record, ctx))) return record;
+  if (!terminal) {
+    // The workflow is marked as stopping before the workers are looked for: a
+    // process that starts an agent at that moment sees the mark and does not
+    // start a second agent in a workflow that is on its way out.
+    if (!(await markStopping(record, ctx))) return record;
+  }
 
   const runId = record.orca?.runId;
   const dispatchId = record.orca?.dispatchId;
@@ -2204,7 +2398,7 @@ export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<Wo
       workers = await ctx.orca.workerList(runId);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      await block(
+      await failStop(
         record,
         `The workers of the run ${runId} could not be read — an agent may still work in the worktree. ${reason}`,
         ctx,
@@ -2214,16 +2408,31 @@ export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<Wo
     for (const worker of workers) dispatches.add(worker.dispatchId);
   }
 
-  for (const target of dispatches) {
+  // A workflow that is over has no agent of its own, but the Run may still
+  // hold one — and a worker that is done is not stopped again.
+  const targets = terminal ? await outstandingDispatches(ctx, dispatches) : [...dispatches];
+
+  for (const target of targets) {
     const result = await stopWorker(ctx, target);
     if (!result.stopped) {
-      await block(
+      await failStop(
         record,
         `The worker ${target} could not be stopped${result.failure ? ` — ${result.failure}` : ''} — it may still work in the worktree.`,
         ctx,
       );
       return record;
     }
+  }
+
+  if (terminal) {
+    // The workflow is over: its state does not move, and the workers of its
+    // Run are stopped all the same.
+    await noteStop(
+      record,
+      ctx,
+      'the workers of the run of the workflow were stopped — the workflow was over already',
+    );
+    return record;
   }
   await cancelOnDisk(record, ctx);
   return record;
@@ -2261,15 +2470,15 @@ async function cancelOnDisk(record: WorkflowRecord, ctx: WorkflowContext): Promi
   await checkpoint(record, ctx, 'the workflow was stopped');
 }
 
-/** Write the report of a workflow — it belongs to its owner alone. */
+/**
+ * Write the report of a workflow — it belongs to its owner alone.
+ *
+ * The report is a file of the store of the workflow: the links of the store
+ * are refused before the write, and the file is written atomically with the
+ * mode of a private file.
+ */
 async function writeReport(record: WorkflowRecord): Promise<string> {
-  const dir = getWorkflowDir(record.id);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  if (process.platform !== 'win32') await chmod(dir, 0o700);
-  const file = path.join(dir, 'report.md');
-  await writeFile(file, renderWorkflowReport(record), { encoding: 'utf-8', mode: 0o600 });
-  if (process.platform !== 'win32') await chmod(file, 0o600);
-  return file;
+  return writeWorkflowFile(record.id, 'report.md', renderWorkflowReport(record));
 }
 
 /** The findings that still stand — every finding the review did not reject. */

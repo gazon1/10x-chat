@@ -613,3 +613,24 @@ were checked against the source and fixed in the same round.
 The check set of that round: typecheck, lint, knip, test (63 files / **1224
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twelfth round
+
+The twelfth round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with five findings: four of the severity MAJOR
+and one MINOR. The verification settled three of them: two MAJOR were real, and
+two MAJOR stayed unsettled — they are the reading of the reviewers. All of them
+were checked against the source and fixed in the same round; the MINOR one was
+rejected, and the source shows why.
+
+| Finding of the twelfth round | The answer |
+|---|---|
+| a message of the mailbox without a Dispatch was accepted as the result of the current worker — the Run is shared between the iterations, so a message of another iteration could close the wrong one | the message belongs to the Dispatch that names it: a message with a Dispatch is accepted only when it is the Dispatch of the worker, a message without one belongs to the worker that still works, and a Run with several workers leaves it ambiguous — an ambiguous message never settles an iteration, the workflow reconciles against the state of its own worker |
+| the stop of a workflow returned immediately for every terminal state — a workflow that was blocked could keep its agent in the worktree | the stop reaches a workflow that is over: the workers of its Run are stopped all the same, the state of the workflow does not move, and the reason of the stop is written into the history of the run and into the reason of the block. A worker that cannot be stopped leaves the workflow `blocked` with the reason |
+| the preflight accepted any capability of the family `worktree.*` as a proof of the worktree lifecycle | the family has to promise the **creation** of a worktree (`worktree.create…`) — a family that promises nothing about the creation cannot create one — and the operations are not taken from the names at all: the workflow reads the worktrees of the repository before it creates anything, and a runtime whose worktrees cannot be read is a refusal, not a promise |
+| the workflow tests replaced the review pipeline with a fake, so the real integration between the workflow and the local target of the review was never exercised | the integration is covered now: a temporary git repository with a real worktree, a real `runReviewPipeline`, a fake `gh` and a fake backend — the test asserts that the change of the worktree is collected, that the diff of the change reaches the backend and that the report of the run names the changed files |
+| the `resume --wait` was silently ignored | rejected: the option is parsed, validated and passed into the context of the resume (`waitTimeoutMs`), and the source of the command shows it |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1232
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
