@@ -116,6 +116,7 @@ export function createWorkflowCommand(): Command {
             backendLabel: label,
             ...(options.agent ? { agent: options.agent as string } : {}),
             ...(options.model ? { model: options.model as string } : {}),
+            ...(options.base ? { baseRef: options.base as string } : {}),
             ...(maxIterations !== undefined ? { maxIterations } : {}),
             ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
           },

@@ -139,6 +139,8 @@ export interface WorkflowRecord {
   orca?: WorkflowOrca;
   /** The agent that implements the change. */
   agent: string;
+  /** The ref the worktree is created from — the default branch of origin. */
+  baseRef?: string;
   /** The backend that reviews the change. */
   backend: string;
   /** The model the reviewers use. */

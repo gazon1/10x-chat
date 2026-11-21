@@ -171,4 +171,43 @@ describe('the adapter of the Orca CLI', () => {
     expect(messages[0]?.outcome).toBe('succeeded');
     expect(messages[0]?.text).toBe('done');
   });
+
+  it('refuses a command that failed, whatever its answer says', async () => {
+    const { runner } = fakeRunner([
+      {
+        code: 2,
+        stdout: JSON.stringify({ ok: true, result: { worktrees: [] } }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const client = new OrcaClient({ runner });
+
+    await expect(client.worktreeList('repo-1')).rejects.toThrow('failed');
+  });
+
+  it('reads the worktrees of a repository', async () => {
+    const { runner, calls } = fakeRunner([
+      ok({
+        worktrees: [
+          {
+            id: 'wt-1',
+            path: '/wt/issue-59',
+            displayName: 'issue-59',
+            branch: 'refs/heads/10x-chat/issue-59',
+            head: 'abc123',
+          },
+        ],
+      }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    const worktrees = await client.worktreeList('repo-1');
+
+    expect(worktrees).toHaveLength(1);
+    expect(worktrees[0]?.id).toBe('wt-1');
+    expect(worktrees[0]?.name).toBe('issue-59');
+    expect(worktrees[0]?.branch).toBe('refs/heads/10x-chat/issue-59');
+    expect(calls[0]?.args).toContain('id:repo-1');
+  });
 });

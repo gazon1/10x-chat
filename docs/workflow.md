@@ -34,6 +34,26 @@ losing the evidence of what happened.
 `blocked` is a terminal state: the workflow cannot decide on its own, and a
 retry is a new workflow.
 
+## One workflow, one process
+
+Two processes that work on the same workflow would otherwise both see an empty
+list of workers and both start an agent for the same worktree. The run of the
+loop therefore holds the **lock of the workflow** — the abstract unix socket of
+the project (`src/core/lock.ts`). The kernel gives the name of the socket to
+exactly one process and takes it away when the holder dies, so a killed run
+never leaves a lock behind.
+
+The lock is held by `start` and by `resume` for the whole run of the loop. It is
+**not** held by `stop`: a workflow must be stoppable while another process is
+working on it. The protection against a lost update is the other half — every
+write of the record checks the state on the disk first, and a run that finds a
+different state stops instead of overwriting the work of the other process.
+
+The worktrees of the repository are read before a new one is created: a worktree
+of the same Issue that is already there is **adopted**, never created a second
+time. The same holds for the agent — a worker that is already there is adopted
+too.
+
 ## The commands
 
 ```bash
@@ -103,7 +123,11 @@ and nothing is published.
   Issue.
 - It never starts a second agent for the same workflow. A worker that is
   already there is adopted — the answer of a lost command is not a reason to
-  run the agent twice.
+  run the agent twice. A worktree of the same Issue is adopted the same way.
+- It never reports a stop it did not confirm. The state of the worker is
+  checked: a worker that cannot be stopped leaves the workflow `blocked` with
+  the reason, because an agent that still works in the worktree is not a
+  stopped workflow.
 - It never treats the text of the Issue as an instruction: the body of the
   Issue is data inside a fence of the brief of the agent.
 
@@ -134,6 +158,8 @@ step of the review is the gate that says that the Issue did not drift.
 | The agent changed nothing | The workflow blocks — there is no change to review. |
 | The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. |
 | The Issue changed | The workflow blocks — the change was judged against older requirements. |
+| The agent could not be stopped | The workflow blocks — the agent may still work in the worktree. |
+| Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
 
 ## The seams
 

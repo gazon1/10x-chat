@@ -3,6 +3,7 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
+import { acquireLock } from '../core/lock.js';
 import type { OrcaApi, OrcaWorker } from '../orca/client.js';
 import { getWorkflowDir } from '../paths.js';
 import { assertRepository, collectRequirements, runGh } from '../pipeline/requirements.js';
@@ -125,6 +126,50 @@ const SETTLED = /(succeeded|success|completed|done|finished|failed|escalat)/i;
 /** The states of a worker that mean that it failed. */
 const FAILED = /(failed|escalat)/i;
 
+/** The states of a worker that mean that it does not work any more. */
+const STOPPED =
+  /(stop|cancel|terminat|abort|settled|succeed|success|complete|done|finish|fail|escalat)/i;
+
+/**
+ * The lock of a workflow — one process at a time works on it.
+ *
+ * Two processes that resume the same workflow would otherwise both see an
+ * empty list of workers and both start an agent for the same worktree. The
+ * lock is the abstract unix socket of the project: the kernel gives it to
+ * exactly one process, and it takes it back when the holder dies.
+ */
+async function withWorkflowLock<T>(id: string, action: () => Promise<T>): Promise<T> {
+  const dir = getWorkflowDir(id);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const lock = await acquireLock(dir, 'workflow.lock', {
+    timeoutMs: 60_000,
+    hint: 'Another process is working on this workflow — wait for it and run the command again.',
+  });
+  try {
+    return await action();
+  } finally {
+    await lock.release();
+  }
+}
+
+/**
+ * Write the record down — unless another process moved the workflow.
+ *
+ * The state on the disk is the truth: a workflow that was stopped or continued
+ * elsewhere must not be overwritten by a run that still holds an older copy of
+ * the record.
+ */
+async function persist(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
+  const stored = await loadWorkflow(record.id).catch(() => undefined);
+  if (stored && stored.state !== record.state) {
+    throw new WorkflowError(
+      `The workflow ${record.id} is '${stored.state}' now — another process moved it. This run stops here.`,
+    );
+  }
+  record.updatedAt = ctx.now().toISOString();
+  await saveWorkflow(record);
+}
+
 /** The context of a workflow — the defaults of the dependencies. */
 export function createWorkflowContext(options: {
   orca: OrcaApi;
@@ -188,8 +233,10 @@ async function move(
   ctx: WorkflowContext,
 ): Promise<void> {
   assertTransition(record.state, state);
+  // The state on the disk is checked before the move: another process may
+  // have stopped the workflow in the meantime.
+  await persist(record, ctx);
   record.state = state;
-  record.updatedAt = ctx.now().toISOString();
   await saveWorkflow(record);
   await appendEvent(record.id, { at: record.updatedAt, state, detail });
 }
@@ -499,20 +546,34 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The repository ${record.repository} is not registered in Orca — register it with 'orca repo add --path <path>'.`,
     );
   }
-  const baseRef = await ctx.git.defaultBaseRef(ctx.cwd);
+  const baseRef = record.baseRef ?? (await ctx.git.defaultBaseRef(ctx.cwd));
   const branch = `10x-chat/issue-${record.issue.number}`;
-  const worktree = await ctx.orca.worktreeCreate({
-    repoId: repo.id,
-    name: `issue-${record.issue.number}`,
-    branch,
-    baseRef,
-    issue: record.issue.number,
-  });
+  const name = `issue-${record.issue.number}`;
+
+  // A worktree that is already there is adopted, never created a second time:
+  // the answer of a lost command is not a reason to make a second worktree of
+  // the same Issue.
+  const existing = await ctx.orca.worktreeList(repo.id);
+  const adopted = existing.find(
+    (worktree) =>
+      worktree.name === name ||
+      worktree.branch === branch ||
+      worktree.branch === `refs/heads/${branch}`,
+  );
+  const worktree =
+    adopted ??
+    (await ctx.orca.worktreeCreate({
+      repoId: repo.id,
+      name,
+      branch,
+      baseRef,
+      issue: record.issue.number,
+    }));
   const startSha = await ctx.git.revParse(worktree.path, 'HEAD');
   record.worktree = {
     id: worktree.id,
     path: worktree.path,
-    branch,
+    branch: adopted ? (worktree.branch ?? branch) : branch,
     baseRef,
     baseSha: startSha,
   };
@@ -522,7 +583,7 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   await move(
     record,
     'worktree-created',
-    `the worktree ${worktree.path} was created on ${branch} at ${startSha.slice(0, 7)}`,
+    `the worktree ${worktree.path} was ${adopted ? 'adopted' : 'created'} on ${record.worktree.branch} at ${startSha.slice(0, 7)}`,
     ctx,
   );
 }
@@ -539,7 +600,7 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
       `Issue #${record.issue.number} of ${record.repository}: ${record.issue.title}`,
     );
     record.orca = { ...(record.orca ?? { repoId: '' }), runId };
-    await saveWorkflow(record);
+    await persist(record, ctx);
   }
   const runId = record.orca.runId;
   if (!runId) throw new WorkflowError('The workflow has no Orca run.');
@@ -558,7 +619,7 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
       dispatchId: adopted.dispatchId,
       ...(adopted.taskId ? { taskId: adopted.taskId } : {}),
     };
-    await saveWorkflow(record);
+    await persist(record, ctx);
     await move(
       record,
       'implementation-running',
@@ -811,7 +872,16 @@ export async function advanceWorkflow(
         }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        if (!isTerminal(record.state)) await block(record, reason, ctx);
+        if (!isTerminal(record.state)) {
+          try {
+            await block(record, reason, ctx);
+          } catch (blockError) {
+            // The workflow could not be blocked — another process moved it.
+            // The failure of the step is the one the caller has to know about.
+            const detail = blockError instanceof Error ? blockError.message : String(blockError);
+            throw new WorkflowError(`${reason} (the workflow could not be blocked: ${detail})`);
+          }
+        }
         throw error instanceof WorkflowError ? error : new WorkflowError(reason);
       }
       if (!keepGoing) return record;
@@ -846,6 +916,7 @@ export async function startWorkflow(
     agent: options.agent ?? DEFAULT_AGENT,
     backend: options.backendLabel ?? options.backend.name,
     ...(options.model ? { model: options.model } : {}),
+    ...(options.baseRef ? { baseRef: options.baseRef } : {}),
     maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
     iterations: [],
     createdAt: now,
@@ -853,14 +924,20 @@ export async function startWorkflow(
   };
   await saveWorkflow(record);
   await appendEvent(record.id, { at: now, state: 'created', detail: 'the workflow was started' });
-  return advanceWorkflow(record, ctx);
+  // The lock is taken for the whole run of the loop: a second process must
+  // not start a second agent for the same worktree.
+  return withWorkflowLock(record.id, () => advanceWorkflow(record, ctx));
 }
 
 /** Continue a workflow that was interrupted. */
 export async function resumeWorkflow(id: string, ctx: WorkflowContext): Promise<WorkflowRecord> {
-  const record = await loadWorkflow(id);
-  if (isTerminal(record.state)) return record;
-  return advanceWorkflow(record, ctx);
+  // The record is read inside the lock: the state on the disk is the truth,
+  // and another process may have continued the workflow in the meantime.
+  return withWorkflowLock(id, async () => {
+    const record = await loadWorkflow(id);
+    if (isTerminal(record.state)) return record;
+    return advanceWorkflow(record, ctx);
+  });
 }
 
 /** Stop a workflow — the state and the worktree stay for the inspection. */
@@ -869,7 +946,30 @@ export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<Wo
   if (isTerminal(record.state)) return record;
   const dispatchId = record.orca?.dispatchId;
   if (dispatchId) {
-    await ctx.orca.workerStop(dispatchId).catch(() => {});
+    let failure: string | undefined;
+    try {
+      await ctx.orca.workerStop(dispatchId);
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+    }
+    // The state of the worker is the truth: a stop that cannot be confirmed
+    // is not a stop, and a workflow that says it stopped while its agent
+    // still works in the worktree lies about the worktree.
+    let stopped = false;
+    try {
+      const worker = await ctx.orca.workerShow(dispatchId);
+      stopped = STOPPED.test(worker.state ?? '');
+    } catch (error) {
+      failure = failure ?? (error instanceof Error ? error.message : String(error));
+    }
+    if (!stopped) {
+      await block(
+        record,
+        `The worker ${dispatchId} could not be stopped${failure ? ` — ${failure}` : ''} — it may still work in the worktree.`,
+        ctx,
+      );
+      return record;
+    }
   }
   await move(record, 'cancelled', 'the workflow was stopped', ctx);
   return record;

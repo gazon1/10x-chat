@@ -44,6 +44,8 @@ export interface OrcaRepo {
 export interface OrcaWorktree {
   id: string;
   path: string;
+  /** The name of the worktree — the name the workflow gave it. */
+  name?: string;
   branch?: string;
   head?: string;
 }
@@ -86,6 +88,7 @@ export interface OrcaApi {
     baseRef: string;
     issue: number;
   }): Promise<OrcaWorktree>;
+  worktreeList(repoId: string): Promise<OrcaWorktree[]>;
   worktreeComment(selector: string, comment: string): Promise<void>;
   runCreate(objective: string): Promise<string>;
   workerStart(options: {
@@ -228,6 +231,16 @@ export class OrcaClient implements OrcaApi {
         envelope.error,
       );
     }
+    // A command that failed is a failed command, whatever its answer says: a
+    // JSON diagnostic of a non-zero exit is not the result of the operation.
+    if (code !== 0) {
+      const reason =
+        (envelope ? messageOf(envelope.error) : undefined) ||
+        stderr.trim() ||
+        stdout.trim() ||
+        `the exit code is ${code}`;
+      throw new OrcaError(`orca ${args.join(' ')} failed: ${reason}`, envelope?.error);
+    }
     if (envelope && 'result' in envelope) return envelope.result;
     return payload;
   }
@@ -313,6 +326,36 @@ export class OrcaClient implements OrcaApi {
 
   async worktreeComment(selector: string, comment: string): Promise<void> {
     await this.call(['worktree', 'set', '--worktree', selector, '--comment', comment]);
+  }
+
+  /**
+   * The worktrees of a repository.
+   *
+   * The list is how a lost answer is reconciled: a worktree that is already
+   * there is adopted instead of created a second time.
+   */
+  async worktreeList(repoId: string): Promise<OrcaWorktree[]> {
+    const result = await this.call(['worktree', 'list', '--repo', `id:${repoId}`]);
+    const list = findValue(result, ['worktrees']);
+    if (!Array.isArray(list)) return [];
+    const worktrees: OrcaWorktree[] = [];
+    for (const entry of list) {
+      if (!isRecord(entry)) continue;
+      const id = findString(entry, ['id']);
+      const path = findString(entry, ['path']);
+      if (!id || !path) continue;
+      const name = findString(entry, ['displayName', 'name']);
+      const branch = findString(entry, ['branch']);
+      const head = findString(entry, ['head', 'headSha', 'sha']);
+      worktrees.push({
+        id,
+        path,
+        ...(name ? { name } : {}),
+        ...(branch ? { branch } : {}),
+        ...(head ? { head } : {}),
+      });
+    }
+    return worktrees;
   }
 
   async runCreate(objective: string): Promise<string> {
