@@ -295,6 +295,25 @@ with several of them leaves the message ambiguous. An ambiguous message is
 never the result of an iteration: the workflow waits for the state of its own
 worker.
 
+## The worker works in the worktree of the workflow
+
+The worker of the workflow works in the worktree of the workflow, and the
+workflow **proves** it instead of assuming it. The Run is reused between the
+iterations, and Orca may put a worker of it in another checkout: an agent that
+works in the worktree of another Issue would be judged on the change of the
+worktree of this workflow — a change nobody made — and its result would close
+the wrong iteration.
+
+The proof is the checkout the worker names and the branch it names: the
+checkout must be the worktree of the workflow — the same directory it really
+is, the symbolic links of it resolved — and the branch must be the branch of
+the workflow. A worker that the workflow **found** — the one that is already
+there, the one of a lost answer of the start command — and that names neither
+its checkout nor its branch cannot be identified at all: the workflow does not
+adopt a worker it cannot identify, and it blocks instead of guessing. A worker
+of an **own** start names the worktree in the command itself, so it only has
+to be free of a contradiction.
+
 ## The brief carries the instructions of the repository
 
 The brief of the agent is not only the Issue: it carries the instructions of the

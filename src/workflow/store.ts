@@ -1,16 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import {
-  chmod,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getWorkflowDir, getWorkflowsDir } from '../paths.js';
 import type { WorkflowEvent, WorkflowRecord, WorkflowState } from './types.js';
@@ -306,13 +296,29 @@ export async function appendEvent(id: string, event: WorkflowEvent): Promise<voi
  * A workflow that has no history yet has no file of events: that is an empty
  * history. Every other failure is an error — a history that cannot be read is
  * evidence that cannot be seen, and it is never reported as an empty one.
+ *
+ * The privacy of the history is enforced on the way in, not only on the way
+ * out: a history that was restored from a backup, or whose mode was widened by
+ * hand, is a history that everybody on the machine may read — and the read
+ * itself makes it private again. The file is opened without following a link,
+ * so a link that replaces it between the check and the read does not take the
+ * read outside of the store.
  */
 export async function readEvents(id: string): Promise<WorkflowEvent[]> {
   const file = eventsPath(id);
   let content: string;
   try {
     await refuseLinks(file);
-    content = await readFile(file, 'utf-8');
+    await enforcePrivacy(file);
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      content = await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw new Error(

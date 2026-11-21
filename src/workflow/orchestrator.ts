@@ -1519,6 +1519,52 @@ function isStopping(state: WorkflowState | undefined): boolean {
 }
 
 /**
+ * The worker of the workflow must work in the worktree of the workflow.
+ *
+ * The Run is reused between the iterations of the workflow, and Orca may put a
+ * worker of it in another worktree: an agent that works in a checkout of
+ * another Issue would be judged on the change of the worktree of the workflow
+ * — a change nobody made — and its result would close the wrong iteration.
+ *
+ * The identity of the worker is proved, not assumed. The worktree it names
+ * must be the checkout of the workflow — the same directory it really is, the
+ * symbolic links of it resolved — and the branch it names must be the branch
+ * of the workflow. A worker that the workflow **found** and that names
+ * nothing at all cannot be identified: the workflow does not adopt a worker it
+ * cannot prove, and it blocks instead of guessing. A worker of an **own**
+ * start names the worktree in the command itself, so it only has to be free
+ * of a contradiction.
+ */
+async function proveWorkerWorktree(
+  worker: OrcaWorker,
+  record: WorkflowRecord,
+  ctx: WorkflowContext,
+  options: { found: boolean },
+): Promise<void> {
+  const worktree = record.worktree;
+  if (!worktree) throw new WorkflowError('The workflow has no worktree.');
+  const workerPath = worker.worktreePath;
+  if (workerPath) {
+    if (!(await sameCheckout(ctx, workerPath, worktree.path))) {
+      throw new WorkflowError(
+        `The worker ${worker.dispatchId} works in ${workerPath} — the workflow of this Issue works in ${worktree.path}. It is not the worker of this workflow.`,
+      );
+    }
+  } else if (options.found && !worker.branch) {
+    // The worker of the Run names neither its worktree nor its branch: the
+    // workflow cannot prove that it works in the worktree of the workflow.
+    throw new WorkflowError(
+      `The worker ${worker.dispatchId} names neither the worktree it works in nor its branch — the workflow cannot prove that it works in ${worktree.path}, and it does not adopt a worker it cannot identify.`,
+    );
+  }
+  if (worker.branch && !sameBranch(worker.branch, worktree.branch)) {
+    throw new WorkflowError(
+      `The worker ${worker.dispatchId} works on the branch ${worker.branch} — the workflow of this Issue works on the branch ${worktree.branch}. It is not the worker of this workflow.`,
+    );
+  }
+}
+
+/**
  * Start a worker in the worktree — or adopt the one that is already there.
  *
  * A worker that is alive is adopted: a second agent would work in the same
@@ -1573,7 +1619,12 @@ async function startOrAdoptWorker(
         `The Run ${runId} has ${running.length} workers that are not settled (${running.map((worker) => worker.dispatchId).join(', ')}) — the workflow does not guess which one is its own and starts no agent next to them.`,
       );
     }
-    if (running.length === 1) return { worker: running[0], origin: 'adopted' };
+    if (running.length === 1) {
+      // The worker of the Run works in the worktree of the workflow — the
+      // workflow does not adopt an agent of another checkout.
+      await proveWorkerWorktree(running[0], record, ctx, { found: true });
+      return { worker: running[0], origin: 'adopted' };
+    }
     // The agent of an interrupted start may have finished before its Dispatch
     // was written down. A second agent would work in the same worktree, so the
     // worker that is there is taken: its result is read by the wait, and a
@@ -1585,7 +1636,10 @@ async function startOrAdoptWorker(
         `The Run ${runId} has ${settled.length} workers that are settled (${settled.map((worker) => worker.dispatchId).join(', ')}) — the workflow does not guess which one is its own and starts no agent next to them.`,
       );
     }
-    if (settled.length === 1) return { worker: settled[0], origin: 'settled' };
+    if (settled.length === 1) {
+      await proveWorkerWorktree(settled[0], record, ctx, { found: true });
+      return { worker: settled[0], origin: 'settled' };
+    }
   }
   // The agent works in a clean worktree: the review reads the committed state
   // only, and the changes that are not committed are nobody's change.
@@ -1618,6 +1672,10 @@ async function startOrAdoptWorker(
     }
     if (lost.length === 0) throw error;
     const worker = lost[0];
+    // The worker of the lost answer is the worker of the workflow only when it
+    // works in the worktree of the workflow: the workflow does not stop a
+    // worker of somebody else and does not read its result.
+    await proveWorkerWorktree(worker, record, ctx, { found: true });
     // The workflow may have been stopped while the agent was starting, and the
     // lost answer hides the worker from the stop: the worker of a lost answer
     // is stopped again, exactly like the worker of a received answer.
@@ -1629,6 +1687,10 @@ async function startOrAdoptWorker(
     }
     return { worker, origin: 'lost', reason };
   }
+  // The worker that was just started must work in the worktree of the
+  // workflow: the command named the worktree, and an answer that names
+  // another one is a contradiction.
+  await proveWorkerWorktree(worker, record, ctx, { found: false });
   // The workflow may have been stopped while the agent was starting. The
   // worker that was just started is stopped again: an agent that works in a
   // cancelled workflow is not a stopped workflow.

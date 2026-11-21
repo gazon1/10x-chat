@@ -245,12 +245,28 @@ class FakeOrca implements OrcaApi {
       throw this.workerStartError;
     }
     // Every worker has its own Dispatch — the corrections are a new one.
-    const worker = { dispatchId: `dispatch-${number}`, taskId: `task-${number}`, state: 'working' };
+    const worker = this.workerOf(`dispatch-${number}`, `task-${number}`, options.worktree);
     // The runtime knows the worker — a workflow that starts a second one is
     // visible to the next run.
     this.workers.push(worker);
     await this.onWorkerStart?.();
     return worker;
+  }
+
+  /**
+   * A worker of the Run — the runtime names the checkout it works in and the
+   * branch of that checkout: the Dispatch is bound to them.
+   */
+  workerOf(dispatchId: string, taskId: string, worktree = `path:${this.worktreePath}`): OrcaWorker {
+    const path = worktree.replace(/^path:/, '');
+    const branch = this.worktrees.find((entry) => entry.path === path)?.branch;
+    return {
+      dispatchId,
+      taskId,
+      state: 'working',
+      worktreePath: path,
+      ...(branch ? { branch } : {}),
+    };
   }
 
   async workerShow(dispatchId: string) {
@@ -901,7 +917,7 @@ describe('the development workflow', () => {
   it('does not start a second agent when a worker is already there', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
-    orca.workers = [{ dispatchId: 'dispatch-1', taskId: 'task-1', state: 'working' }];
+    orca.workers = [orca.workerOf('dispatch-1', 'task-1')];
     orca.onCheck = () => {
       git.head = 'head-sha-1';
     };
@@ -1731,12 +1747,59 @@ describe('the development workflow', () => {
     expect(orca.started).toHaveLength(0);
   });
 
+  it('does not adopt a worker that works in another worktree', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The Run holds a worker of another checkout: the workflow does not adopt
+    // an agent that works in the worktree of another Issue.
+    const foreign = orca.workerOf('dispatch-foreign', 'task-foreign', 'path:/wt/issue-60');
+    orca.workers = [foreign];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/not the worker of this workflow/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not adopt a worker that names neither its worktree nor its branch', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The runtime says nothing about the checkout of the worker: the workflow
+    // cannot prove that it works in the worktree of the workflow.
+    orca.workers = [{ dispatchId: 'dispatch-silent', taskId: 'task-silent', state: 'working' }];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/does not adopt a worker it cannot identify/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not adopt a worker that works on another branch', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The worker of the Run works on the branch of another Issue.
+    const foreign = orca.workerOf('dispatch-foreign', 'task-foreign');
+    foreign.branch = '10x-chat/issue-60';
+    orca.workers = [foreign];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/not the worker of this workflow/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
   it('takes the worker of a lost answer instead of starting a second one', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
     // Orca started the worker and the answer of the command was lost.
     orca.workerStartError = new Error('the answer of the command was lost');
-    orca.lostWorker = { dispatchId: 'dispatch-lost', taskId: 'task-lost', state: 'working' };
+    orca.lostWorker = orca.workerOf('dispatch-lost', 'task-lost');
     // The agent is still working: the workflow waits for it.
     orca.messages = [];
     const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
@@ -2044,7 +2107,7 @@ describe('the development workflow', () => {
     // The answer of the start command is lost — the worker is there all the
     // same, and the stop of the other process does not see it.
     orca.workerStartError = new Error('the answer of the workerStart was lost');
-    orca.lostWorker = { dispatchId: 'dispatch-9', taskId: 'task-9', state: 'working' };
+    orca.lostWorker = orca.workerOf('dispatch-9', 'task-9');
     const file = path.join(getWorkflowDir(record.id), 'workflow.json');
     const stopping = { ...record, state: 'stopping', revision: 1 };
     let lists = 0;
@@ -2360,7 +2423,8 @@ describe('the development workflow', () => {
     orca.workerOutcome = 'succeeded';
     // The agent of the interrupted start has finished — the workflow does not
     // start a second one in the same worktree.
-    orca.workers = [{ dispatchId: 'dispatch-9', taskId: 'task-9', state: 'settled' }];
+    orca.workers = [orca.workerOf('dispatch-9', 'task-9')];
+    orca.workers[0].state = 'settled';
     const { review, seen } = fakeReview(git, [
       { verdict: 'APPROVE', reason: 'the change is correct' },
     ]);
@@ -3017,6 +3081,26 @@ describe('the store of the workflows', () => {
     // The history of the run belongs to the owner of the run alone.
     if (process.platform !== 'win32') expect(info.mode & 0o777).toBe(0o600);
     expect(await readEvents(record.id)).toHaveLength(1);
+  });
+
+  it('keeps the history of a workflow private when it is read', async () => {
+    const record = aRecord();
+    await saveWorkflow(record);
+    await appendEvent(record.id, {
+      at: '2026-01-01T00:00:00.000Z',
+      state: 'created',
+      detail: 'the workflow started',
+    });
+
+    const file = path.join(getWorkflowDir(record.id), 'events.jsonl');
+    // The history was restored from a backup, or its mode was widened by
+    // hand: the read itself has to make it private again.
+    if (process.platform !== 'win32') await chmod(file, 0o644);
+
+    expect(await readEvents(record.id)).toHaveLength(1);
+
+    const info = await stat(file);
+    if (process.platform !== 'win32') expect(info.mode & 0o777).toBe(0o600);
   });
 });
 

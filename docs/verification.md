@@ -634,3 +634,22 @@ rejected, and the source shows why.
 The check set of that round: typecheck, lint, knip, test (63 files / **1232
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The thirteenth round
+
+The thirteenth round of the same pipeline ran completely — every step of it
+passed — and returned **REQUEST CHANGES** with three findings: two of the
+severity MAJOR and one MINOR. The verification settled two of them: the MINOR
+one and the MAJOR one of the tests were real, and the MAJOR one of the
+adoption stayed unsettled — it is the reading of the reviewers. Both were
+checked against the source and fixed in the same round.
+
+| Finding of the thirteenth round | The answer |
+|---|---|
+| the workflow adopted the worker of the Run without checking the checkout it works in — the Run is shared between the iterations, and a worker of another checkout would be judged on the change of the worktree of the workflow | the identity of the worker is proved: the checkout it names must be the worktree of the workflow — the same directory it really is, the symbolic links of it resolved — and the branch must be the branch of the workflow. A worker that the workflow **found** and that names neither its checkout nor its branch cannot be identified at all: the workflow does not adopt it and blocks instead of guessing. A worker of an **own** start names the worktree in the command itself, so it only has to be free of a contradiction |
+| the history of a workflow was read without the privacy of the store: a history that was restored with wide permissions stayed readable for everybody, and the read followed a link | the privacy is enforced on the way in, not only on the way out: the read makes the file private again (`0600`), and the file is opened without following a link (`O_NOFOLLOW`), like the record of the workflow |
+| the test of the history proved the mode of the file after the write, and not after the read — a regression that removed the privacy of the read would pass it | the scenario of the read is covered now: a history whose mode was widened to `0644` becomes private again after `readEvents` |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1236
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
