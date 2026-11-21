@@ -244,7 +244,9 @@ async function storedRecord(id: string): Promise<WorkflowRecord | undefined> {
     return await loadWorkflow(id);
   } catch (error) {
     if (error instanceof WorkflowNotFoundError) return undefined;
-    throw error;
+    throw new WorkflowError(
+      `The workflow ${id} cannot be read — ${error instanceof Error ? error.message : String(error)}. The record is left as it is.`,
+    );
   }
 }
 
@@ -254,14 +256,7 @@ async function writeRecord(
   next?: WorkflowState,
 ): Promise<void> {
   await withStateLock(record.id, async () => {
-    let stored: WorkflowRecord | undefined;
-    try {
-      stored = await storedRecord(record.id);
-    } catch (error) {
-      throw new WorkflowError(
-        `The workflow ${record.id} cannot be read — ${error instanceof Error ? error.message : String(error)}. The record is left as it is.`,
-      );
-    }
+    const stored = await storedRecord(record.id);
     if (stored) {
       if (stored.state !== record.state) {
         throw new WorkflowError(
@@ -1066,14 +1061,8 @@ async function storedState(record: WorkflowRecord): Promise<WorkflowState | unde
     // A record that cannot be read is a record whose state is unknown: the
     // caller has to know that, because an unknown state is no proof that the
     // workflow is running.
-    try {
-      const stored = await storedRecord(record.id);
-      return stored?.state;
-    } catch (error) {
-      throw new WorkflowError(
-        `The workflow ${record.id} cannot be read — ${error instanceof Error ? error.message : String(error)}.`,
-      );
-    }
+    const stored = await storedRecord(record.id);
+    return stored?.state;
   });
 }
 
@@ -1527,7 +1516,11 @@ export async function advanceWorkflow(
         // The workflow may have been stopped while the step ran. The stop
         // owns the outcome then: a workflow that is being stopped is not
         // blocked by a step that ran into the stop.
-        const stored = await storedRecord(record.id).catch(() => undefined);
+        //
+        // A record that cannot be read is not a workflow that runs: the state
+        // is unknown, and the run stops with the reason instead of writing a
+        // verdict over the broken evidence.
+        const stored = await storedRecord(record.id);
         if (stored && (stored.state === 'stopping' || isTerminal(stored.state))) {
           // The stop owns the outcome of the workflow — this run does not block
           // it and does not overwrite the record of the other process. It
@@ -1649,7 +1642,20 @@ async function activeWorkflowOf(
   issue: number,
 ): Promise<WorkflowRecord | undefined> {
   for (const id of await listWorkflows()) {
-    const record = await loadWorkflow(id).catch(() => undefined);
+    let record: WorkflowRecord | undefined;
+    try {
+      record = await storedRecord(id);
+    } catch (error) {
+      // A record of this Issue that cannot be read may still describe a
+      // workflow that runs: a second workflow of the same Issue would be a
+      // second agent in the same worktree. The evidence is broken, so the
+      // start is refused instead of guessed. A record of another Issue is
+      // skipped — it cannot speak about this one.
+      if (!id.startsWith(`issue-${issue}-`)) continue;
+      throw new WorkflowError(
+        `The workflow ${id} of the Issue ${issue} cannot be read — ${error instanceof Error ? error.message : String(error)}. It is left as it is, and no second workflow of the Issue is started.`,
+      );
+    }
     if (!record) continue;
     if (record.issue.number !== issue) continue;
     if (record.repository !== repository) continue;

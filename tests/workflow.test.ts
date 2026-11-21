@@ -1038,6 +1038,32 @@ describe('the development workflow', () => {
     expect(orca.started).toHaveLength(1);
   });
 
+  it('refuses to start a second workflow of an Issue whose record cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    // The record of a workflow of the Issue is broken: it may still describe a
+    // workflow that runs, and a second workflow of the Issue would be a second
+    // agent in the same worktree.
+    const broken = aRecord('issue-59-20260101000000-abcd1234', 'implementation-running');
+    await saveWorkflow(broken);
+    await writeFile(
+      path.join(getWorkflowDir(broken.id), 'workflow.json'),
+      '{ this is not a record',
+      'utf-8',
+    );
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/cannot be read/);
+
+    // The broken record is not replaced and no agent works in the Issue.
+    const kept = await readFile(path.join(getWorkflowDir(broken.id), 'workflow.json'), 'utf-8');
+    expect(kept).toBe('{ this is not a record');
+    expect(orca.started).toHaveLength(0);
+  });
+
   it('refuses to guess the base ref', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();

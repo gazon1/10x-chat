@@ -278,6 +278,13 @@ owner may not read are refused by every write — the evidence of the run is not
 overwritten by a fresh one, and the workflow reports that the record cannot be
 read instead of pretending that nothing happened.
 
+**A broken record of an Issue also stops a second workflow of that Issue.** The
+record may still describe a workflow that runs, and a second workflow of the
+same Issue would put a second agent into the same worktree. The start is
+refused with the reason, and the broken record is left as it is: the user
+removes it after looking at it. A broken record of another Issue is skipped —
+it cannot speak about this one.
+
 The requirements of the Issue are not stored twice: the snapshot of the
 [review pipeline](review-pipeline.md) is reused, and the `check-requirements`
 step of the review is the gate that says that the Issue did not drift.
@@ -300,6 +307,7 @@ step of the review is the gate that says that the Issue did not drift.
 | The answer of the creation of the Run was lost | The Runs are asked: the Run of the objective of the workflow is adopted — a second Run would be a second home of the mailbox. Two Runs of the same objective are an ambiguity that is refused, never guessed. |
 | The workflow was stopped while the agent was starting | The agent is not started, or the agent that was started is stopped again — a workflow that is cancelled never leaves an agent in the worktree. The same holds for the agent of a lost answer. |
 | The record of the workflow cannot be read | Every write is refused — a broken record is the evidence of the run, and it is not replaced by a fresh one. |
+| The record of the workflow of this Issue cannot be read | The start of a second workflow of the Issue is refused — the broken record may still describe a workflow that runs. |
 | The branch of the created worktree cannot be read | The worktree is refused — the agent never works in a checkout whose branch cannot be proved. |
 | The repository is registered in Orca for another host | The registration is refused — the same `owner/name` on another host is another repository. |
 

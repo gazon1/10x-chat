@@ -500,3 +500,12 @@ was checked against the source.
 The check set of that round: typecheck, lint, knip, test (63 files / **1187
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+A self-review of the same round found one more place where the rule of the
+broken record was not carried through: the listing of the workflows swallowed
+the failure of the read, so a broken record of the Issue looked like no record
+at all and a second workflow of the Issue was started next to it. The read of
+the record is now refused everywhere, and a broken record of the Issue stops
+the second workflow with the reason instead of letting a second agent into the
+same worktree. The check set after it: typecheck, lint, knip, test (63 files /
+**1188 tests**), e2e and build — all pass.
