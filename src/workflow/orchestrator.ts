@@ -4,13 +4,13 @@ import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
 import { acquireLock } from '../core/lock.js';
-import type { OrcaApi, OrcaWorker } from '../orca/client.js';
-import { getWorkflowDir } from '../paths.js';
+import type { OrcaApi, OrcaWorker, OrcaWorktree } from '../orca/client.js';
+import { getWorkflowDir, getWorkflowsDir } from '../paths.js';
 import { assertRepository, collectRequirements, runGh } from '../pipeline/requirements.js';
 import { runReviewPipeline } from '../pipeline/review.js';
 import type { IssueRequirements, ReviewRun } from '../pipeline/types.js';
 import { nodeWorkflowGit, type WorkflowGit } from './git.js';
-import { appendEvent, loadWorkflow, saveWorkflow } from './store.js';
+import { appendEvent, listWorkflows, loadWorkflow, saveWorkflow } from './store.js';
 import { assertTransition, isTerminal } from './transitions.js';
 import type {
   WorkflowFinding,
@@ -120,11 +120,21 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 /** How long one wait for the mailbox of the Run lasts. */
 const CHECK_SLICE_MS = 60_000;
 
-/** The states of a worker that mean that it is done. */
-const SETTLED = /(succeeded|success|completed|done|finished|failed|escalat)/i;
+/**
+ * How long the mailbox is asked for the result of a worker that is already
+ * terminal — the result is either there or it is not, and the wait is short.
+ */
+const TERMINAL_SLICE_MS = 2_000;
+
+/** The states of a worker that mean that it is done — in any way. */
+const TERMINAL =
+  /(succeeded|success|completed|done|finished|failed|escalat|settled|terminat|stop|cancel)/i;
 
 /** The states of a worker that mean that it failed. */
 const FAILED = /(failed|escalat)/i;
+
+/** The states of a worker that mean that it succeeded. */
+const SUCCEEDED = /(succeeded|success)/i;
 
 /** The states of a worker that mean that it does not work any more. */
 const STOPPED =
@@ -153,21 +163,60 @@ async function withWorkflowLock<T>(id: string, action: () => Promise<T>): Promis
 }
 
 /**
+ * The lock of the state of a workflow — one write at a time.
+ *
+ * The lock of the run is held for the whole loop, and the stop deliberately
+ * does not take it: a workflow must be stoppable while another process works
+ * on it. The state is therefore written under a lock of its own, and the
+ * check of the state and the write of the record happen together — a
+ * compare-and-swap that is atomic, not a read that is followed by a write.
+ */
+async function withStateLock<T>(id: string, action: () => Promise<T>): Promise<T> {
+  const dir = getWorkflowDir(id);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const lock = await acquireLock(dir, 'state.lock', {
+    timeoutMs: 30_000,
+    hint: 'Another process is writing the state of this workflow — try again in a moment.',
+  });
+  try {
+    return await action();
+  } finally {
+    await lock.release();
+  }
+}
+
+/**
  * Write the record down — unless another process moved the workflow.
  *
  * The state on the disk is the truth: a workflow that was stopped or continued
  * elsewhere must not be overwritten by a run that still holds an older copy of
- * the record.
+ * the record. The check and the write happen under the lock of the state, so
+ * that no other writer can slip in between them.
  */
+async function writeRecord(
+  record: WorkflowRecord,
+  ctx: WorkflowContext,
+  next?: WorkflowState,
+): Promise<void> {
+  await withStateLock(record.id, async () => {
+    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    if (stored && stored.state !== record.state) {
+      throw new WorkflowError(
+        `The workflow ${record.id} is '${stored.state}' now — another process moved it. This run stops here.`,
+      );
+    }
+    if (next !== undefined) {
+      assertTransition(record.state, next);
+      record.state = next;
+    }
+    record.updatedAt = ctx.now().toISOString();
+    await saveWorkflow(record);
+  });
+}
+
+/** Write the record down without moving it. */
 async function persist(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
-  const stored = await loadWorkflow(record.id).catch(() => undefined);
-  if (stored && stored.state !== record.state) {
-    throw new WorkflowError(
-      `The workflow ${record.id} is '${stored.state}' now — another process moved it. This run stops here.`,
-    );
-  }
-  record.updatedAt = ctx.now().toISOString();
-  await saveWorkflow(record);
+  await writeRecord(record, ctx);
 }
 
 /** The context of a workflow — the defaults of the dependencies. */
@@ -232,13 +281,54 @@ async function move(
   detail: string,
   ctx: WorkflowContext,
 ): Promise<void> {
-  assertTransition(record.state, state);
-  // The state on the disk is checked before the move: another process may
-  // have stopped the workflow in the meantime.
-  await persist(record, ctx);
-  record.state = state;
-  await saveWorkflow(record);
+  // The move and the write happen together: another process may have stopped
+  // the workflow in the meantime, and the state on the disk is the truth.
+  await writeRecord(record, ctx, state);
   await appendEvent(record.id, { at: record.updatedAt, state, detail });
+  // The transition is a checkpoint of the workflow in Orca: a user who looks
+  // at the worktree sees where the run stands.
+  await checkpoint(record, ctx, detail);
+}
+
+/**
+ * The checkpoint of a transition — the comment of the worktree in Orca.
+ *
+ * The comment that is already there is read first and kept: the text a user
+ * wrote in the worktree is never overwritten by the workflow.
+ */
+async function checkpoint(
+  record: WorkflowRecord,
+  ctx: WorkflowContext,
+  detail: string,
+): Promise<void> {
+  const worktree = record.worktree;
+  const repoId = record.orca?.repoId;
+  if (!worktree?.id || !repoId) return;
+  const line = `10x-chat workflow ${record.id}: ${record.state} — ${detail}`;
+  try {
+    const existing = await commentOf(ctx, repoId, worktree.id);
+    const comment = existing === undefined || existing === '' ? line : `${existing}\n${line}`;
+    await ctx.orca.worktreeComment(worktree.id, comment);
+  } catch (error) {
+    // A checkpoint that could not be written is not a reason to stop the run:
+    // the state of the workflow is the truth, and the failure is in the log.
+    const reason = error instanceof Error ? error.message : String(error);
+    await appendEvent(record.id, {
+      at: ctx.now().toISOString(),
+      state: record.state,
+      detail: `the checkpoint in Orca could not be written: ${reason}`,
+    }).catch(() => {});
+  }
+}
+
+/** The comment of a worktree — the text that is already there. */
+async function commentOf(
+  ctx: WorkflowContext,
+  repoId: string,
+  worktreeId: string,
+): Promise<string | undefined> {
+  const worktrees = await ctx.orca.worktreeList(repoId);
+  return worktrees.find((worktree) => worktree.id === worktreeId)?.comment;
 }
 
 /** Block the workflow — a human has to look at it. */
@@ -368,10 +458,13 @@ export function buildFixRequest(record: WorkflowRecord, iteration: WorkflowItera
     return `- [${finding.severity}] ${finding.id} ${finding.title}${where}\n  ${finding.problem}\n  Impact: ${finding.impact}${evidence}${fix}`;
   });
   const fence = fenceFor(lines.join('\n'));
+  const branch = record.worktree?.branch ? `\nThe branch of this task: ${record.worktree.branch}.` : '';
+  const base = record.baseRef ? `\nIt is based on ${record.baseRef}.` : '';
   return `# The review of your change
 
 The independent review of the change asked for corrections. The whole report is
 in the worktree of this task: ${review?.reportPath ?? '(the report of the review)'}.
+${branch}${base}
 
 ## The findings
 
@@ -401,6 +494,8 @@ function findingsOf(run: ReviewRun): WorkflowFinding[] {
     impact: finding.impact,
     evidence: finding.evidence,
     ...(finding.fix ? { fix: finding.fix } : {}),
+    verification: finding.verification,
+    ...(finding.verificationNote ? { verificationNote: finding.verificationNote } : {}),
   }));
 }
 
@@ -419,11 +514,26 @@ function reviewOf(run: ReviewRun, record: WorkflowRecord, reportPath: string): W
   };
 }
 
-/** Whether the state of a worker means that it is done. */
-function settledOutcome(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
-  const state = worker.state;
-  if (!state || !SETTLED.test(state)) return undefined;
-  return FAILED.test(state) ? 'failed' : 'succeeded';
+/**
+ * The structured outcome of a worker.
+ *
+ * A state that says that the worker is done says nothing about whether it
+ * succeeded: `settled`, `completed` and `done` are terminal, not successful.
+ * The outcome is only read from the structured result of the Task — the field
+ * of the Dispatch or the message of the mailbox. Everything else is unknown.
+ */
+function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
+  const outcome = worker.outcome?.toLowerCase().trim();
+  if (outcome) {
+    if (/^(succeeded|success|successful|passed)$/.test(outcome)) return 'succeeded';
+    if (/^(failed|failure|error|escalated|cancelled|canceled)$/.test(outcome)) return 'failed';
+  }
+  const state = worker.state ?? '';
+  if (FAILED.test(state)) return 'failed';
+  if (SUCCEEDED.test(state)) return 'succeeded';
+  // A worker that was stopped or cancelled did not finish the task.
+  if (/(stop|cancel|terminat)/i.test(state)) return 'failed';
+  return undefined;
 }
 
 /** Wait for the worker of the workflow — its outcome, or that it is still running. */
@@ -445,16 +555,26 @@ async function waitForWorker(
     // The state of the worker is read first: a worker that finished while the
     // command was away must not be waited for a second time.
     const worker = await ctx.orca.workerShow(orca.dispatchId);
-    const settled = settledOutcome(worker);
-    if (settled) return { kind: settled };
-
+    const outcome = outcomeOf(worker);
+    if (outcome) {
+      return {
+        kind: outcome,
+        ...(worker.report ? { report: worker.report } : {}),
+        ...(outcome === 'failed' && !worker.report
+          ? { detail: 'the worker reported a failure' }
+          : {}),
+      };
+    }
+    // A terminal state without a structured outcome is not a success: the
+    // mailbox is asked once more for the result of the Task.
+    const terminal = TERMINAL.test(worker.state ?? '');
     const remaining = deadline - ctx.now().getTime();
-    if (remaining <= 0) return { kind: 'pending' };
+    if (!terminal && remaining <= 0) return { kind: 'pending' };
 
     let messages: Awaited<ReturnType<OrcaApi['check']>> = [];
     try {
       messages = await ctx.orca.check(orca.runId, {
-        timeoutMs: Math.min(remaining, CHECK_SLICE_MS),
+        timeoutMs: Math.max(0, Math.min(terminal ? TERMINAL_SLICE_MS : CHECK_SLICE_MS, remaining)),
         types: ['worker_done', 'escalation'],
       });
     } catch (error) {
@@ -492,6 +612,13 @@ async function waitForWorker(
           detail: message.text ?? 'the worker reported a completion without an outcome',
         };
       }
+    }
+
+    if (terminal) {
+      return {
+        kind: 'unknown',
+        detail: `the worker is '${worker.state}' but reported no structured outcome — the result of the Task is unknown`,
+      };
     }
   }
 }
@@ -549,26 +676,32 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   const baseRef = record.baseRef ?? (await ctx.git.defaultBaseRef(ctx.cwd));
   const branch = `10x-chat/issue-${record.issue.number}`;
   const name = `issue-${record.issue.number}`;
+  const baseSha = await ctx.git.revParse(ctx.cwd, baseRef);
 
-  // A worktree that is already there is adopted, never created a second time:
-  // the answer of a lost command is not a reason to make a second worktree of
-  // the same Issue.
+  // A worktree that is already there is adopted only when it is provably the
+  // worktree of this workflow: the answer of a lost command is not a reason to
+  // make a second worktree of the same Issue — and it is never a reason to
+  // take the worktree of somebody else.
   const existing = await ctx.orca.worktreeList(repo.id);
-  const adopted = existing.find(
-    (worktree) =>
-      worktree.name === name ||
-      worktree.branch === branch ||
-      worktree.branch === `refs/heads/${branch}`,
+  const candidate = existing.find(
+    (worktree) => worktree.name === name || sameBranch(worktree.branch, branch),
   );
-  const worktree =
-    adopted ??
-    (await ctx.orca.worktreeCreate({
+  let worktree: OrcaWorktree;
+  let adopted = false;
+  if (candidate) {
+    const refusal = refusalOf(candidate, record, repo.path, baseSha);
+    if (refusal) throw new WorkflowError(refusal);
+    worktree = candidate;
+    adopted = true;
+  } else {
+    worktree = await ctx.orca.worktreeCreate({
       repoId: repo.id,
       name,
       branch,
       baseRef,
       issue: record.issue.number,
-    }));
+    });
+  }
   const startSha = await ctx.git.revParse(worktree.path, 'HEAD');
   record.worktree = {
     id: worktree.id,
@@ -586,6 +719,54 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
     `the worktree ${worktree.path} was ${adopted ? 'adopted' : 'created'} on ${record.worktree.branch} at ${startSha.slice(0, 7)}`,
     ctx,
   );
+}
+
+/** Whether the branch of a worktree is the branch of the workflow. */
+function sameBranch(branch: string | undefined, expected: string): boolean {
+  if (!branch) return false;
+  const normalized = branch.replace(/^refs\/heads\//, '');
+  return normalized === expected;
+}
+
+/** Whether two paths are the same checkout. */
+function samePath(left: string, right: string): boolean {
+  return path.resolve(left) === path.resolve(right);
+}
+
+/** The workflow that owns the comment of a worktree. */
+function ownerOf(comment: string | undefined): string | undefined {
+  const match = /10x-chat workflow ([^\s:]+):/.exec(comment ?? '');
+  return match?.[1];
+}
+
+/**
+ * Why the workflow refuses to take a worktree that is already there.
+ *
+ * The checkout of the user is never reused, the worktree of another workflow
+ * is never shared, a worktree with the comment of somebody else is never
+ * taken, and a worktree that already carries changes is never taken over:
+ * the agent of the workflow would work in a checkout that is not its own.
+ */
+function refusalOf(
+  candidate: OrcaWorktree,
+  record: WorkflowRecord,
+  repoPath: string,
+  baseSha: string,
+): string | undefined {
+  if (candidate.isMainWorktree || samePath(candidate.path, repoPath)) {
+    return `The worktree ${candidate.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
+  }
+  const owner = ownerOf(candidate.comment);
+  if (owner && owner !== record.id) {
+    return `The worktree ${candidate.path} belongs to the workflow ${owner} — a workflow never shares a worktree with another run.`;
+  }
+  if ((candidate.comment ?? '').trim() !== '' && !owner) {
+    return `The worktree ${candidate.path} already carries a comment of somebody else — the workflow does not reuse a worktree it cannot prove.`;
+  }
+  if (candidate.head && candidate.head !== baseSha) {
+    return `The worktree ${candidate.path} already has changes (${candidate.head.slice(0, 7)}) — the workflow does not take over a worktree with work in it.`;
+  }
+  return undefined;
 }
 
 /** The step that starts the agent in the worktree. */
@@ -900,33 +1081,95 @@ export async function startWorkflow(
   ctx: WorkflowContext,
 ): Promise<WorkflowRecord> {
   const now = ctx.now().toISOString();
-  const record: WorkflowRecord = {
-    version: 1,
-    id: `issue-${options.issue}-${now.replace(/[-:.TZ]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
-    state: 'created',
-    repository: await ctx.git.repository(options.cwd),
-    issue: {
-      number: options.issue,
-      url: '',
-      title: '',
-      body: '',
-      hash: '',
-      observedAt: now,
-    },
-    agent: options.agent ?? DEFAULT_AGENT,
-    backend: options.backendLabel ?? options.backend.name,
-    ...(options.model ? { model: options.model } : {}),
-    ...(options.baseRef ? { baseRef: options.baseRef } : {}),
-    maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-    iterations: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  await saveWorkflow(record);
-  await appendEvent(record.id, { at: now, state: 'created', detail: 'the workflow was started' });
+  const repository = await ctx.git.repository(options.cwd);
+  const record = await withIssueLock(repository, options.issue, async () => {
+    // One workflow at a time per Issue: a second run of the same Issue would
+    // share the worktree of the first one, and two agents would work in the
+    // same checkout.
+    const active = await activeWorkflowOf(repository, options.issue);
+    if (active) {
+      throw new WorkflowError(
+        `The issue #${options.issue} already has a running workflow: ${active.id} — stop it or wait for it before starting another one.`,
+      );
+    }
+    const created: WorkflowRecord = {
+      version: 1,
+      id: `issue-${options.issue}-${now.replace(/[-:.TZ]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
+      state: 'created',
+      repository,
+      issue: {
+        number: options.issue,
+        url: '',
+        title: '',
+        body: '',
+        hash: '',
+        observedAt: now,
+      },
+      agent: options.agent ?? DEFAULT_AGENT,
+      backend: options.backendLabel ?? options.backend.name,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.baseRef ? { baseRef: options.baseRef } : {}),
+      maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+      iterations: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await saveWorkflow(created);
+    await appendEvent(created.id, {
+      at: now,
+      state: 'created',
+      detail: 'the workflow was started',
+    });
+    return created;
+  });
   // The lock is taken for the whole run of the loop: a second process must
   // not start a second agent for the same worktree.
   return withWorkflowLock(record.id, () => advanceWorkflow(record, ctx));
+}
+
+/**
+ * The lock of an Issue — one workflow at a time.
+ *
+ * The check of the active workflows and the creation of the new one happen
+ * together: two processes that start the same Issue at the same time cannot
+ * both pass the check.
+ */
+async function withIssueLock<T>(
+  repository: string,
+  issue: number,
+  action: () => Promise<T>,
+): Promise<T> {
+  const dir = getWorkflowsDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const lock = await acquireLock(
+    dir,
+    `issue-${repository.replace(/[^\w.-]/g, '_')}-${issue}.lock`,
+    {
+      timeoutMs: 30_000,
+      hint: 'Another process is starting a workflow of this Issue — try again in a moment.',
+    },
+  );
+  try {
+    return await action();
+  } finally {
+    await lock.release();
+  }
+}
+
+/** The workflow that still runs for an Issue of a repository. */
+async function activeWorkflowOf(
+  repository: string,
+  issue: number,
+): Promise<WorkflowRecord | undefined> {
+  for (const id of await listWorkflows()) {
+    const record = await loadWorkflow(id).catch(() => undefined);
+    if (!record) continue;
+    if (record.issue.number !== issue) continue;
+    if (record.repository !== repository) continue;
+    if (isTerminal(record.state)) continue;
+    return record;
+  }
+  return undefined;
 }
 
 /** Continue a workflow that was interrupted. */
@@ -986,6 +1229,38 @@ async function writeReport(record: WorkflowRecord): Promise<string> {
   return file;
 }
 
+/** The findings that still stand — every finding the review did not reject. */
+function standingFindings(record: WorkflowRecord): WorkflowFinding[] {
+  const findings: WorkflowFinding[] = [];
+  for (const iteration of record.iterations) {
+    for (const finding of iteration.review?.findings ?? []) {
+      if (finding.verification === 'rejected') continue;
+      findings.push(finding);
+    }
+  }
+  return findings;
+}
+
+/** The checks that were not available — the steps that did not pass. */
+function unavailableChecks(record: WorkflowRecord): string[] {
+  const checks: string[] = [];
+  for (const iteration of record.iterations) {
+    const review = iteration.review;
+    if (!review) continue;
+    for (const step of review.steps) {
+      if (step.status === 'passed') continue;
+      checks.push(`The step '${step.id}' of the iteration ${iteration.index}: ${step.status}`);
+    }
+    for (const finding of review.findings) {
+      if (finding.verification !== 'unverified') continue;
+      checks.push(
+        `The finding ${finding.id} was not settled by the verification — ${finding.verificationNote ?? 'the verification did not settle it'}`,
+      );
+    }
+  }
+  return checks;
+}
+
 /** The report of a workflow — what happened, and what is left. */
 export function renderWorkflowReport(record: WorkflowRecord): string {
   const issue = record.issue;
@@ -1004,11 +1279,13 @@ export function renderWorkflowReport(record: WorkflowRecord): string {
   lines.push(`- Reviewer: ${record.backend}`);
   if (worktree) {
     lines.push(`- Worktree: ${worktree.path}`);
+    lines.push(`- Worktree id: ${worktree.id}`);
     lines.push(`- Branch: ${worktree.branch}`);
-    lines.push(`- Base commit: ${worktree.baseSha.slice(0, 7)}`);
+    lines.push(`- Base ref: ${worktree.baseRef}`);
+    lines.push(`- Base commit: ${worktree.baseSha}`);
   }
   const head = record.iterations[record.iterations.length - 1]?.headSha;
-  if (head) lines.push(`- Final commit: ${head.slice(0, 7)}`);
+  if (head) lines.push(`- Final commit: ${head}`);
   lines.push(`- Iterations: ${record.iterations.length} of ${record.maxIterations}`);
   lines.push('');
 
@@ -1022,8 +1299,9 @@ export function renderWorkflowReport(record: WorkflowRecord): string {
       `### Iteration ${iteration.index} — the agent ${iteration.agentOutcome ?? 'did not report'}`,
     );
     lines.push('');
+    lines.push(`- The change started at ${iteration.baseSha || '(unknown)'}.`);
     if (iteration.headSha) {
-      lines.push(`- The change ended at ${iteration.headSha.slice(0, 7)}.`);
+      lines.push(`- The change ended at ${iteration.headSha}.`);
     }
     if (iteration.review) {
       lines.push(`- The review: ${iteration.review.verdict} — ${iteration.review.verdictReason}`);
@@ -1038,7 +1316,38 @@ export function renderWorkflowReport(record: WorkflowRecord): string {
       }
     }
     lines.push('');
+    if (iteration.agentReport) {
+      // The summary of the agent: what it did and how it verified it. The
+      // verification it reported is evidence of the implementation — the
+      // report of the workflow carries it, not only the report of the review.
+      lines.push('#### The report of the agent');
+      lines.push('');
+      lines.push(iteration.agentReport.trim());
+      lines.push('');
+    }
   }
+
+  lines.push('## The remaining risks');
+  lines.push('');
+  const risks = standingFindings(record);
+  if (risks.length === 0) {
+    lines.push('The review left no standing finding.');
+  }
+  for (const finding of risks) {
+    lines.push(`- [${finding.severity}] ${finding.title}`);
+  }
+  lines.push('');
+
+  lines.push('## The checks that were not available');
+  lines.push('');
+  const unavailable = unavailableChecks(record);
+  if (unavailable.length === 0) {
+    lines.push('Every check of the review was available.');
+  }
+  for (const check of unavailable) {
+    lines.push(`- ${check}`);
+  }
+  lines.push('');
 
   lines.push('## What is left');
   lines.push('');

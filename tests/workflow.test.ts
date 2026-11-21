@@ -51,12 +51,20 @@ class FakeOrca implements OrcaApi {
   workers: OrcaWorker[] = [];
   /** The worktrees of the repository — a lost answer is reconciled with them. */
   worktrees: OrcaWorktree[] = [];
+  /** The comment a new worktree carries — the text of the user. */
+  createdComment?: string;
   /** The messages the mailbox answers with. */
   messages: OrcaMessage[] = [
     { type: 'worker_done', outcome: 'succeeded', text: 'the work is done' },
   ];
   /** The state the worker reports. */
   workerState = 'working';
+  /** The structured outcome the worker reports — it settles the Task. */
+  workerOutcome?: string;
+  /** The report of the worker. */
+  workerReport?: string;
+  /** The checkpoints the workflow wrote into the comment of the worktree. */
+  readonly comments: { selector: string; comment: string }[] = [];
   ready = true;
   capabilities = ['orchestration.contract.v1', 'worktree.create'];
   repos: OrcaRepo[] = [
@@ -69,6 +77,8 @@ class FakeOrca implements OrcaApi {
   ];
   /** What the mailbox does when it is asked — the agent commits there. */
   onCheck?: () => void;
+  /** What the runtime does when the state of the worker is read. */
+  onWorkerShow?: () => void;
   /** What the runtime answers when the worker is stopped. */
   stopError?: Error;
 
@@ -90,6 +100,7 @@ class FakeOrca implements OrcaApi {
       path: '/wt/issue-59',
       name: options.name,
       branch: options.branch,
+      ...(this.createdComment ? { comment: this.createdComment } : {}),
     };
     this.worktrees.push(worktree);
     return worktree;
@@ -99,7 +110,11 @@ class FakeOrca implements OrcaApi {
     return this.worktrees;
   }
 
-  async worktreeComment() {}
+  async worktreeComment(selector: string, comment: string) {
+    this.comments.push({ selector, comment });
+    const worktree = this.worktrees.find((entry) => entry.id === selector);
+    if (worktree) worktree.comment = comment;
+  }
 
   async runCreate(objective: string) {
     this.runs.push(objective);
@@ -116,7 +131,13 @@ class FakeOrca implements OrcaApi {
   }
 
   async workerShow(dispatchId: string) {
-    return { dispatchId, state: this.workerState };
+    this.onWorkerShow?.();
+    return {
+      dispatchId,
+      state: this.workerState,
+      ...(this.workerOutcome ? { outcome: this.workerOutcome } : {}),
+      ...(this.workerReport ? { report: this.workerReport } : {}),
+    };
   }
 
   async workerList() {
@@ -145,6 +166,8 @@ class FakeGit implements WorkflowGit {
   head = 'base-sha';
   /** The repository of the checkout — an empty name is a broken checkout. */
   repositoryName = 'gazon1/10x-chat';
+  /** The base ref is unknown — the git of the checkout cannot tell. */
+  baseRefError?: Error;
 
   async repository() {
     return this.repositoryName;
@@ -155,6 +178,7 @@ class FakeGit implements WorkflowGit {
   }
 
   async defaultBaseRef() {
+    if (this.baseRefError) throw this.baseRefError;
     return 'main';
   }
 }
@@ -687,6 +711,216 @@ describe('the development workflow', () => {
 
     expect(orca.created).toHaveLength(0);
     expect(record.worktree?.id).toBe('wt-9');
+  });
+
+  it('never works in the checkout of the user', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The checkout of the repository carries the branch of the Issue.
+    orca.worktrees = [
+      {
+        id: 'wt-main',
+        path: '/repo',
+        name: 'main',
+        branch: '10x-chat/issue-59',
+        isMainWorktree: true,
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('the checkout of the repository');
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('never shares the worktree with another workflow', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The worktree of the Issue belongs to another run.
+    orca.worktrees = [
+      {
+        id: 'wt-9',
+        path: '/wt/issue-59',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        comment: '10x-chat workflow issue-59-other: worktree-created — the worktree is there',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('belongs to the workflow issue-59-other');
+
+    expect(orca.created).toHaveLength(0);
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('never takes over a worktree that carries the comment of somebody else', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktrees = [
+      {
+        id: 'wt-9',
+        path: '/wt/issue-59',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        comment: 'my own worktree, do not touch it',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('comment of somebody else');
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('never takes over a worktree that already has changes', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktrees = [
+      {
+        id: 'wt-9',
+        path: '/wt/issue-59',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        head: 'other-sha',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('already has changes');
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses to start a second workflow of the same Issue', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const first = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+    expect(first.state).toBe('implementation-running');
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(`already has a running workflow: ${first.id}`);
+
+    // The agent of the first workflow is the only one that runs.
+    expect(orca.started).toHaveLength(1);
+  });
+
+  it('refuses to guess the base ref', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The checkout does not know its default branch.
+    git.baseRefError = new Error(
+      'The default branch of origin is unknown — name the ref yourself: 10x-chat workflow start --base <ref>.',
+    );
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('The default branch of origin is unknown');
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('blocks when the worker settles without a structured outcome', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The worker is terminal, but the Task has no result.
+    orca.workerState = 'settled';
+    orca.messages = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('reported no structured outcome');
+  });
+
+  it('takes the structured outcome of the worker', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.workerState = 'settled';
+    orca.workerOutcome = 'succeeded';
+    orca.workerReport = 'the change is done and the checks pass';
+    orca.messages = [];
+    // The agent committed before it reported the result.
+    orca.onWorkerShow = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(record.state).toBe('completed');
+    // The report of the agent is the evidence of the implementation.
+    expect(record.iterations[0]?.agentReport).toContain('the checks pass');
+  });
+
+  it('writes the checkpoint of the transition without losing the comment of the user', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    // The user wrote a note in the worktree of the Issue.
+    orca.createdComment = 'the note of the user';
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    const checkpoint = orca.comments.at(-1);
+    expect(checkpoint?.selector).toBe('wt-1');
+    expect(checkpoint?.comment).toContain(`10x-chat workflow ${record.id}`);
+    // The text of the user is kept: the checkpoint is read before it is written.
+    expect(checkpoint?.comment).toContain('the note of the user');
+  });
+
+  it('carries the evidence of the implementation into the report', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the check does not run', findings: [aFinding()] },
+    ]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend(), maxIterations: 1 },
+      ctx,
+    );
+
+    const report = await readFile(path.join(getWorkflowDir(record.id), 'report.md'), 'utf-8');
+    // The worktree, the branch and the exact commits.
+    expect(report).toContain('wt-1');
+    expect(report).toContain('base-sha');
+    expect(report).toContain('head-sha-1');
+    // The summary of the agent and the risks that stand.
+    expect(report).toContain('the work is done');
+    expect(report).toContain('The check does not run');
   });
 
   it('does not start a second agent when two processes resume the same workflow', async () => {

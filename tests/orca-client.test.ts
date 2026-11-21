@@ -196,6 +196,8 @@ describe('the adapter of the Orca CLI', () => {
             displayName: 'issue-59',
             branch: 'refs/heads/10x-chat/issue-59',
             head: 'abc123',
+            comment: 'the checkpoint of the workflow',
+            isMainWorktree: false,
           },
         ],
       }),
@@ -208,6 +210,29 @@ describe('the adapter of the Orca CLI', () => {
     expect(worktrees[0]?.id).toBe('wt-1');
     expect(worktrees[0]?.name).toBe('issue-59');
     expect(worktrees[0]?.branch).toBe('refs/heads/10x-chat/issue-59');
+    // The comment is the checkpoint of the workflow — it is read before it is
+    // written, and the main worktree is never taken over.
+    expect(worktrees[0]?.comment).toBe('the checkpoint of the workflow');
+    expect(worktrees[0]?.isMainWorktree).toBe(false);
     expect(calls[0]?.args).toContain('id:repo-1');
+  });
+
+  it('reads the structured outcome of a worker', async () => {
+    const { runner } = fakeRunner([
+      ok({
+        dispatchId: 'dispatch-1',
+        state: 'settled',
+        outcome: 'succeeded',
+        report: 'the change is done',
+      }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    const worker = await client.workerShow('dispatch-1');
+
+    // The outcome is a field of its own: it is not the state of the Dispatch.
+    expect(worker.state).toBe('settled');
+    expect(worker.outcome).toBe('succeeded');
+    expect(worker.report).toBe('the change is done');
   });
 });

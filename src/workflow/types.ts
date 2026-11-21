@@ -81,6 +81,10 @@ export interface WorkflowFinding {
   impact: string;
   evidence: string[];
   fix?: string;
+  /** Whether an independent pass confirmed, rejected or left the finding. */
+  verification?: 'unverified' | 'confirmed' | 'rejected';
+  /** Why the finding was confirmed or rejected. */
+  verificationNote?: string;
 }
 
 /** The review of one iteration. */

@@ -60,6 +60,15 @@ export const nodeWorkflowGit: WorkflowGit = {
       .split('\n')
       .map((branch) => branch.trim().replace(/^origin\//, ''))
       .filter((branch) => branch !== '' && branch !== 'HEAD');
-    return candidates[0] ?? 'main';
+    // One branch of origin is not a guess — it is the only base there is.
+    if (candidates.length === 1) return candidates[0];
+    // More than one branch is not a default branch: the order of the listing
+    // says nothing about it, and a worktree of an unrelated branch is not a
+    // worktree of the Issue.
+    throw new Error(
+      'The default branch of origin is unknown — the symbolic ref origin/HEAD is not set' +
+        (candidates.length > 0 ? ` and origin has ${candidates.length} branches` : '') +
+        '. Name the ref yourself: 10x-chat workflow start --base <ref>.',
+    );
   },
 };

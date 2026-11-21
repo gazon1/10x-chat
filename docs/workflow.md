@@ -45,14 +45,37 @@ never leaves a lock behind.
 
 The lock is held by `start` and by `resume` for the whole run of the loop. It is
 **not** held by `stop`: a workflow must be stoppable while another process is
-working on it. The protection against a lost update is the other half — every
-write of the record checks the state on the disk first, and a run that finds a
+working on it. The protection against a lost update is the other half — the
+record is written under the **lock of the state**, and the check of the state on
+the disk and the write of the record happen together: a run that finds a
 different state stops instead of overwriting the work of the other process.
 
 The worktrees of the repository are read before a new one is created: a worktree
-of the same Issue that is already there is **adopted**, never created a second
-time. The same holds for the agent — a worker that is already there is adopted
-too.
+of the same Issue that is already there is **adopted** — but only when it is
+provably the worktree of this workflow. The same holds for the agent: a worker
+that is already there is adopted too.
+
+## The worktree belongs to one workflow
+
+The branch and the name of the worktree are derived from the Issue
+(`10x-chat/issue-<n>` and `issue-<n>`), so that the worktree of a lost answer is
+found again. A worktree that is already there is taken over only when it can be
+proved to be ours:
+
+| The worktree that is already there | What the workflow does |
+|---|---|
+| the checkout of the user (the main worktree) | refuses it — the agent never works in the checkout of the user |
+| the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout |
+| a worktree with a comment of somebody else | refuses it — the workflow does not take a worktree it cannot prove |
+| a worktree that already carries changes | refuses it — the work of somebody else is not taken over |
+| the worktree of this workflow, untouched at the base | adopts it — the answer of a lost command is not a reason to make a second worktree |
+
+The worktrees of the repository are read for the same reason: the list is how a
+lost answer is reconciled.
+
+**One workflow at a time per Issue.** A second `start` of the same Issue is
+refused while the first one runs: two workflows of one Issue would share the
+worktree, and two agents would work in the same checkout.
 
 ## The commands
 

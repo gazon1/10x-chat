@@ -48,6 +48,10 @@ export interface OrcaWorktree {
   name?: string;
   branch?: string;
   head?: string;
+  /** The comment of the worktree — the checkpoint of the workflow lives there. */
+  comment?: string;
+  /** Whether the worktree is the checkout of the user — it is never reused. */
+  isMainWorktree?: boolean;
 }
 
 /** The worker that Orca supervises — the Dispatch of the orchestration. */
@@ -64,6 +68,10 @@ export interface OrcaWorker {
   branch?: string;
   /** The state of the Dispatch — `ready`, `working`, `settled`, … */
   state?: string;
+  /** The structured outcome of the Dispatch — `succeeded` or `failed`. */
+  outcome?: string;
+  /** The report of the worker — what it did and how it verified it. */
+  report?: string;
 }
 
 /** A message of the mailbox of a Run. */
@@ -347,12 +355,16 @@ export class OrcaClient implements OrcaApi {
       const name = findString(entry, ['displayName', 'name']);
       const branch = findString(entry, ['branch']);
       const head = findString(entry, ['head', 'headSha', 'sha']);
+      const comment = findString(entry, ['comment', 'description']);
+      const isMain = findValue(entry, ['isMainWorktree']);
       worktrees.push({
         id,
         path,
         ...(name ? { name } : {}),
         ...(branch ? { branch } : {}),
         ...(head ? { head } : {}),
+        ...(comment ? { comment } : {}),
+        ...(typeof isMain === 'boolean' ? { isMainWorktree: isMain } : {}),
       });
     }
     return worktrees;
@@ -409,13 +421,17 @@ export class OrcaClient implements OrcaApi {
     const id = findString(result, ['dispatchId']) ?? dispatchId;
     const taskId = findString(result, ['taskId']);
     const state = findString(result, ['state', 'status', 'taskStatus']);
-    const outcome = findString(result, ['outcome']);
+    // The outcome is a field of its own: it is the structured result of the
+    // Task, and it is not the state of the Dispatch.
+    const outcome = findString(result, ['outcome', 'result.outcome', 'task.outcome']);
+    const report = findString(result, ['report', 'summary', 'result.report', 'result.text']);
     const worktreePath = findString(result, ['worktreePath']);
     return {
       dispatchId: id,
       ...(taskId ? { taskId } : {}),
       ...(state ? { state } : {}),
-      ...(outcome ? { state: outcome } : {}),
+      ...(outcome ? { outcome } : {}),
+      ...(report ? { report } : {}),
       ...(worktreePath ? { worktreePath } : {}),
     };
   }

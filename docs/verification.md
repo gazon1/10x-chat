@@ -330,6 +330,12 @@ human. Orca is not required for any other command.
 | The stop | **verified (unit)** | `stop` ends the workflow in `cancelled` — but only when the state of the worker confirms that it stopped; a worker that cannot be stopped leaves the workflow `blocked` with the reason |
 | The lock of the workflow | **verified (unit)** | `start` and `resume` hold the lock of the workflow; two processes that resume the same workflow do not start two agents, and a run that finds a different state on the disk stops instead of overwriting it |
 | The worktree | **verified (unit)** | a worktree of the same Issue that is already there is adopted, never created a second time; the ref of the worktree is the one the user named (`--base`) |
+| The ownership of the worktree | **verified (unit)** | a worktree is adopted only when its ownership is proved — the comment of the workflow, or an empty comment and a head that is still the base; the checkout of the user, a worktree of another workflow, a worktree with uncommitted changes and a worktree with a foreign comment are refused with an actionable reason |
+| The base ref | **verified (unit)** | the base is never guessed: several branches on `origin` and no `origin/HEAD` is a refusal to name `--base`; a single branch of `origin` is the only case where the base is known |
+| One workflow per Issue | **verified (unit)** | a second workflow of the same Issue is refused while the first one is active |
+| The success of the agent | **verified (unit)** | only a structural result counts (`outcome` of the Task, or a `worker_done` in the mail); a terminal state without a result is `unknown` and blocks the workflow |
+| The checkpoints | **verified (unit)** | every iteration writes a checkpoint comment into the Orca worktree; the comment of the user is read first and kept, and a failed comment is an event of the run, not a broken workflow |
+| The report of the workflow | **verified (unit)** | the report carries the worktree, the base ref, the full SHAs, the report of the agent, the remaining risks and the checks that were not available |
 | The preflight | **verified (unit)** | an unauthenticated `gh`, a checkout without a repository, a runtime that is not ready, a runtime that cannot orchestrate and a repository that is not registered in Orca each end the workflow before a worktree is created |
 | The store | **verified (unit)** | `tests/workflow.test.ts` — the record survives a round trip, the directory is `0700` and the file `0600`, a foreign version is refused, `listWorkflows` finds the workflows |
 | The transitions | **verified (unit)** | an illegal transition is refused; `blocked` and `cancelled` are terminal |
@@ -339,7 +345,7 @@ human. Orca is not required for any other command.
 | A real Orca runtime | **not verified against a site** | the adapter was exercised against the real `orca` CLI of the machine during the development (status, repo list, worktree list, orchestration), but no workflow was run end to end against a real coding agent |
 | A real GitHub Issue | **not verified against a site** | the Issue is read through `gh`; the flow was not run against a live Issue |
 
-The check set of that change: typecheck, lint, knip, test (63 files / **1130 tests**), e2e (22
+The check set of that change: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22
 CLI scenarios, the 10 live provider scenarios skipped) and build — all pass.
 
 ## 13. The review of pull request #74
@@ -363,5 +369,27 @@ The findings that the verification confirmed were fixed in the change:
 The findings that the verification did not confirm are not claims of this document: they were the
 reading of the reviewers, and they are checked by the tests above.
 
-The check set of that round: typecheck, lint, knip, test (63 files / **1130 tests**), e2e (22 CLI
+The check set of that round: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22 CLI
+scenarios, the 10 live provider scenarios skipped) and build — all pass.
+
+### The second round
+
+The second round of the same pipeline returned **REQUEST CHANGES** again — five blocking findings
+and three minor ones. The round was also **incomplete**: the step `review-tests` failed with a
+malformed answer of the model, so the run had no verdict and the step `update-requirements` was
+skipped. The findings of that round are the reading of the reviewers, not confirmed defects; they
+were checked against the source and answered one by one:
+
+| Finding of the second round | The answer |
+|---|---|
+| the adoption of a worktree did not check that it belongs to no other workflow | the ownership is now proved: the comment of the workflow, or an empty comment and a head that is still the base; a worktree of another workflow, the checkout of the user and a worktree with uncommitted changes are refused with an actionable reason |
+| the success of the worker was read from the words of the state | the success is a structural result only (`outcome` of the Task, or a `worker_done` in the mail); a terminal state without a result is `unknown` and blocks the workflow |
+| the default branch was guessed when `origin/HEAD` was missing | several branches on `origin` and no `origin/HEAD` is a refusal to name `--base`; a single branch of `origin` is the only case where the base is known |
+| the report did not carry the report of the agent | the report carries it, together with the worktree, the base ref, the full SHAs, the remaining risks and the checks that were not available |
+| the write of the record was a read and a write, not an atomic compare-and-set | the write happens under the lock of the state, and it compares the state on the disk with the state the process holds |
+| the adoption was by name and branch, without a proof of the ownership | the proof of the ownership is the base of the adoption, see the first row |
+| the report had no summary of the implementation, no verification commands and no remaining risks | the report has all of them |
+| the comment of the worktree was never written, and the comment of the user was never read before the update | every iteration writes a checkpoint comment into the Orca worktree: the comment of the user is read first and kept, and a failed comment is an event of the run, not a broken workflow |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22 CLI
 scenarios, the 10 live provider scenarios skipped) and build — all pass.
