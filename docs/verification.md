@@ -863,3 +863,26 @@ not read back.
 The check set of that round: typecheck, lint, knip, test (63 files /**1285
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twentieth round
+
+The twentieth round ran completely and returned **REQUEST CHANGES** with a
+single finding of the severity MAJOR — again a finding the verification called
+plausible and not settled, and again a finding that is real. The round also had
+two failures of its own: the attempt before it was refused because another
+session held the shared ChatGPT profile (`--busy fail`), and the step
+`review-tests` answered with a malformed finding (`line malformed`), so the run
+was recorded as incomplete. Neither failure changed the finding, and the
+pipeline ran again once the profile was free.
+
+| Finding of the twentieth round | The answer |
+|---|---|
+| `persistedReview()` accepted `review.json` without checking that `report.md` exists. The pipeline writes the JSON first and the report second, so an interruption between the two writes leaves a run whose step `render-report` says "passed" and whose report was never produced. On resume the workflow adopted that run and could end `completed` with the mandatory report missing | the run is read back only when its report is there and carries text: a report that is missing, that is not a regular file, or that holds whitespace alone is the same absence, and the review runs again. `render-report` is a mandatory step of the pipeline, so a run that names a report it never wrote has not finished |
+
+Two tests were added with the fix, and both of them fail without it: the
+workflow judges the change again when the report of the interrupted run was
+never written, and when the report is empty.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1287
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

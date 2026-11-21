@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
@@ -2179,6 +2179,13 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
  * leaves a review that nobody read. The run is read back and reused only when
  * it judged the commit the workflow holds now — a run of another commit is a
  * run of another change, and the review runs again.
+ *
+ * A run is its two files: the JSON of the steps and the report of it. The
+ * pipeline writes the JSON first, so an interruption between the two writes
+ * leaves a run whose step `render-report` says "passed" and whose report was
+ * never produced. That run is not the evidence of the review: the report is a
+ * mandatory step of the pipeline, and a review that claims a report it never
+ * wrote is a review that did not finish.
  */
 async function persistedReview(runDir: string): Promise<ReviewRun | undefined> {
   let raw: string;
@@ -2192,10 +2199,28 @@ async function persistedReview(runDir: string): Promise<ReviewRun | undefined> {
     const parsed = JSON.parse(raw) as Partial<ReviewRun>;
     if (!parsed || typeof parsed !== 'object') return undefined;
     if (!Array.isArray(parsed.steps) || typeof parsed.verdict !== 'string') return undefined;
+    // The report of the run is written after the JSON of it: the run that was
+    // interrupted between the two writes cannot be reused, because the report
+    // it names does not exist. The file is read without following a link and
+    // is a file of the owner alone, like the report the pipeline writes.
+    if (!(await reportExists(path.join(runDir, 'report.md')))) return undefined;
     return parsed as ReviewRun;
   } catch {
     // A run that cannot be read is not a run: the review runs again.
     return undefined;
+  }
+}
+
+/** Whether the report of a review run is there and carries something. */
+async function reportExists(file: string): Promise<boolean> {
+  try {
+    const info = await lstat(file);
+    if (!info.isFile() || info.size === 0) return false;
+    // A report is the text of the review: a file of whitespace alone is the
+    // same absence as a file that was never written.
+    return (await readFile(file, 'utf-8')).trim() !== '';
+  } catch {
+    return false;
   }
 }
 

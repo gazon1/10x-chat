@@ -3966,6 +3966,107 @@ describe('the development workflow', () => {
     expect(seen).toHaveLength(2);
     expect(resumed.state).toBe('completed');
   });
+  it('runs the review again when the interrupted run never wrote its report', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.head = 'head-sha-1';
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    const record = aRecord('issue-59-72727272', 'awaiting-review');
+    orca.worktrees = [anOrcaWorktree()];
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    record.iterations = [
+      {
+        index: 1,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        baseSha: 'base-sha',
+        headSha: 'head-sha-1',
+      },
+    ];
+    await saveWorkflow(record);
+
+    // The process was killed between the two writes of the pipeline: the JSON
+    // of the run is there and the report of it is not. The run claims the step
+    // `render-report` passed, and a review that names a report it never wrote
+    // has not finished — it is not the evidence of the change.
+    const runDir = path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1');
+    const run = await review({
+      cwd: '/wt/issue-59',
+      base: 'base-sha',
+      head: 'head-sha-1',
+      issue: 59,
+      runId: `${record.id}-iteration-1`,
+      runDir,
+    });
+    await persistRun(run, runDir);
+    await rm(path.join(runDir, 'report.md'), { force: true });
+    await writeReviewBinding(runDir, {
+      version: 1,
+      headSha: 'head-sha-1',
+      baseSha: 'base-sha',
+      requirementsHash: 'hash-of-the-issue',
+      backend: 'fake',
+      model: '',
+    });
+
+    const ctx = contextOf(orca, git, { review });
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    // The change is judged again: a review whose report is missing is a
+    // review that did not run.
+    expect(seen).toHaveLength(2);
+    expect(resumed.state).toBe('completed');
+  });
+
+  it('runs the review again when the report of the interrupted run is empty', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.head = 'head-sha-1';
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    const record = aRecord('issue-59-73737373', 'awaiting-review');
+    orca.worktrees = [anOrcaWorktree()];
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    record.iterations = [
+      {
+        index: 1,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        baseSha: 'base-sha',
+        headSha: 'head-sha-1',
+      },
+    ];
+    await saveWorkflow(record);
+
+    // A report of whitespace alone is the same absence as a report that was
+    // never written: the workflow refers to it, and a human reads it.
+    const runDir = path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1');
+    const run = await review({
+      cwd: '/wt/issue-59',
+      base: 'base-sha',
+      head: 'head-sha-1',
+      issue: 59,
+      runId: `${record.id}-iteration-1`,
+      runDir,
+    });
+    await persistRun(run, runDir);
+    await writeFile(path.join(runDir, 'report.md'), '\n  \n', 'utf-8');
+    await writeReviewBinding(runDir, {
+      version: 1,
+      headSha: 'head-sha-1',
+      baseSha: 'base-sha',
+      requirementsHash: 'hash-of-the-issue',
+      backend: 'fake',
+      model: '',
+    });
+
+    const ctx = contextOf(orca, git, { review });
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    expect(seen).toHaveLength(2);
+    expect(resumed.state).toBe('completed');
+  });
 });
 
 describe('the store of the workflows', () => {
