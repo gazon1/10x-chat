@@ -294,8 +294,11 @@ and nothing is published.
   checked: a worker that cannot be stopped leaves the workflow `blocked` with
   the reason, because an agent that still works in the worktree is not a
   stopped workflow.
-- It never treats the text of the Issue as an instruction: the body of the
-  Issue is data inside a fence of the brief of the agent.
+- It never treats the text of the Issue as an instruction: the title and the
+  body of the Issue are data inside one fence of the brief of the agent, and the
+  fence is longer than any run of backticks in either of them. The brief of the
+  corrections carries the same section: the findings of a review are not the
+  whole requirement, and a fresh agent reads the brief of its own task.
 
 ## The iteration is a supervised work item
 
