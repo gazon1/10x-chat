@@ -122,10 +122,21 @@ async function resolvesToCommit(cwd: string, ref: string): Promise<boolean> {
  * fetched the remote only has `refs/remotes/origin/main`, and a `rev-parse`
  * of `main` fails there. The remote-tracking ref is the same commit and is
  * used when the local branch is absent.
+ *
+ * The default branch of origin is the remote-tracking ref itself: a local
+ * branch of the same name is the work of the user and can be ahead of it, and
+ * a worktree created from it would start at a commit that origin never saw.
+ * The remote is therefore preferred for the default branch, and the local
+ * branch is the fallback for a runtime that has no tracking ref.
  */
-async function resolveBase(cwd: string, name: string): Promise<string> {
-  if (await resolvesToCommit(cwd, name)) return name;
+async function resolveBase(cwd: string, name: string, preferRemote = false): Promise<string> {
   const remote = `origin/${name}`;
+  if (preferRemote) {
+    if (await resolvesToCommit(cwd, remote)) return remote;
+    if (await resolvesToCommit(cwd, name)) return name;
+    return name;
+  }
+  if (await resolvesToCommit(cwd, name)) return name;
   if (await resolvesToCommit(cwd, remote)) return remote;
   return name;
 }
@@ -149,7 +160,7 @@ export const nodeWorkflowGit: WorkflowGit = {
     const symbolic = await git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], cwd).catch(
       () => '',
     );
-    if (symbolic !== '') return resolveBase(cwd, symbolic.replace(/^origin\//, ''));
+    if (symbolic !== '') return resolveBase(cwd, symbolic.replace(/^origin\//, ''), true);
     const branches = await git(
       ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'],
       cwd,
@@ -159,7 +170,7 @@ export const nodeWorkflowGit: WorkflowGit = {
       .map((branch) => branch.trim().replace(/^origin\//, ''))
       .filter((branch) => branch !== '' && branch !== 'HEAD');
     // One branch of origin is not a guess — it is the only base there is.
-    if (candidates.length === 1) return resolveBase(cwd, candidates[0]);
+    if (candidates.length === 1) return resolveBase(cwd, candidates[0], true);
     // More than one branch is not a default branch: the order of the listing
     // says nothing about it, and a worktree of an unrelated branch is not a
     // worktree of the Issue.

@@ -155,29 +155,61 @@ function normalizeKey(key: string): string {
  * The shape of the answer of the CLI is not a contract of this repository:
  * the fields are looked up by name, the nearest one first, so that a version
  * of Orca that nests its answer differently still answers.
+ *
+ * The names are tried in their order: the first name is the one the caller
+ * asks for, and the answer of the runtime must not choose it by the order of
+ * its own keys. An answer that names `id` before `runId` is still an answer
+ * about the run when the caller asked for the run.
  */
 function findValue(payload: unknown, names: string[]): unknown {
-  const wanted = new Set(names.map(normalizeKey));
-  const queue: unknown[] = [payload];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (Array.isArray(current)) {
-      queue.push(...current);
-      continue;
+  for (const name of names) {
+    const wanted = normalizeKey(name);
+    const queue: unknown[] = [payload];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (Array.isArray(current)) {
+        queue.push(...current);
+        continue;
+      }
+      if (!isRecord(current)) continue;
+      for (const [key, value] of Object.entries(current)) {
+        if (normalizeKey(key) === wanted) return value;
+      }
+      queue.push(...Object.values(current));
     }
-    if (!isRecord(current)) continue;
-    for (const [key, value] of Object.entries(current)) {
-      if (wanted.has(normalizeKey(key))) return value;
-    }
-    queue.push(...Object.values(current));
   }
   return undefined;
 }
 
-/** The text of the first field of the names. */
+/**
+ * The text of the first field of the names.
+ *
+ * A name whose value is not a text does not answer the question: the next
+ * name is tried, so that a field of an object (`result`) does not hide the
+ * text that stands beside it (`report`).
+ */
 function findString(payload: unknown, names: string[]): string | undefined {
-  const value = findValue(payload, names);
-  return typeof value === 'string' && value !== '' ? value : undefined;
+  for (const name of names) {
+    const value = findValue(payload, [name]);
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return undefined;
+}
+
+/**
+ * The first collection of the names — `undefined` when none of them is one.
+ *
+ * The difference between an empty collection and an unknown answer is the
+ * difference between "there is no worker" and "the runtime did not say": the
+ * second one is a refusal, never an empty list.
+ */
+function findArray(payload: unknown, names: string[]): unknown[] | undefined {
+  if (Array.isArray(payload)) return payload;
+  for (const name of names) {
+    const value = findValue(payload, [name]);
+    if (Array.isArray(value)) return value;
+  }
+  return undefined;
 }
 
 /**
@@ -209,9 +241,11 @@ function taskTitleOf(payload: unknown): string | undefined {
 
 /** The number of an answer — the number of an Issue, for example. */
 function findNumber(payload: unknown, names: string[]): number | undefined {
-  const value = findValue(payload, names);
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  for (const name of names) {
+    const value = findValue(payload, [name]);
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  }
   return undefined;
 }
 
@@ -415,8 +449,12 @@ export class OrcaClient implements OrcaApi {
    */
   async worktreeList(repoId: string): Promise<OrcaWorktree[]> {
     const result = await this.call(['worktree', 'list', '--repo', `id:${repoId}`]);
-    const list = findValue(result, ['worktrees']);
-    if (!Array.isArray(list)) return [];
+    const list = findArray(result, ['worktrees']);
+    if (!list) {
+      throw new OrcaError(
+        `orca worktree list answered without the worktrees of the repository ${repoId} — an unknown list is not an empty list`,
+      );
+    }
     const worktrees: OrcaWorktree[] = [];
     for (const entry of list) {
       if (!isRecord(entry)) continue;
@@ -452,8 +490,12 @@ export class OrcaClient implements OrcaApi {
 
   async runList(): Promise<OrcaRun[]> {
     const result = await this.call(['orchestration', 'run-list']);
-    const list = findValue(result, ['runs']);
-    if (!Array.isArray(list)) return [];
+    const list = findArray(result, ['runs']);
+    if (!list) {
+      throw new OrcaError(
+        'orca orchestration run-list answered without the runs — an unknown list is not an empty list',
+      );
+    }
     const runs: OrcaRun[] = [];
     for (const entry of list) {
       if (!isRecord(entry)) continue;
@@ -560,8 +602,12 @@ export class OrcaClient implements OrcaApi {
     // The shape of the answer is not a contract: a list of the workers is
     // read as well, so that a version that does not name the type of a row
     // still answers.
-    const list = findValue(result, ['workers', 'dispatches', 'rows']);
-    if (!Array.isArray(list)) return [];
+    const list = findArray(result, ['workers', 'dispatches', 'rows']);
+    if (!list) {
+      throw new OrcaError(
+        `orca orchestration worker-list answered without the workers of the run ${runId} — an unknown list is not an empty list`,
+      );
+    }
     for (const entry of list) {
       if (!isRecord(entry)) continue;
       const dispatchId = findString(entry, ['dispatchId', 'id']);

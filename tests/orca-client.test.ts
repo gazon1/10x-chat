@@ -109,6 +109,43 @@ describe('the adapter of the Orca CLI', () => {
     expect(repos[0]?.canonicalKey).toBe('github.com/gazon1/10x-chat');
   });
 
+  it('reads the field of the name that the caller asks for first', async () => {
+    // The order of the keys of the answer is not the priority of the caller:
+    // the report of the worker is the field 'report', and the summary beside
+    // it does not hide it.
+    const { runner } = fakeRunner([ok({ summary: 'the summary', report: 'the report' })]);
+    const client = new OrcaClient({ runner });
+
+    const worker = await client.workerShow('dispatch-1');
+
+    expect(worker.report).toBe('the report');
+  });
+
+  it('refuses to read a list of workers that the answer does not hold', async () => {
+    const { runner } = fakeRunner([ok({ nothing: true })]);
+    const client = new OrcaClient({ runner });
+
+    // An unknown list is not an empty list: a worker that cannot be seen may
+    // be there, and a second agent would work in the same worktree.
+    await expect(client.workerList('run-1')).rejects.toThrow(/without the workers/);
+  });
+
+  it('refuses to read a list of worktrees that the answer does not hold', async () => {
+    const { runner } = fakeRunner([ok({ nothing: true })]);
+    const client = new OrcaClient({ runner });
+
+    // An unknown list is not an empty list: a worktree that cannot be seen may
+    // be there, and a second worktree of the Issue is a second change.
+    await expect(client.worktreeList('repo-1')).rejects.toThrow(/without the worktrees/);
+  });
+
+  it('reads an empty list of workers when the answer holds one', async () => {
+    const { runner } = fakeRunner([ok({ workers: [] })]);
+    const client = new OrcaClient({ runner });
+
+    expect(await client.workerList('run-1')).toEqual([]);
+  });
+
   it('reads the workers of a run, whatever the shape of the answer is', async () => {
     const { runner } = fakeRunner([
       ok({ workers: [{ dispatchId: 'dispatch-1', taskId: 'task-1', state: 'working' }] }),
@@ -301,8 +338,18 @@ describe('the adapter of the Orca CLI', () => {
     expect(args).toContain('run-list');
   });
 
-  it('reads no run when the answer holds none', async () => {
+  it('refuses to read a list of runs that the answer does not hold', async () => {
     const { runner } = fakeRunner([ok({ nothing: true })]);
+    const client = new OrcaClient({ runner });
+
+    // An unknown list is not an empty list: a Run that cannot be seen cannot
+    // be adopted, and a second Run of the same objective would be a second
+    // mailbox.
+    await expect(client.runList()).rejects.toThrow(/without the runs/);
+  });
+
+  it('reads an empty list of runs when the answer holds one', async () => {
+    const { runner } = fakeRunner([ok({ runs: [] })]);
     const client = new OrcaClient({ runner });
 
     expect(await client.runList()).toEqual([]);

@@ -719,3 +719,60 @@ runtime does not name.
 The check set of that round: typecheck, lint, knip, test (63 files /**1252
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The sixteenth round
+
+The sixteenth round of the same pipeline ran completely — every step of it
+passed — and returned **REQUEST CHANGES** with four findings: three of the
+severity MAJOR (all confirmed by the verification) and one of the severity
+MINOR (not settled by the verification).
+
+| Finding of the sixteenth round | The answer |
+|---|---|
+| the base of the workflow preferred the local branch over the ref of the remote — a base that was read from `origin/HEAD` pointed at the local branch, and the change of the agent was compared with a base that the remote did not carry | the base is resolved with a flag: a base that comes from `origin/HEAD` takes `origin/<name>`, and the local branch is the fallback |
+| the adapter of Orca read the list of the workers of a Run as an empty list when the answer of the runtime held no list — a worker that was there all the same was invisible, and a second agent started next to it | an unknown list is a refusal: the adapter throws an `OrcaError` when the answer of the runtime holds no list, and an empty list is read as an empty list |
+| the adapter of Orca read the list of the worktrees of the repository the same way — a worktree that was there all the same was invisible, and a second worktree of the same Issue was created | the same refusal, in the same place |
+| no test covered the race of a stop that arrives while the agent is starting, and no test covered an interruption after the review and before the record of its verdict | both are covered: the stop that arrives while the agent starts stops the worker that is there, and the review of an interrupted run is read back instead of judging the change a second time |
+
+Beside the round, the source of the workflow was read by a third reviewer
+(`verifier`, read-only, no change of the repository). It returned fifteen
+findings; all of them were checked against the source and all of them were
+real. They were fixed in the same round:
+
+| Finding of the audit | The answer |
+|---|---|
+| a workflow in the state `stopping` whose worktree is gone waited for ever | the state `stopping` is handled before the proof of the worktree: the stop is finished and the workflow is cancelled |
+| the adapter chose the field of an answer by the order of the keys and not by the priority of the names — the value of a field of a different name could be read as the value of the field that was asked for | the names are the outer loop of the search: the name that the caller asks for is tried first, and the next name is the fallback |
+| the regular expression of the preflight required the capability `worktree.create`, and the real runtime names its worktree capabilities `worktree.create-*` — the preflight would refuse a runtime that works | the family of the worktrees is judged by the prefix `worktree.create`, as the contract of the runtime names it |
+| the gate of the head compared the head of the review with the head of the worktree, but not with the head the agent left behind — a commit that appeared between the end of the agent and the read of the review was never noticed | the review carries the head it judged, and the gate compares it with the head of the iteration: a review of another commit blocks the workflow |
+| the mark of the stop of a workflow that is over already did not stop the workers of its Run | the stop of a workflow that is over reaches the workers of its Run all the same: the state of the workflow does not move, the agent does |
+| the adoption of the lost answer did not filter the workers by the title of the task — a worker of an earlier task could be adopted as the worker of the corrections | the workers are filtered by the title of the task, and a worker of an earlier task that still works in the worktree is stopped |
+| the command line exited with the code 0 when the workflow it continues is blocked | a blocked workflow is a failure of the command: the code of the exit is 1 |
+| the regular expression of the terminal states matched the word `unfinished` — a worker that had not finished was taken for a settled one | the states are matched as whole words: `unfinished` is not `finished` |
+| the stop of a worker waited for a report of the runtime and used the dispatches of the record only — a worker of the Run that the record does not name was left working | both paths of the stop use the workers of the Run that are still outstanding |
+| the reason of the stop did not say what the runtime reported about the worker | the note of the stop names the state of the worker when the runtime reports one |
+| the record of the workflow did not keep the ref of the worktree — the brief of the agent named no ref to work on | the record keeps `baseRef`, and the brief of the corrections carries it |
+| the resume of a workflow did not read the backend of its record when the command line named none | the record of the workflow names the backend it was started with, and the resume falls back to it |
+| the merge of the records lost the repository of the Run when the copy on the disk named none | an empty id is not an id: the repository of the Run survives the merge |
+| a message of the mailbox that no Dispatch belongs to was dropped without a trace | the wait names the messages it could not attribute, and the reason of the block counts them |
+
+Sixteen tests of the workflow, four tests of the adapter and three tests of the
+command line were added with the fixes: the stop of a workflow whose worktree is
+gone, the stop of the workers of a workflow that is over already, the refusal to
+stop a worker that is done any more, the refusal to take an unfinished worker
+for a settled one, the adoption of the worker of the lost answer of the
+corrections and the stop of the worker of an earlier task, the block of a review
+that judged another commit, the ref of the worktree in the record, the
+repository of the Run in a copy that names none, the messages of the mailbox
+that no Dispatch belongs to, the stop while the agent is starting, the reading
+back of the review of an interrupted run, the review that runs again when the
+interrupted run judged another commit, the ref of the remote for a base that
+comes from `origin/HEAD`, the field of the name that the caller asks for
+first, the refusal to read a list of workers that the answer does not hold, the
+refusal to read a list of worktrees that the answer does not hold, an empty
+list of workers, the code of the exit of a blocked workflow, the clean exit of
+a workflow that waits for its agent and the backend of the record.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1273
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

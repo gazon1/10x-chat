@@ -17,6 +17,7 @@ import type {
 } from '../src/orca/client.js';
 import { getWorkflowDir } from '../src/paths.js';
 import { hashRequirements } from '../src/pipeline/requirements.js';
+import { persistRun } from '../src/pipeline/review.js';
 import type {
   Finding,
   IssueRequirements,
@@ -1599,6 +1600,34 @@ describe('the development workflow', () => {
     await run(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
     await run(['checkout', '--detach', sha]);
     await run(['branch', '-D', 'main']);
+
+    expect(await nodeWorkflowGit.defaultBaseRef(dir)).toBe('origin/main');
+  });
+
+  it('takes the ref of origin even when the local branch is ahead of it', async () => {
+    // The local branch of the default branch is the work of the user: it may
+    // be ahead of origin, and a worktree that starts at it would compare the
+    // change with a commit that origin never saw.
+    const dir = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-git-'));
+    const run = async (args: string[]) =>
+      execFileAsync('git', args, {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Test',
+          GIT_AUTHOR_EMAIL: 'test@example.com',
+          GIT_COMMITTER_NAME: 'Test',
+          GIT_COMMITTER_EMAIL: 'test@example.com',
+        },
+      });
+    await run(['init', '-b', 'main']);
+    await run(['commit', '--allow-empty', '-m', 'the first commit']);
+    const { stdout } = await run(['rev-parse', 'HEAD']);
+    const sha = stdout.trim();
+    await run(['update-ref', 'refs/remotes/origin/main', sha]);
+    await run(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+    // The commit of the user: origin never saw it.
+    await run(['commit', '--allow-empty', '-m', 'the commit of the user']);
 
     expect(await nodeWorkflowGit.defaultBaseRef(dir)).toBe('origin/main');
   });
@@ -3349,6 +3378,358 @@ describe('the development workflow', () => {
 
     expect(record.state).toBe('blocked');
     expect(record.blocked).toContain('The head of the worktree changed before the review');
+  });
+
+  it('finishes a stop of a workflow whose worktree is gone', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // Orca removed the worktree while the workflow was stopping: the stop
+    // needs the workers of the Run, not the worktree.
+    orca.worktrees = [];
+    const record = aRecord('issue-59-10101010', 'stopping');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.workers.push(orca.workerOf('dispatch-1', 'task-1'));
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    // The workflow does not wait in 'stopping' for ever: the Issue is free
+    // again, and the agent of the Run is stopped.
+    expect(resumed.state).toBe('cancelled');
+    expect(orca.stopped).toContain('dispatch-1');
+    expect((await loadWorkflow(record.id)).state).toBe('cancelled');
+  });
+
+  it('stops the workers of the run of a workflow that is over already', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-20202020', 'completed');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.workers.push(orca.workerOf('dispatch-1', 'task-1'));
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    const stopped = await stopWorkflow(record.id, ctx);
+
+    // The workflow is over, but its Run may still hold an agent: the stop
+    // reaches it even then.
+    expect(orca.stopped).toContain('dispatch-1');
+    // The state of a workflow that is over does not move.
+    expect(stopped.state).toBe('completed');
+  });
+
+  it('does not stop a worker that is done any more', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-30303030', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    // The agent finished on its own: it does not work in the worktree any
+    // more, and a stop of it would report a failure that never happened.
+    orca.shownStates['dispatch-1'] = 'succeeded';
+    orca.workers.push(orca.workerOf('dispatch-1', 'task-1'));
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    await stopWorkflow(record.id, ctx);
+
+    expect(orca.stopped).not.toContain('dispatch-1');
+  });
+
+  it('does not take an unfinished worker for a settled one', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-40404040', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    // 'unfinished' is not a finished state: the word is in it, the state is
+    // not.
+    orca.shownStates['dispatch-1'] = 'unfinished';
+    orca.workers.push(orca.workerOf('dispatch-1', 'task-1'));
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    await stopWorkflow(record.id, ctx);
+
+    // The agent may still work in the worktree: it is stopped.
+    expect(orca.stopped).toContain('dispatch-1');
+  });
+
+  it('adopts the worker of the lost answer of the corrections and stops the worker of an earlier task', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    let commits = 0;
+    orca.onCheck = () => {
+      git.head = `head-sha-${++commits}`;
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the check does not run', findings: [aFinding()] },
+      { verdict: 'APPROVE', reason: 'the correction is right' },
+    ]);
+    // The answer of the start of the corrections is lost: the worker is there
+    // all the same.
+    orca.workerStartFailAt = 2;
+    orca.workerStartError = new Error('the answer of the workerStart was lost');
+    orca.lostWorker = orca.workerOf('dispatch-lost', 'task-lost');
+    orca.lostWorker.taskTitle = 'Issue #59: the corrections of the iteration 1';
+    // The Run holds a worker of an earlier task: it does not know the
+    // findings of this iteration, and the workflow does not guess which one of
+    // them is the lost answer.
+    const earlier = {
+      dispatchId: 'dispatch-earlier',
+      taskId: 'task-earlier',
+      state: 'working',
+      worktreePath: '/wt/issue-59',
+      branch: '10x-chat/issue-59',
+      taskTitle: 'Issue #59: an earlier task',
+    };
+    let lists = 0;
+    orca.workerList = async () => {
+      lists += 1;
+      // The worker of the earlier task shows up in the Run before the
+      // corrections start: the Run of the workflow is reused between its
+      // iterations. It is one worker, however often the Run is read.
+      if (lists >= 2 && !orca.workers.includes(earlier)) orca.workers.push(earlier);
+      return orca.workers;
+    };
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The worker of the lost answer is the worker of the corrections, and the
+    // worker of the earlier task is stopped: two agents in one worktree are a
+    // change nobody judges.
+    expect(record.orca?.dispatchId).toBe('dispatch-lost');
+    expect(orca.stopped).toContain('dispatch-earlier');
+    expect(record.state).toBe('completed');
+  });
+
+  it('blocks when the review judged a commit the agent did not leave', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The head of the worktree moves under the review: the review judged a
+    // commit that the agent never left behind.
+    git.headSequence = ['base-sha', 'aaaaaaa', 'aaaaaaa', 'bbbbbbb'];
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    const moving = async (request: WorkflowReviewRequest) => {
+      // The review reads the head that appeared under the workflow.
+      git.head = 'bbbbbbb';
+      return review(request);
+    };
+    const ctx = contextOf(orca, git, { review: moving });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The approval would bind the change to a commit of somebody else.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('The review judged bbbbbbb — the agent left aaaaaaa');
+  });
+
+  it('keeps the ref of the worktree in the record', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The brief of the corrections carries the ref of the worktree: a record
+    // that does not name it makes the brief of the agent incomplete.
+    expect(record.baseRef).toBe('main');
+    expect((await loadWorkflow(record.id)).baseRef).toBe('main');
+  });
+
+  it('keeps the repository of the run when the copy on the disk names none', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    // Another process wrote a copy of the record that names no repository.
+    const withAnEmptyCopy = async (request: WorkflowReviewRequest) => {
+      const run = await review(request);
+      const ids = await listWorkflows();
+      const older = await loadWorkflow(ids[0] ?? '');
+      await saveWorkflow({ ...older, orca: { repoId: '' } });
+      return run;
+    };
+    const ctx = contextOf(orca, git, { review: withAnEmptyCopy });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // An empty id is not an id: the repository of the run is not lost to a copy
+    // that names none.
+    const stored = await loadWorkflow(record.id);
+    expect(stored.orca?.repoId).toBe('repo-1');
+  });
+
+  it('names the messages of the mailbox that no Dispatch belongs to', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The runtime does not name the Dispatch of the message: the workflow does
+    // not guess which worker it belongs to.
+    orca.nameTheDispatch = false;
+    orca.messages = [{ type: 'worker_done', text: 'I am done' }];
+    // The worker is done, but it reported no structured outcome.
+    orca.workerState = 'succeeded';
+    // The Run holds another worker besides the one of the workflow: a message
+    // that names no Dispatch cannot be attributed to one of them.
+    orca.check = async () => {
+      orca.workers.push({
+        dispatchId: 'dispatch-other',
+        taskId: 'task-other',
+        state: 'working',
+        worktreePath: '/wt/other',
+        branch: '10x-chat/other',
+      });
+      return [{ type: 'worker_done' as const, text: 'I am done' }];
+    };
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git),
+    );
+
+    // The message is not lost: the workflow says that it saw it and could not
+    // attribute it.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('the result of the Task is unknown');
+    expect(record.blocked).toContain('named no Dispatch');
+  });
+
+  it('stops the workflow while the agent is starting', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const record = aRecord('issue-59-50505050', 'worktree-created');
+    orca.worktrees = [anOrcaWorktree()];
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    await saveWorkflow(record);
+
+    let ctx: WorkflowContext | undefined;
+    let reviews = 0;
+    // The stop of the other process lands while the agent starts: the worker
+    // is there already, and the workflow is on its way out.
+    orca.onWorkerStart = async () => {
+      await stopWorkflow(record.id, ctx as WorkflowContext);
+    };
+    ctx = contextOf(orca, git, {
+      waitTimeoutMs: 20,
+      review: async (request) => {
+        reviews += 1;
+        return fakeReview(git, []).review(request);
+      },
+    });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/was stopped again/);
+
+    // The workflow is over: the agent is stopped, and nothing else happens.
+    expect((await loadWorkflow(record.id)).state).toBe('cancelled');
+    expect(orca.stopped).toContain('dispatch-1');
+    // No second agent and no review: the workflow was on its way out.
+    expect(orca.started).toHaveLength(1);
+    expect(reviews).toBe(0);
+  });
+
+  it('reads the review of an interrupted run back instead of judging the change twice', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.head = 'head-sha-1';
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    const record = aRecord('issue-59-60606060', 'awaiting-review');
+    orca.worktrees = [anOrcaWorktree()];
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    record.iterations = [
+      {
+        index: 1,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        baseSha: 'base-sha',
+        headSha: 'head-sha-1',
+      },
+    ];
+    await saveWorkflow(record);
+
+    // The process was killed after the pipeline persisted its run and before
+    // the workflow wrote the verdict of it.
+    const runDir = path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1');
+    const run = await review({
+      cwd: '/wt/issue-59',
+      base: 'base-sha',
+      head: 'head-sha-1',
+      issue: 59,
+      runId: `${record.id}-iteration-1`,
+      runDir,
+    });
+    await persistRun(run, runDir);
+
+    const ctx = contextOf(orca, git, { review });
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    // The evidence of the interrupted run is the verdict of the iteration: the
+    // change is not judged twice.
+    expect(seen).toHaveLength(1);
+    expect(resumed.state).toBe('completed');
+  });
+
+  it('runs the review again when the interrupted run judged another commit', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.head = 'head-sha-0';
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the change is not right' },
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    const record = aRecord('issue-59-70707070', 'awaiting-review');
+    orca.worktrees = [anOrcaWorktree()];
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    record.iterations = [
+      {
+        index: 1,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        baseSha: 'base-sha',
+        headSha: 'head-sha-1',
+      },
+    ];
+    await saveWorkflow(record);
+
+    // The interrupted run judged another commit: its evidence is the evidence
+    // of another change.
+    const runDir = path.join(getWorkflowDir(record.id), 'reviews', 'iteration-1');
+    const run = await review({
+      cwd: '/wt/issue-59',
+      base: 'base-sha',
+      head: 'head-sha-0',
+      issue: 59,
+      runId: `${record.id}-iteration-1`,
+      runDir,
+    });
+    await persistRun(run, runDir);
+    // The agent left another commit behind.
+    git.head = 'head-sha-1';
+
+    const ctx = contextOf(orca, git, { review });
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    // The review runs again, and its verdict is the one of the workflow.
+    expect(seen).toHaveLength(2);
+    expect(resumed.state).toBe('completed');
   });
 });
 

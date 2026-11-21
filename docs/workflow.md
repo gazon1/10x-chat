@@ -234,7 +234,9 @@ The workflow reports `completed` only when **all** of these hold:
    the agent left behind **before** the review starts: a commit that appeared
    between the end of the agent and the start of the review is a change that
    nobody asked the agent for, and the report of the agent belongs to another
-   commit;
+   commit. And the review is compared with the head the agent left behind
+   **after** it ends: a review that judged another commit than the one the
+   agent left behind approves a change that the workflow never asked for;
 4. the review compared the change with the commit the worktree started from — a
    base ref that moved under the workflow is a comparison of another change;
 5. the Issue is still the version the workflow started with — a requirement
@@ -473,6 +475,7 @@ step of the review is the gate that says that the Issue did not drift.
 |---|---|
 | The agent is still working when the wait is over | The workflow keeps its state and gives the turn back. `resume` continues it. |
 | The command was interrupted | The record of the last completed step is on the disk. `resume` continues from there. |
+| The command was interrupted while the review ran | The review of the interrupted run is read back instead of judging the change a second time — but only when it judged the same head, the same base and the same version of the requirements. Otherwise the change is reviewed again. |
 | The agent changed nothing | The workflow blocks — there is no change to review. |
 | The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. A Dispatch that says `succeeded` without a structured outcome is unknown. |
 | The worktree is not clean | The workflow blocks — the review reads the committed state only. The same check keeps the agent from starting in a dirty checkout. |

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { resumeBackendOf, startOptionsOf } from '../src/cli/workflow.js';
+import { exitCodeOf, resumeBackendOf, startOptionsOf } from '../src/cli/workflow.js';
 import { hashRequirements } from '../src/pipeline/requirements.js';
 import { listWorkflows, loadWorkflow, saveWorkflow } from '../src/workflow/store.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
@@ -179,6 +179,48 @@ describe('the command of the workflow (CLI)', () => {
     });
     // A backend that is not there is a refusal and not a silent fallback.
     expect(() => resumeBackendOf({ backendName: 'not-a-backend' }, {})).toThrow(/not available/);
+  });
+
+  it('exits with a failure when the workflow it continues is blocked', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const original = process.env.TEN_X_CHAT_HOME;
+    process.env.TEN_X_CHAT_HOME = home;
+    try {
+      await saveWorkflow({
+        ...aRecord('issue-59-20260101000000-abcd1234'),
+        state: 'blocked',
+        blocked: 'the review did not pass',
+      });
+    } finally {
+      if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
+      else process.env.TEN_X_CHAT_HOME = original;
+    }
+
+    const res = await runCli(['workflow', 'resume', 'issue-59-20260101000000-abcd1234'], {
+      TEN_X_CHAT_HOME: home,
+    });
+
+    // A blocked workflow is not a clean exit: the change was not judged.
+    expect(res.code).toBe(1);
+    expect(res.stdout).toContain('issue-59-20260101000000-abcd1234: blocked');
+  });
+
+  it('exits cleanly when the workflow waits for its agent', () => {
+    // A workflow that waits for its agent continues with a `resume`, and a
+    // workflow that was stopped on purpose is the will of the user.
+    expect(exitCodeOf('implementation-running')).toBe(0);
+    expect(exitCodeOf('cancelled')).toBe(0);
+    expect(exitCodeOf('completed')).toBe(0);
+    // A blocked workflow is not a clean exit: the change was not judged.
+    expect(exitCodeOf('blocked')).toBe(1);
+  });
+
+  it('resumes a workflow with the backend of the record when it has no name', () => {
+    // The label of the record is the backend it was started with: a record
+    // that has no name is continued with it.
+    expect(resumeBackendOf({ backend: 'chatgpt-use' }, {})).toEqual({ backend: 'chatgpt-use' });
+    // A backend that is not there is a refusal and not a silent fallback.
+    expect(() => resumeBackendOf({ backend: 'not-a-backend' }, {})).toThrow(/not available/);
   });
 
   it('translates the options of the command line into the options of the workflow', () => {

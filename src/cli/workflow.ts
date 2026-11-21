@@ -54,10 +54,15 @@ function resolveBackend(name: string | undefined) {
  * command line still wins — the user may change the model on purpose.
  */
 export function resumeBackendOf(
-  record: { backendName?: string; model?: string },
+  record: { backendName?: string; backend?: string; model?: string },
   options: { backend?: string; model?: string },
 ): { backend: string; model?: string } {
-  const name = options.backend ?? record.backendName ?? 'chatgpt-use';
+  // The backend of the record is the backend the workflow was started with:
+  // the name of the backend of the command line is the one it prefers, and the
+  // label of the record is the fallback for a record that has no name. A
+  // backend of the record that is not available is a refusal and never a
+  // silent fallback to another one.
+  const name = options.backend ?? record.backendName ?? record.backend ?? 'chatgpt-use';
   const available = listBackends().filter((candidate) => !getBackend(candidate).testDouble);
   if (!available.includes(name)) {
     throw new WorkflowError(
@@ -101,6 +106,19 @@ export function startOptionsOf(options: {
     ...(options.base ? { baseRef: options.base } : {}),
     ...(options.wait !== undefined ? { waitTimeoutMs: options.wait } : {}),
   };
+}
+
+/**
+ * The exit code of a command that ran a workflow.
+ *
+ * A workflow that is blocked is not a clean exit: the change was not judged
+ * and nobody approved it — the same reason the review of a pull request exits
+ * with a failure on a verdict that is not `APPROVE`. A workflow that waits for
+ * its agent is not a failure either: it continues with a `resume`, and a
+ * workflow that was stopped on purpose is the will of the user.
+ */
+export function exitCodeOf(state: string): number {
+  return state === 'blocked' ? 1 : 0;
 }
 
 /** Print the state of a workflow. */
@@ -198,6 +216,8 @@ export function createWorkflowCommand(): Command {
         if (record.state === 'completed') {
           console.log(chalk.green('The review approved the change.'));
         }
+        // A blocked workflow is not a clean exit: the change was not judged.
+        process.exitCode = exitCodeOf(record.state);
       } catch (error) {
         console.error(
           chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`),
@@ -269,6 +289,8 @@ export function createWorkflowCommand(): Command {
         });
         const record = await resumeWorkflow(id, ctx);
         printState(record);
+        // A blocked workflow is not a clean exit: the change was not judged.
+        process.exitCode = exitCodeOf(record.state);
       } catch (error) {
         console.error(
           chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`),
