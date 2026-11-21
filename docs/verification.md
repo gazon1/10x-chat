@@ -985,3 +985,11 @@ completing it.
 The check set of that round: typecheck, lint, knip, test (63 files /**1295
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twenty-fifth round — the approval of the pushed head
+
+The twenty-fifth round ran completely on the head that is pushed (`89f6df3`):
+every mandatory step passed, the baseline of the Issue advanced, and the verdict
+is **APPROVE** — not one finding survived the verification, from any of the
+three reviewers. The head is the head of the pull request, so the approval is
+bound to the change a human will merge.
