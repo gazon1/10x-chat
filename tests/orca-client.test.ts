@@ -213,6 +213,28 @@ describe('the adapter of the Orca CLI', () => {
     await expect(client.runCreate('the objective of the run')).rejects.toThrow('without a run id');
   });
 
+  it('reads the runs of the orchestration, whatever the shape of the answer is', async () => {
+    const { runner, calls } = fakeRunner([
+      ok({ runs: [{ id: 'run-1', objective: 'the objective of the run' }, { title: 'no id' }] }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    const runs = await client.runList();
+
+    // The run without an id is not a run.
+    expect(runs).toEqual([{ id: 'run-1', objective: 'the objective of the run' }]);
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('orchestration');
+    expect(args).toContain('run-list');
+  });
+
+  it('reads no run when the answer holds none', async () => {
+    const { runner } = fakeRunner([ok({ nothing: true })]);
+    const client = new OrcaClient({ runner });
+
+    expect(await client.runList()).toEqual([]);
+  });
+
   it('stops a worker by its dispatch', async () => {
     const { runner, calls } = fakeRunner([ok({ stopped: true })]);
     const client = new OrcaClient({ runner });

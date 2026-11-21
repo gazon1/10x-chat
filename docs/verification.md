@@ -457,3 +457,24 @@ them were real:
 The check set of that round: typecheck, lint, knip, test (63 files / **1165
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The sixth round
+
+The sixth round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with four findings of the severity MAJOR and
+three MINOR ones. The verification confirmed none of them: they are the reading
+of the reviewers, and each of them was checked against the source.
+
+| Finding of the sixth round | The answer |
+|---|---|
+| `stop` did not take the lock of the run, so a `resume` could start an agent between the reading of the workers and the cancellation of the workflow | the state `stopping` closes the window: the stop writes it down before it looks for the workers, and the process that starts an agent reads the state of the record on the disk before the start and after it — an agent that was started in a workflow that is on its way out is stopped again |
+| the worktree that Orca had just created was trusted: its path, its repository and its branch were never checked | the answer of Orca is not the proof of the worktree: the common directory of the git of the worktree must be the git of the repository of the Issue, the path must not be the checkout of the user, and the branch must be the branch of the Issue — a worktree that does not pass the check is refused before the agent may work in it |
+| a `stop` between the creation of the Run and the start of the worker could cancel the workflow and still leave an agent in the worktree | the same mark closes this window: the state of the record is read before the agent starts, and the worker that was started all the same is stopped again |
+| `resume` chose the backend and the model on its own, so the review of the next iteration could be another one than the review of the previous iteration | the record carries the name of the backend and the model: `resume` restores them, the command line still wins, and a backend of the record that is not available is a refusal and not a silent fallback |
+| the test of the brief of the agent checked the title of the Issue and one rule, not the whole content of the brief | the brief is checked now: the text of the Issue with its acceptance criteria, the path and the branch of the worktree, the instructions of the repository and the checks it defines, and the rule that the worktree stays for a human |
+| the lost answer of the creation of the Run was not covered: a Run that Orca created all the same would be left behind | the Runs are asked before anything else: the Run of the objective of the workflow is adopted, and a second Run would be a second home of the mailbox. The adapter speaks the verb `run-list` now |
+| the tests of the command line never ran a successful `start` or `resume` | the command is driven end to end now: `start` reads the Issue, creates the worktree and starts the agent (with the Orca and the `gh` of the test and a real worktree of the repository), `resume` continues a workflow, and the translation of the options of the command line is a function of its own |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1180
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

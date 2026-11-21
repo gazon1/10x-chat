@@ -24,6 +24,17 @@ export interface WorkflowGit {
    * committed is not in the review, and the workflow has to know it.
    */
   dirty(cwd: string): Promise<string[]>;
+  /**
+   * The common directory of the git of a checkout — the `.git` of the
+   * repository the worktree belongs to.
+   *
+   * Two checkouts of one repository share it, and a checkout of another
+   * repository does not: it is the proof that a worktree belongs to the
+   * repository of the workflow.
+   */
+  commonDir(cwd: string): Promise<string>;
+  /** The branch a checkout is on — empty when it has none. */
+  branch(cwd: string): Promise<string>;
 }
 
 /** Run git and return what it says. */
@@ -91,5 +102,13 @@ export const nodeWorkflowGit: WorkflowGit = {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
+  },
+
+  async commonDir(cwd) {
+    return git(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd).catch(() => '');
+  },
+
+  async branch(cwd) {
+    return git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd).catch(() => '');
   },
 };

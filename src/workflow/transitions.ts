@@ -9,13 +9,17 @@ import type { WorkflowState } from './types.js';
  * steps, and a step that skips one leaves a record that nobody can read.
  */
 const TRANSITIONS: Record<WorkflowState, WorkflowState[]> = {
-  created: ['issue-loaded', 'blocked', 'cancelled'],
-  'issue-loaded': ['worktree-created', 'blocked', 'cancelled'],
-  'worktree-created': ['implementation-running', 'blocked', 'cancelled'],
-  'implementation-running': ['awaiting-review', 'blocked', 'cancelled'],
-  'awaiting-review': ['review-running', 'blocked', 'cancelled'],
-  'review-running': ['completed', 'fixes-requested', 'blocked', 'cancelled'],
-  'fixes-requested': ['implementation-running', 'blocked', 'cancelled'],
+  created: ['issue-loaded', 'blocked', 'cancelled', 'stopping'],
+  'issue-loaded': ['worktree-created', 'blocked', 'cancelled', 'stopping'],
+  'worktree-created': ['implementation-running', 'blocked', 'cancelled', 'stopping'],
+  'implementation-running': ['awaiting-review', 'blocked', 'cancelled', 'stopping'],
+  'awaiting-review': ['review-running', 'blocked', 'cancelled', 'stopping'],
+  'review-running': ['completed', 'fixes-requested', 'blocked', 'cancelled', 'stopping'],
+  'fixes-requested': ['implementation-running', 'blocked', 'cancelled', 'stopping'],
+  // The stop marks the workflow before it stops the workers: a process that
+  // starts an agent at that moment sees the mark and does not start a second
+  // agent in a workflow that is on its way out.
+  stopping: ['cancelled', 'blocked'],
   completed: [],
   blocked: [],
   cancelled: [],

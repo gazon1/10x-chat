@@ -25,6 +25,8 @@ export type WorkflowState =
   | 'review-running'
   /** The review asked for changes — the findings go back to the agent. */
   | 'fixes-requested'
+  /** The workflow is being stopped — the workers are stopped first. */
+  | 'stopping'
   /** Every gate passed. */
   | 'completed'
   /** The workflow cannot go on without a human. */
@@ -147,6 +149,14 @@ export interface WorkflowRecord {
   baseRef?: string;
   /** The backend that reviews the change. */
   backend: string;
+  /**
+   * The name of the backend — the way it is named on the command line.
+   *
+   * The label of the backend is for the report; the name is what a resume
+   * needs: a workflow that was reviewed by one backend is resumed with the
+   * same one, and never with another one behind the back of the user.
+   */
+  backendName?: string;
   /** The model the reviewers use. */
   model?: string;
   /** The maximum number of iterations — more of them block the workflow. */

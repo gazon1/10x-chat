@@ -45,6 +45,64 @@ function resolveBackend(name: string | undefined) {
   };
 }
 
+/**
+ * The backend and the model of a resume.
+ *
+ * A workflow that was reviewed by one backend is resumed with the same one:
+ * the review of the next iteration has to be the review of the same kind, and
+ * a backend that is silently another one is a review nobody asked for. The
+ * command line still wins — the user may change the model on purpose.
+ */
+export function resumeBackendOf(
+  record: { backendName?: string; model?: string },
+  options: { backend?: string; model?: string },
+): { backend: string; model?: string } {
+  const name = options.backend ?? record.backendName ?? 'chatgpt-use';
+  const available = listBackends().filter((candidate) => !getBackend(candidate).testDouble);
+  if (!available.includes(name)) {
+    throw new WorkflowError(
+      `The backend ${name} of the workflow is not available. Available: ${available.join(', ') || 'none'}. Name another one with --backend.`,
+    );
+  }
+  const model = options.model ?? record.model;
+  return { backend: name, ...(model ? { model } : {}) };
+}
+
+/**
+ * The options of the start — the translation of the command line.
+ *
+ * The translation is a function of its own: the command line is the boundary
+ * of the workflow, and the numbers that it carries have to reach the workflow
+ * unchanged.
+ */
+export function startOptionsOf(options: {
+  issue: number;
+  agent?: string;
+  backend: string;
+  model?: string;
+  maxIterations?: number;
+  base?: string;
+  wait?: number;
+}): {
+  issue: number;
+  agent?: string;
+  backendName: string;
+  model?: string;
+  maxIterations?: number;
+  baseRef?: string;
+  waitTimeoutMs?: number;
+} {
+  return {
+    issue: options.issue,
+    ...(options.agent ? { agent: options.agent } : {}),
+    backendName: options.backend,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
+    ...(options.base ? { baseRef: options.base } : {}),
+    ...(options.wait !== undefined ? { waitTimeoutMs: options.wait } : {}),
+  };
+}
+
 /** Print the state of a workflow. */
 function printState(record: { id: string; state: string; blocked?: string }): void {
   console.log(`${record.id}: ${record.state}`);
@@ -100,6 +158,15 @@ export function createWorkflowCommand(): Command {
 
       try {
         const { backend, label } = resolveBackend(options.backend as string | undefined);
+        const translated = startOptionsOf({
+          issue,
+          ...(options.agent ? { agent: options.agent as string } : {}),
+          backend: (options.backend as string | undefined) ?? 'chatgpt-use',
+          ...(options.model ? { model: options.model as string } : {}),
+          ...(maxIterations !== undefined ? { maxIterations } : {}),
+          ...(options.base ? { base: options.base as string } : {}),
+          ...(wait !== undefined ? { wait } : {}),
+        });
         const ctx = createWorkflowContext({
           orca: new OrcaClient(),
           backend,
@@ -110,15 +177,20 @@ export function createWorkflowCommand(): Command {
         });
         const record = await startWorkflow(
           {
-            issue,
+            issue: translated.issue,
             cwd: process.cwd(),
             backend,
             backendLabel: label,
-            ...(options.agent ? { agent: options.agent as string } : {}),
-            ...(options.model ? { model: options.model as string } : {}),
-            ...(options.base ? { baseRef: options.base as string } : {}),
-            ...(maxIterations !== undefined ? { maxIterations } : {}),
-            ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
+            backendName: translated.backendName,
+            ...(translated.agent ? { agent: translated.agent } : {}),
+            ...(translated.model ? { model: translated.model } : {}),
+            ...(translated.baseRef ? { baseRef: translated.baseRef } : {}),
+            ...(translated.maxIterations !== undefined
+              ? { maxIterations: translated.maxIterations }
+              : {}),
+            ...(translated.waitTimeoutMs !== undefined
+              ? { waitTimeoutMs: translated.waitTimeoutMs }
+              : {}),
           },
           ctx,
         );
@@ -170,7 +242,14 @@ export function createWorkflowCommand(): Command {
     .option('--wait <ms>', 'How long to wait for the agent before the workflow gives the turn back')
     .action(async (id: string, options) => {
       try {
-        const { backend, label } = resolveBackend(options.backend as string | undefined);
+        // The record is read before the backend is resolved: a workflow is
+        // resumed with the backend and the model it was started with.
+        const stored = await loadWorkflow(id);
+        const chosen = resumeBackendOf(stored, {
+          ...(options.backend ? { backend: options.backend as string } : {}),
+          ...(options.model ? { model: options.model as string } : {}),
+        });
+        const { backend, label } = resolveBackend(chosen.backend);
         const wait = (() => {
           if (options.wait === undefined) return undefined;
           const value = positiveInteger(options.wait as string);
@@ -185,7 +264,7 @@ export function createWorkflowCommand(): Command {
           backend,
           cwd: process.cwd(),
           backendLabel: label,
-          ...(options.model ? { model: options.model as string } : {}),
+          ...(chosen.model ? { model: chosen.model } : {}),
           ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
         });
         const record = await resumeWorkflow(id, ctx);

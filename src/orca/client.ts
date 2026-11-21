@@ -54,6 +54,14 @@ export interface OrcaWorktree {
   isMainWorktree?: boolean;
 }
 
+/** The Run of the orchestration — the home of the mailbox of a worker. */
+export interface OrcaRun {
+  /** The id of the Run. */
+  id: string;
+  /** What the Run is for — the objective of the workflow. */
+  objective?: string;
+}
+
 /** The worker that Orca supervises — the Dispatch of the orchestration. */
 export interface OrcaWorker {
   /** The id of the Dispatch — the handle of the worker. */
@@ -99,6 +107,7 @@ export interface OrcaApi {
   worktreeList(repoId: string): Promise<OrcaWorktree[]>;
   worktreeComment(selector: string, comment: string): Promise<void>;
   runCreate(objective: string): Promise<string>;
+  runList(): Promise<OrcaRun[]>;
   workerStart(options: {
     runId: string;
     spec: string;
@@ -374,6 +383,21 @@ export class OrcaClient implements OrcaApi {
     const id = findString(result, ['runId', 'id']);
     if (!id) throw new OrcaError('orca orchestration run-create answered without a run id');
     return id;
+  }
+
+  async runList(): Promise<OrcaRun[]> {
+    const result = await this.call(['orchestration', 'run-list']);
+    const list = findValue(result, ['runs']);
+    if (!Array.isArray(list)) return [];
+    const runs: OrcaRun[] = [];
+    for (const entry of list) {
+      if (!isRecord(entry)) continue;
+      const id = findString(entry, ['id', 'runId']);
+      if (!id) continue;
+      const objective = findString(entry, ['objective', 'title', 'name']);
+      runs.push({ id, ...(objective ? { objective } : {}) });
+    }
+    return runs;
   }
 
   async workerStart(options: {

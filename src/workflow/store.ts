@@ -38,6 +38,7 @@ const STATES: WorkflowState[] = [
   'awaiting-review',
   'review-running',
   'fixes-requested',
+  'stopping',
   'completed',
   'blocked',
   'cancelled',

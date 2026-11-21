@@ -98,6 +98,8 @@ export interface WorkflowStartOptions {
   backend: AiBackend;
   /** The label of the backend in the report. */
   backendLabel?: string;
+  /** The name of the backend — the way it is named on the command line. */
+  backendName?: string;
   /** The model the reviewers use. */
   model?: string;
   /** The maximum number of iterations. */
@@ -874,6 +876,12 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       baseRef,
       issue: record.issue.number,
     });
+    // The answer of Orca is not the proof of the worktree: the workflow works
+    // in a checkout of the repository of the Issue, on the branch of the
+    // Issue, and never in the checkout of the user. The worktree that was
+    // created is checked before the agent may work in it.
+    const refusal = await refusalOfCreated(ctx, worktree, repo.path, branch);
+    if (refusal) throw new WorkflowError(refusal);
   }
   const startSha = await ctx.git.revParse(worktree.path, 'HEAD');
   record.worktree = {
@@ -910,6 +918,43 @@ function samePath(left: string, right: string): boolean {
 function ownerOf(comment: string | undefined): string | undefined {
   const match = /10x-chat workflow ([^\s:]+):/.exec(comment ?? '');
   return match?.[1];
+}
+
+/**
+ * Why the workflow refuses the worktree that Orca has just created.
+ *
+ * The answer of Orca is not the proof of the worktree: the workflow hands the
+ * worktree to an agent, and the agent writes into it. The worktree has to be a
+ * checkout of the repository of the workflow, it must not be the checkout of
+ * the user, and it has to work on the branch of the Issue.
+ */
+async function refusalOfCreated(
+  ctx: WorkflowContext,
+  created: OrcaWorktree,
+  repoPath: string,
+  branch: string,
+): Promise<string | undefined> {
+  if (created.isMainWorktree || samePath(created.path, repoPath)) {
+    return `The worktree ${created.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
+  }
+  if (!created.path || created.path.trim() === '') {
+    return 'Orca reported a worktree without a path — the workflow does not know where the agent would work.';
+  }
+  const [common, expected] = await Promise.all([
+    ctx.git.commonDir(created.path),
+    ctx.git.commonDir(repoPath),
+  ]);
+  if (common === '' || expected === '') {
+    return `The worktree ${created.path} is not a checkout of a repository — the workflow cannot prove that the agent works in the repository of the Issue.`;
+  }
+  if (common !== expected) {
+    return `The worktree ${created.path} belongs to another repository — the workflow works in the repository of the checkout of the user.`;
+  }
+  const worktreeBranch = await ctx.git.branch(created.path);
+  if (worktreeBranch !== '' && !sameBranch(worktreeBranch, branch)) {
+    return `The worktree ${created.path} works on the branch ${worktreeBranch} — the workflow of this Issue works on the branch ${branch}.`;
+  }
+  return undefined;
 }
 
 /**
@@ -950,6 +995,26 @@ function refusalOf(
 type WorkerOrigin = 'adopted' | 'started' | 'lost';
 
 /**
+ * The state of the record on the disk — the truth about the workflow.
+ *
+ * The record of the process may be older than the record on the disk: another
+ * process may have stopped the workflow while this one was working. The state
+ * on the disk is read under the lock of the state, so that the answer is the
+ * state and not a moment of it.
+ */
+async function storedState(record: WorkflowRecord): Promise<WorkflowState | undefined> {
+  return withStateLock(record.id, async () => {
+    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    return stored?.state;
+  });
+}
+
+/** Whether the workflow is on its way out — nobody may start an agent in it. */
+function isStopping(state: WorkflowState | undefined): boolean {
+  return state === 'stopping' || state === 'cancelled';
+}
+
+/**
  * Start a worker in the worktree — or adopt the one that is already there.
  *
  * A worker that is alive is adopted: a second agent would work in the same
@@ -960,6 +1025,10 @@ type WorkerOrigin = 'adopted' | 'started' | 'lost';
  * not wake up, and a correction that reuses it would read the result of the
  * work that was already judged. The Dispatch of the previous iteration is
  * excluded from the adoption for the same reason.
+ *
+ * The state of the workflow is read before the worker and after it: a workflow
+ * that is stopped while the agent starts must not leave an agent behind in a
+ * cancelled workflow.
  */
 async function startOrAdoptWorker(
   record: WorkflowRecord,
@@ -970,6 +1039,11 @@ async function startOrAdoptWorker(
   if (!runId) throw new WorkflowError('The workflow has no Orca run.');
   const worktree = record.worktree;
   if (!worktree) throw new WorkflowError('The workflow has no worktree.');
+  if (isStopping(await storedState(record))) {
+    throw new WorkflowError(
+      'The workflow was stopped while the agent was starting — no agent is started in a stopped workflow.',
+    );
+  }
   const alive = (workers: OrcaWorker[]) =>
     workers.find(
       (worker) => worker.dispatchId !== options.exclude && !TERMINAL.test(worker.state ?? ''),
@@ -978,15 +1052,15 @@ async function startOrAdoptWorker(
     const adopted = alive(await ctx.orca.workerList(runId));
     if (adopted) return { worker: adopted, origin: 'adopted' };
   }
+  let worker: OrcaWorker;
   try {
-    const worker = await ctx.orca.workerStart({
+    worker = await ctx.orca.workerStart({
       runId,
       spec: options.spec,
       worktree: `path:${worktree.path}`,
       agent: record.agent,
       taskTitle: options.taskTitle,
     });
-    return { worker, origin: 'started' };
   } catch (error) {
     // The answer of the start command was lost — the worker may be there all
     // the same. A second agent would work in the same worktree, so the Run is
@@ -996,6 +1070,16 @@ async function startOrAdoptWorker(
     if (!lost) throw error;
     return { worker: lost, origin: 'lost', reason };
   }
+  // The workflow may have been stopped while the agent was starting. The
+  // worker that was just started is stopped again: an agent that works in a
+  // cancelled workflow is not a stopped workflow.
+  if (isStopping(await storedState(record))) {
+    const result = await stopWorker(ctx, worker.dispatchId);
+    throw new WorkflowError(
+      `The workflow was stopped while the agent was starting — the worker ${worker.dispatchId} was stopped again${result.stopped ? '' : `, but it could not be confirmed: ${result.failure ?? 'the state of the worker is unknown'}`}.`,
+    );
+  }
+  return { worker, origin: 'started' };
 }
 
 /** The step that starts the agent in the worktree. */
@@ -1006,9 +1090,19 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
   // The Run is the home of the mailbox of the workflow: it is created before
   // the worker, so that a lost answer can be reconciled with it.
   if (!record.orca?.runId) {
-    const runId = await ctx.orca.runCreate(
-      `Issue #${record.issue.number} of ${record.repository}: ${record.issue.title}`,
-    );
+    const objective = `Issue #${record.issue.number} of ${record.repository}: ${record.issue.title}`;
+    let runId: string;
+    try {
+      runId = await ctx.orca.runCreate(objective);
+    } catch (error) {
+      // The answer of the command was lost — the Run may be there all the
+      // same. A second Run would be a second home of the mailbox of the
+      // workflow, so the Runs are asked before anything else.
+      const runs = await ctx.orca.runList().catch(() => []);
+      const found = runs.find((run) => run.objective === objective);
+      if (!found) throw error;
+      runId = found.id;
+    }
     record.orca = { ...(record.orca ?? { repoId: '' }), runId };
     await persist(record, ctx);
   }
@@ -1337,11 +1431,30 @@ export async function advanceWorkflow(
           case 'fixes-requested':
             await sendFindings(record, ctx);
             break;
+          case 'stopping':
+            // The stop owns the outcome of the workflow — the process that
+            // stops it decides whether it is cancelled or blocked.
+            return record;
           default:
             return record;
         }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        // The workflow may have been stopped while the step ran. The stop
+        // owns the outcome then: a workflow that is being stopped is not
+        // blocked by a step that ran into the stop.
+        const stored = await loadWorkflow(record.id).catch(() => undefined);
+        if (stored && (stored.state === 'stopping' || isTerminal(stored.state))) {
+          // The stop owns the outcome of the workflow — this run does not block
+          // it and does not overwrite the record of the other process. It
+          // reports that it stopped instead of staying silent.
+          Object.assign(record, stored);
+          throw error instanceof WorkflowError
+            ? error
+            : new WorkflowError(
+                `${reason} (the workflow ${record.id} is '${stored.state}' now — another process moved it).`,
+              );
+        }
         if (!isTerminal(record.state)) {
           try {
             await block(record, reason, ctx);
@@ -1396,6 +1509,7 @@ export async function startWorkflow(
       },
       agent: options.agent ?? DEFAULT_AGENT,
       backend: options.backendLabel ?? options.backend.name,
+      ...(options.backendName ? { backendName: options.backendName } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.baseRef ? { baseRef: options.baseRef } : {}),
       maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
@@ -1499,10 +1613,50 @@ async function stopWorker(
   return { stopped, ...(failure ? { failure } : {}) };
 }
 
+/**
+ * Mark the workflow as stopping — before the workers are stopped.
+ *
+ * The mark is what closes the race between a stop and a start: a process that
+ * starts an agent reads the state of the record on the disk, sees that the
+ * workflow is on its way out and does not start a second agent in a workflow
+ * that is cancelled.
+ */
+async function markStopping(record: WorkflowRecord, ctx: WorkflowContext): Promise<boolean> {
+  let marked = false;
+  await withStateLock(record.id, async () => {
+    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    const target = stored ? mergeRecords(stored, record) : record;
+    if (isTerminal(target.state)) return;
+    if (target.state !== 'stopping') {
+      assertTransition(target.state, 'stopping');
+      target.state = 'stopping';
+      target.updatedAt = ctx.now().toISOString();
+      target.revision = (target.revision ?? 0) + 1;
+      await saveWorkflow(target);
+    }
+    Object.assign(record, target);
+    marked = true;
+  });
+  if (marked) {
+    await appendEvent(record.id, {
+      at: record.updatedAt,
+      state: 'stopping',
+      detail: 'the workflow is being stopped',
+    });
+  }
+  return marked;
+}
+
 /** Stop a workflow — the state and the worktree stay for the inspection. */
 export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<WorkflowRecord> {
   const record = await loadWorkflow(id);
   if (isTerminal(record.state)) return record;
+
+  // The workflow is marked as stopping before the workers are looked for: a
+  // process that starts an agent at that moment sees the mark and does not
+  // start a second agent in a workflow that is on its way out.
+  if (!(await markStopping(record, ctx))) return record;
+
   const runId = record.orca?.runId;
   const dispatchId = record.orca?.dispatchId;
 

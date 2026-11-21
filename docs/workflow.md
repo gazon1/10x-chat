@@ -84,6 +84,13 @@ proved to be ours:
 The worktrees of the repository are read for the same reason: the list is how a
 lost answer is reconciled.
 
+**The answer of Orca is not the proof of the worktree.** A worktree that Orca has
+just created is checked before the agent may work in it: it must not be the
+checkout of the user, its git must be the git of the repository of the Issue
+(the common directory of the two is the proof — a worktree of another repository
+has another one), and it must work on the branch of the Issue. A worktree that
+does not pass the check is refused, and the agent never works in it.
+
 **One workflow at a time per Issue.** A second `start` of the same Issue is
 refused while the first one runs: two workflows of one Issue would share the
 worktree, and two agents would work in the same checkout.
@@ -208,6 +215,32 @@ answers, and a stop in that window would leave an agent in the worktree that
 nobody knows about. A stop that cannot be confirmed leaves the workflow
 `blocked`: an agent that still works in the worktree is not a stopped workflow.
 
+## The stop and the start never meet
+
+The stop does not take the lock of the run, so it can run while another process
+starts an agent. The state `stopping` closes that window: the stop writes it
+down **before** it looks for the workers, and the process that starts an agent
+reads the state of the record on the disk twice — before the agent starts and
+after it started.
+
+| Moment | What happens |
+|---|---|
+| the record on the disk says `stopping` before the agent starts | no agent is started — the workflow is on its way out |
+| the record on the disk says `stopping` after the agent started | the worker that was just started is stopped again, and the run reports that the agent was stopped |
+| the record on the disk is terminal | the run stops without a write — the stop owns the outcome of the workflow |
+
+A workflow that is being stopped is not blocked by the step that ran into the
+stop: the stop decides whether the workflow is `cancelled` or `blocked`.
+
+## The resume keeps the review of the workflow
+
+A workflow is resumed with the backend and the model it was started with: the
+review of the next iteration has to be the review of the same kind, and a
+backend that is silently another one is a review nobody asked for. The command
+line still wins — `--backend` and `--model` change the review on purpose. A
+backend of the record that is not available is a refusal and not a silent
+fallback to another one.
+
 ## The state on the disk
 
 ```text
@@ -244,6 +277,8 @@ step of the review is the gate that says that the Issue did not drift.
 | Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
 | Another process wrote the record | The run stops without a write — the revision of the record is the truth. `stop` merges with the record that is there instead. |
 | The answer of the start command was lost | The Run is asked: the worker that is already there is adopted — a second agent would work in the same worktree. |
+| The answer of the creation of the Run was lost | The Runs are asked: the Run of the objective of the workflow is adopted — a second Run would be a second home of the mailbox. |
+| The workflow was stopped while the agent was starting | The agent is not started, or the agent that was started is stopped again — a workflow that is cancelled never leaves an agent in the worktree. |
 
 ## The seams
 

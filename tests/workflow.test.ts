@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import type {
   OrcaApi,
   OrcaMessage,
   OrcaRepo,
+  OrcaRun,
   OrcaWorker,
   OrcaWorktree,
 } from '../src/orca/client.js';
@@ -88,6 +90,16 @@ class FakeOrca implements OrcaApi {
   workerStartFailAt = 1;
   /** The worker that the lost answer started. */
   lostWorker?: OrcaWorker;
+  /** The path of the worktree that is created — its identity is checked. */
+  worktreePath = '/wt/issue-59';
+  /** The Runs of the orchestration — the answer of a lost runCreate. */
+  runListEntries: OrcaRun[] = [];
+  /** The answer of the runCreate was lost. */
+  runCreateError?: Error;
+  /** What the runtime does when the Run is created. */
+  onRunCreate?: () => void;
+  /** What the runtime does when the worker is started. */
+  onWorkerStart?: () => void;
 
   async status() {
     return { ready: this.ready, capabilities: this.capabilities };
@@ -101,7 +113,7 @@ class FakeOrca implements OrcaApi {
     this.created.push(options);
     const worktree = {
       id: 'wt-1',
-      path: '/wt/issue-59',
+      path: this.worktreePath,
       name: options.name,
       branch: options.branch,
       ...(this.createdComment ? { comment: this.createdComment } : {}),
@@ -122,7 +134,13 @@ class FakeOrca implements OrcaApi {
 
   async runCreate(objective: string) {
     this.runs.push(objective);
+    this.onRunCreate?.();
+    if (this.runCreateError) throw this.runCreateError;
     return 'run-1';
+  }
+
+  async runList() {
+    return this.runListEntries;
   }
 
   async workerStart(options: { spec: string; worktree: string }) {
@@ -138,6 +156,7 @@ class FakeOrca implements OrcaApi {
     // The runtime knows the worker — a workflow that starts a second one is
     // visible to the next run.
     this.workers.push(worker);
+    this.onWorkerStart?.();
     return worker;
   }
 
@@ -189,6 +208,14 @@ class FakeGit implements WorkflowGit {
   rootPath = '/repo';
   /** The paths of the worktree that are not committed. */
   dirtyPaths: string[] = [];
+  /**
+   * The common directory of the git of the paths — the map of the paths that
+   * belong to another repository. A path that is not in the map belongs to the
+   * repository of the checkout.
+   */
+  commonDirs: Record<string, string> = {};
+  /** The branches of the paths — the map of the paths that are on a branch. */
+  branches: Record<string, string> = {};
 
   async repository() {
     return this.repositoryName;
@@ -209,6 +236,14 @@ class FakeGit implements WorkflowGit {
 
   async dirty() {
     return this.dirtyPaths;
+  }
+
+  async commonDir(cwd: string) {
+    return this.commonDirs[cwd] ?? '/repo/.git';
+  }
+
+  async branch(cwd: string) {
+    return this.branches[cwd] ?? '';
   }
 }
 
@@ -317,6 +352,8 @@ describe('the development workflow', () => {
       useRealGh?: boolean;
       /** The checkout of the workflow — the `gh` CLI runs there. */
       cwd?: string;
+      /** The clock of the test — the state of the workflow may change in it. */
+      now?: () => Date;
     } = {},
   ): WorkflowContext {
     let tick = 0;
@@ -326,7 +363,7 @@ describe('the development workflow', () => {
       cwd,
       git,
       backend: createFakeBackend(),
-      now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++)),
+      now: options.now ?? (() => new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++))),
       waitTimeoutMs: options.waitTimeoutMs ?? 60_000,
       ...(options.review ? { review: options.review } : {}),
       ...(options.useRealGh
@@ -1408,6 +1445,179 @@ describe('the development workflow', () => {
     } finally {
       originalEnv.PATH = previousPath;
     }
+  });
+
+  it('does not start an agent in a workflow that is being stopped', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const record = aRecord('issue-59-cccccccc', 'worktree-created');
+    // The Run is there already — the workflow goes straight to the agent.
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    await saveWorkflow(record);
+
+    // Another process stops the workflow while the agent is about to start: the
+    // record on the disk says 'stopping' before the agent is started.
+    const file = path.join(getWorkflowDir(record.id), 'workflow.json');
+    const stopping = { ...record, state: 'stopping', revision: 1 };
+    let ticks = 0;
+    const ctx = contextOf(orca, git, {
+      waitTimeoutMs: 20,
+      now: () => {
+        const date = new Date(Date.UTC(2026, 0, 1, 0, 0, 0, ticks++));
+        if (ticks === 1) writeFileSync(file, `${JSON.stringify(stopping, null, 2)}\n`);
+        return date;
+      },
+    });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(
+      /no agent is started in a stopped workflow/,
+    );
+
+    // No agent was started in the workflow that is on its way out.
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('stops the agent that was started while the workflow was stopped', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const record = aRecord('issue-59-dddddddd', 'worktree-created');
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    await saveWorkflow(record);
+
+    // The stop of the other process lands while the agent starts: the agent is
+    // there, and the workflow is on its way out.
+    const file = path.join(getWorkflowDir(record.id), 'workflow.json');
+    const stopping = { ...record, state: 'stopping', revision: 1 };
+    orca.onWorkerStart = () => {
+      writeFileSync(file, `${JSON.stringify(stopping, null, 2)}\n`);
+    };
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/was stopped again/);
+
+    // The agent that was started is stopped again — it does not work in a
+    // workflow that is cancelled.
+    expect(orca.started).toHaveLength(1);
+    expect(orca.stopped).toContain('dispatch-1');
+  });
+
+  it('refuses a worktree that belongs to another repository', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.commonDirs['/wt/issue-59'] = '/other/.git';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/belongs to another repository/);
+
+    // The agent never works in a checkout of another repository.
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses the checkout of the user as the worktree of the workflow', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktreePath = '/repo';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/the checkout of the repository/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses a worktree that works on another branch', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    git.branches['/wt/issue-59'] = 'main';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/works on the branch main/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('adopts the Run of a lost answer of the runCreate', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    // The Run was created, but the answer never came.
+    orca.runCreateError = new Error('the answer of the runCreate was lost');
+    orca.runListEntries = [
+      {
+        id: 'run-9',
+        objective: 'Issue #59 of gazon1/10x-chat: The issue of the workflow',
+      },
+    ];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The Run of the workflow is the one that is there — a second Run would be
+    // a second home of the mailbox.
+    expect(record.orca?.runId).toBe('run-9');
+    expect(orca.runs).toHaveLength(1);
+  });
+
+  it('reports the lost answer of the runCreate when there is no Run', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.runCreateError = new Error('the answer of the runCreate was lost');
+    orca.runListEntries = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/the answer of the runCreate was lost/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('gives the agent the Issue, the rules of the work and the checks', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const ctx = contextOf(orca, git, {
+      waitTimeoutMs: 20,
+      requirements: async () => ({
+        repository: 'gazon1/10x-chat',
+        number: 59,
+        url: 'https://github.com/gazon1/10x-chat/issues/59',
+        title: 'The issue of the workflow',
+        body: '## Acceptance criteria\n\n- the check of the change runs\n',
+        hash: 'hash-of-the-issue',
+        status: 'initial',
+        observedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    });
+
+    await startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx);
+
+    const spec = orca.started[0]?.spec ?? '';
+    // The Issue, its text and its acceptance criteria.
+    expect(spec).toContain('Issue: #59');
+    expect(spec).toContain('The issue of the workflow');
+    expect(spec).toContain('## Acceptance criteria');
+    expect(spec).toContain('- the check of the change runs');
+    // The place of the work and the branch of it.
+    expect(spec).toContain('/wt/issue-59');
+    expect(spec).toContain('10x-chat/issue-59');
+    // The instructions of the repository and the checks it defines.
+    expect(spec).toContain('AGENTS.md');
+    expect(spec).toContain('type check');
+    expect(spec).toContain('lint');
+    expect(spec).toContain('tests');
+    // The worktree stays for a human.
+    expect(spec).toContain('Never push');
   });
 });
 
