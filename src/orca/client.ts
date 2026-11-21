@@ -109,7 +109,6 @@ export interface OrcaApi {
   workerShow(dispatchId: string): Promise<OrcaWorker>;
   workerList(runId: string): Promise<OrcaWorker[]>;
   workerStop(dispatchId: string): Promise<void>;
-  send(options: { to: string; subject: string; body: string }): Promise<void>;
   check(runId: string, options: { timeoutMs: number; types: string[] }): Promise<OrcaMessage[]>;
 }
 
@@ -475,19 +474,6 @@ export class OrcaClient implements OrcaApi {
 
   async workerStop(dispatchId: string): Promise<void> {
     await this.call(['orchestration', 'worker-stop', '--dispatch', dispatchId]);
-  }
-
-  async send(options: { to: string; subject: string; body: string }): Promise<void> {
-    await this.call([
-      'orchestration',
-      'send',
-      '--to',
-      options.to,
-      '--subject',
-      options.subject,
-      '--body',
-      options.body,
-    ]);
   }
 
   async check(

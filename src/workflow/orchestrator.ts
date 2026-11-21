@@ -133,9 +133,6 @@ const TERMINAL =
 /** The states of a worker that mean that it failed. */
 const FAILED = /(failed|escalat)/i;
 
-/** The states of a worker that mean that it succeeded. */
-const SUCCEEDED = /(succeeded|success)/i;
-
 /** The states of a worker that mean that it does not work any more. */
 const STOPPED =
   /(stop|cancel|terminat|abort|settled|succeed|success|complete|done|finish|fail|escalat)/i;
@@ -493,6 +490,35 @@ function resolveRepo(
   );
 }
 
+/**
+ * The rules of the work — the same for the task and for its corrections.
+ *
+ * They are written once: a rule that the corrections keep and the task loses
+ * is a rule that the workflow does not hold.
+ */
+const WORK_RULES = `## How to work
+
+- Read the instructions of the repository first (AGENTS.md and the files it
+  names) and follow them: the conventions of the repository decide how the
+  change is written.
+- Stay inside the scope of the Issue. A requirement that the Issue does not
+  state is not yours to decide silently — say it in your report.
+- Run the checks the repository defines (type check, lint, tests) and report
+  their exact result. A change without a check is not finished.
+- Commit the change: the review reads the committed state of the worktree, and
+  an uncommitted change cannot be reviewed.
+- Never push, never open a pull request and never merge. The worktree stays
+  for a human.`;
+
+/** What the agent has to report when it is done. */
+const REPORT_RULES = `## What you report
+
+When you are done, report:
+
+- what you changed, file by file;
+- which commands you ran and what they answered;
+- what is still open, and every decision you took that the Issue did not state.`;
+
 /** The brief of the agent — the requirements of the Issue and nothing else. */
 export function buildSpec(record: WorkflowRecord): string {
   const issue = record.issue;
@@ -518,27 +544,39 @@ ${bodyFence}text
 ${issue.body}
 ${bodyFence}
 
-## How to work
+${WORK_RULES}
 
-- Read the instructions of the repository first (AGENTS.md and the files it
-  names) and follow them: the conventions of the repository decide how the
-  change is written.
-- Stay inside the scope of the Issue. A requirement that the Issue does not
-  state is not yours to decide silently — say it in your report.
-- Run the checks the repository defines (type check, lint, tests) and report
-  their exact result. A change without a check is not finished.
-- Commit the change: the review reads the committed state of the worktree, and
-  an uncommitted change cannot be reviewed.
-- Never push, never open a pull request and never merge. The worktree stays
-  for a human.
+${REPORT_RULES}
+`;
+}
 
-## What you report
+/**
+ * The brief of the corrections — the findings of the review.
+ *
+ * The corrections are a new supervised work item: the Dispatch of the judged
+ * iteration is finished, and a finished Dispatch does not wake up. The agent of
+ * the corrections is a new worker, and its brief carries the findings.
+ */
+export function buildFixSpec(record: WorkflowRecord, iteration: WorkflowIteration): string {
+  const issue = record.issue;
+  const worktree = record.worktree;
+  return `# The corrections of the task
 
-When you are done, report:
+The independent review of your change asked for corrections. This is a new
+task: the work of the iteration ${iteration.index} is judged, and the
+corrections below are the open work.
 
-- what you changed, file by file;
-- which commands you ran and what they answered;
-- what is still open, and every decision you took that the Issue did not state.
+- Issue: #${issue.number} — ${issue.title}
+- URL: ${issue.url}
+- Repository: ${record.repository}
+- Worktree: ${worktree?.path ?? '(the worktree of this task)'}
+- Branch: ${worktree?.branch ?? '(the branch of this task)'}
+
+${buildFixRequest(record, iteration)}
+
+${WORK_RULES}
+
+${REPORT_RULES}
 `;
 }
 
@@ -558,7 +596,7 @@ export function buildFixRequest(record: WorkflowRecord, iteration: WorkflowItera
     ? `\nThe branch of this task: ${record.worktree.branch}.`
     : '';
   const base = record.baseRef ? `\nIt is based on ${record.baseRef}.` : '';
-  return `# The review of your change
+  return `## The review of your change
 
 The independent review of the change asked for corrections. The whole report is
 in the worktree of this task: ${review?.reportPath ?? '(the report of the review)'}.
@@ -619,6 +657,11 @@ function reviewOf(run: ReviewRun, record: WorkflowRecord, reportPath: string): W
  * succeeded: `settled`, `completed` and `done` are terminal, not successful.
  * The outcome is only read from the structured result of the Task — the field
  * of the Dispatch or the message of the mailbox. Everything else is unknown.
+ *
+ * A failed state is a failure: it never approves anything, and the workflow
+ * blocks on it. A state that says "succeeded" is not a success: the Dispatch
+ * of a worker that reports no structured outcome is a worker whose result
+ * nobody confirmed, and the workflow must not treat it as a finished task.
  */
 function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
   const outcome = worker.outcome?.toLowerCase().trim();
@@ -628,7 +671,6 @@ function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
   }
   const state = worker.state ?? '';
   if (FAILED.test(state)) return 'failed';
-  if (SUCCEEDED.test(state)) return 'succeeded';
   // A worker that was stopped or cancelled did not finish the task.
   if (/(stop|cancel|terminat)/i.test(state)) return 'failed';
   return undefined;
@@ -878,6 +920,58 @@ function refusalOf(
   return undefined;
 }
 
+/** How a worker came to be — the message of the workflow says which one. */
+type WorkerOrigin = 'adopted' | 'started' | 'lost';
+
+/**
+ * Start a worker in the worktree — or adopt the one that is already there.
+ *
+ * A worker that is alive is adopted: a second agent would work in the same
+ * worktree. The answer of a lost command is reconciled with the Run — the
+ * worker that is already there is taken instead of starting a second one.
+ *
+ * The worker of the corrections is never adopted: a finished Dispatch does
+ * not wake up, and a correction that reuses it would read the result of the
+ * work that was already judged. The Dispatch of the previous iteration is
+ * excluded from the adoption for the same reason.
+ */
+async function startOrAdoptWorker(
+  record: WorkflowRecord,
+  ctx: WorkflowContext,
+  options: { spec: string; taskTitle: string; adopt: boolean; exclude?: string },
+): Promise<{ worker: OrcaWorker; origin: WorkerOrigin; reason?: string }> {
+  const runId = record.orca?.runId;
+  if (!runId) throw new WorkflowError('The workflow has no Orca run.');
+  const worktree = record.worktree;
+  if (!worktree) throw new WorkflowError('The workflow has no worktree.');
+  const alive = (workers: OrcaWorker[]) =>
+    workers.find(
+      (worker) => worker.dispatchId !== options.exclude && !TERMINAL.test(worker.state ?? ''),
+    );
+  if (options.adopt) {
+    const adopted = alive(await ctx.orca.workerList(runId));
+    if (adopted) return { worker: adopted, origin: 'adopted' };
+  }
+  try {
+    const worker = await ctx.orca.workerStart({
+      runId,
+      spec: options.spec,
+      worktree: `path:${worktree.path}`,
+      agent: record.agent,
+      taskTitle: options.taskTitle,
+    });
+    return { worker, origin: 'started' };
+  } catch (error) {
+    // The answer of the start command was lost — the worker may be there all
+    // the same. A second agent would work in the same worktree, so the Run is
+    // asked before anything else.
+    const reason = error instanceof Error ? error.message : String(error);
+    const lost = alive(await ctx.orca.workerList(runId).catch(() => []));
+    if (!lost) throw error;
+    return { worker: lost, origin: 'lost', reason };
+  }
+}
+
 /** The step that starts the agent in the worktree. */
 async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   const worktree = record.worktree;
@@ -899,67 +993,39 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
   // starts, so that an interrupted start is still an iteration with a report.
   ensureIteration(record, ctx);
 
-  // A worker that is already there is adopted, never started a second time:
-  // the answer of a lost command is not a reason to run the agent twice.
-  const existing = await ctx.orca.workerList(runId);
-  const adopted = existing[0];
-  if (adopted) {
-    record.orca = {
-      ...record.orca,
-      dispatchId: adopted.dispatchId,
-      ...(adopted.taskId ? { taskId: adopted.taskId } : {}),
-    };
-    await persist(record, ctx);
-    await move(
-      record,
-      'implementation-running',
-      `the worker ${adopted.dispatchId} was already running — it was not started again`,
-      ctx,
-    );
-    return;
-  }
-
-  let worker: OrcaWorker;
-  try {
-    worker = await ctx.orca.workerStart({
-      runId,
-      spec: buildSpec(record),
-      worktree: `path:${worktree.path}`,
-      agent: record.agent,
-      taskTitle: `Issue #${record.issue.number}: ${record.issue.title}`,
-    });
-  } catch (error) {
-    // The answer of the start command was lost — the worker may be there all
-    // the same. A second agent would work in the same worktree, so the Run is
-    // asked before anything else: the worker that is already there is adopted.
-    const reason = error instanceof Error ? error.message : String(error);
-    const started = await ctx.orca.workerList(runId).catch(() => []);
-    const lost = started[0];
-    if (!lost) throw error;
-    record.orca = {
-      repoId: record.orca.repoId,
-      runId,
-      dispatchId: lost.dispatchId,
-      ...(lost.taskId ? { taskId: lost.taskId } : {}),
-    };
-    await move(
-      record,
-      'implementation-running',
-      `the answer of the start command was lost (${reason}) — the worker ${lost.dispatchId} that was already running was adopted`,
-      ctx,
-    );
-    return;
-  }
+  const started = await startOrAdoptWorker(record, ctx, {
+    spec: buildSpec(record),
+    taskTitle: `Issue #${record.issue.number}: ${record.issue.title}`,
+    adopt: true,
+  });
   record.orca = {
     repoId: record.orca.repoId,
     runId,
-    dispatchId: worker.dispatchId,
-    ...(worker.taskId ? { taskId: worker.taskId } : {}),
+    dispatchId: started.worker.dispatchId,
+    ...(started.worker.taskId ? { taskId: started.worker.taskId } : {}),
   };
+  if (started.origin === 'adopted') {
+    await move(
+      record,
+      'implementation-running',
+      `the worker ${started.worker.dispatchId} was already running — it was not started again`,
+      ctx,
+    );
+    return;
+  }
+  if (started.origin === 'lost') {
+    await move(
+      record,
+      'implementation-running',
+      `the answer of the start command was lost (${started.reason}) — the worker ${started.worker.dispatchId} that was already running was adopted`,
+      ctx,
+    );
+    return;
+  }
   await move(
     record,
     'implementation-running',
-    `the agent ${record.agent} works in ${worktree.path} (dispatch ${worker.dispatchId})`,
+    `the agent ${record.agent} works in ${worktree.path} (dispatch ${started.worker.dispatchId})`,
     ctx,
   );
 }
@@ -1027,6 +1093,21 @@ async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promis
   const iteration = lastIteration(record);
   const runId = `${record.id}-iteration-${iteration.index}`;
   const runDir = path.join(getWorkflowDir(record.id), 'reviews', `iteration-${iteration.index}`);
+
+  // The review reads the committed state of the worktree. A change that is not
+  // committed is not in the review: the workflow that approved it would
+  // approve a change that nobody judged.
+  const dirty = await ctx.git.dirty(worktree.path);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 10).join('; ');
+    await block(
+      record,
+      `The worktree is not clean — the review reads the committed state only: ${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}. Commit the change or remove it.`,
+      ctx,
+    );
+    return;
+  }
+
   const review = ctx.review ?? ((request: WorkflowReviewRequest) => defaultReview(ctx, request));
   const run = await review({
     cwd: worktree.path,
@@ -1154,20 +1235,33 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
 /** The step that sends the findings of the review back to the agent. */
 async function sendFindings(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   const iteration = lastIteration(record);
-  const dispatchId = record.orca?.dispatchId;
-  if (!dispatchId) throw new WorkflowError('The workflow has no Orca worker.');
-  await ctx.orca.send({
-    to: `dispatch:${dispatchId}`,
-    subject: `The review of the iteration ${iteration.index} asked for corrections`,
-    body: buildFixRequest(record, iteration),
+  const runId = record.orca?.runId;
+  if (!runId) throw new WorkflowError('The workflow has no Orca run.');
+  const previous = record.orca?.dispatchId;
+
+  // The corrections are a follow-up supervised work item: the Dispatch of the
+  // judged iteration is finished, and a message to a finished Dispatch does
+  // not wake the agent up. The findings go to a new worker, whose brief
+  // carries them.
+  const started = await startOrAdoptWorker(record, ctx, {
+    spec: buildFixSpec(record, iteration),
+    taskTitle: `Issue #${record.issue.number}: the corrections of the iteration ${iteration.index}`,
+    adopt: false,
+    ...(previous ? { exclude: previous } : {}),
   });
+  record.orca = {
+    repoId: record.orca?.repoId ?? '',
+    runId,
+    dispatchId: started.worker.dispatchId,
+    ...(started.worker.taskId ? { taskId: started.worker.taskId } : {}),
+  };
   // The corrections are a new iteration: the work of the agent that follows is
   // judged on its own.
   ensureIteration(record, ctx);
   await move(
     record,
     'implementation-running',
-    `the findings of the iteration ${iteration.index} went back to the agent`,
+    `the findings of the iteration ${iteration.index} went to the worker ${started.worker.dispatchId}`,
     ctx,
   );
 }
@@ -1344,32 +1438,68 @@ export async function resumeWorkflow(id: string, ctx: WorkflowContext): Promise<
   });
 }
 
+/**
+ * Stop one worker — and report whether it really stopped.
+ *
+ * The state of the worker is the truth: a stop that cannot be confirmed is
+ * not a stop, and a workflow that says it stopped while its agent still works
+ * in the worktree lies about the worktree.
+ */
+async function stopWorker(
+  ctx: WorkflowContext,
+  dispatchId: string,
+): Promise<{ stopped: boolean; failure?: string }> {
+  let failure: string | undefined;
+  try {
+    await ctx.orca.workerStop(dispatchId);
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+  }
+  let stopped = false;
+  try {
+    const worker = await ctx.orca.workerShow(dispatchId);
+    stopped = STOPPED.test(worker.state ?? '');
+  } catch (error) {
+    failure = failure ?? (error instanceof Error ? error.message : String(error));
+  }
+  return { stopped, ...(failure ? { failure } : {}) };
+}
+
 /** Stop a workflow — the state and the worktree stay for the inspection. */
 export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<WorkflowRecord> {
   const record = await loadWorkflow(id);
   if (isTerminal(record.state)) return record;
+  const runId = record.orca?.runId;
   const dispatchId = record.orca?.dispatchId;
-  if (dispatchId) {
-    let failure: string | undefined;
+
+  // Every worker of the Run is stopped, not only the Dispatch of the record:
+  // the Dispatch is written down after the start command answers, and a stop
+  // in that window would leave an agent in the worktree that nobody knows
+  // about.
+  const dispatches = new Set<string>();
+  if (dispatchId) dispatches.add(dispatchId);
+  if (runId) {
+    let workers: OrcaWorker[];
     try {
-      await ctx.orca.workerStop(dispatchId);
+      workers = await ctx.orca.workerList(runId);
     } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    // The state of the worker is the truth: a stop that cannot be confirmed
-    // is not a stop, and a workflow that says it stopped while its agent
-    // still works in the worktree lies about the worktree.
-    let stopped = false;
-    try {
-      const worker = await ctx.orca.workerShow(dispatchId);
-      stopped = STOPPED.test(worker.state ?? '');
-    } catch (error) {
-      failure = failure ?? (error instanceof Error ? error.message : String(error));
-    }
-    if (!stopped) {
+      const reason = error instanceof Error ? error.message : String(error);
       await block(
         record,
-        `The worker ${dispatchId} could not be stopped${failure ? ` — ${failure}` : ''} — it may still work in the worktree.`,
+        `The workers of the run ${runId} could not be read — an agent may still work in the worktree. ${reason}`,
+        ctx,
+      );
+      return record;
+    }
+    for (const worker of workers) dispatches.add(worker.dispatchId);
+  }
+
+  for (const target of dispatches) {
+    const result = await stopWorker(ctx, target);
+    if (!result.stopped) {
+      await block(
+        record,
+        `The worker ${target} could not be stopped${result.failure ? ` — ${result.failure}` : ''} — it may still work in the worktree.`,
         ctx,
       );
       return record;

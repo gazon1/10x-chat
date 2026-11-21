@@ -137,21 +137,102 @@ describe('the adapter of the Orca CLI', () => {
     ).rejects.toThrow('without a dispatch id');
   });
 
-  it('passes the body of a message as an argument, never as a shell', async () => {
-    const { runner, calls } = fakeRunner([ok({ accepted: true })]);
+  it('creates a worktree with the arguments of the CLI', async () => {
+    const { runner, calls } = fakeRunner([
+      ok({
+        worktree: {
+          id: 'wt-1',
+          path: '/wt/issue-59',
+          branch: 'refs/heads/10x-chat/issue-59',
+          head: 'abc123',
+        },
+      }),
+    ]);
     const client = new OrcaClient({ runner });
 
-    await client.send({
-      to: 'dispatch:dispatch-1',
-      subject: 'the findings',
-      body: 'a body with "quotes" and $(rm -rf /)',
+    const worktree = await client.worktreeCreate({
+      repoId: 'repo-1',
+      name: 'issue-59',
+      branch: '10x-chat/issue-59',
+      baseRef: 'main',
+      issue: 59,
     });
 
-    const call = calls[0];
-    expect(call?.command).toBe('orca');
-    expect(call?.args).toContain('--to');
-    expect(call?.args).toContain('dispatch:dispatch-1');
-    expect(call?.args).toContain('a body with "quotes" and $(rm -rf /)');
+    expect(worktree.id).toBe('wt-1');
+    expect(worktree.path).toBe('/wt/issue-59');
+    expect(worktree.branch).toBe('refs/heads/10x-chat/issue-59');
+    expect(worktree.head).toBe('abc123');
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('worktree');
+    expect(args).toContain('create');
+    expect(args).toContain('--repo');
+    expect(args).toContain('id:repo-1');
+    expect(args).toContain('--name');
+    expect(args).toContain('issue-59');
+    expect(args).toContain('--branch');
+    expect(args).toContain('10x-chat/issue-59');
+    expect(args).toContain('--base-branch');
+    expect(args).toContain('main');
+    expect(args).toContain('--issue');
+    expect(args).toContain('59');
+  });
+
+  it('refuses a worktree that has no path', async () => {
+    const { runner } = fakeRunner([ok({ worktree: { id: 'wt-1' } })]);
+    const client = new OrcaClient({ runner });
+
+    await expect(
+      client.worktreeCreate({
+        repoId: 'repo-1',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        baseRef: 'main',
+        issue: 59,
+      }),
+    ).rejects.toThrow('without the worktree it created');
+  });
+
+  it('creates a run and reads its id', async () => {
+    const { runner, calls } = fakeRunner([ok({ runId: 'run-1' })]);
+    const client = new OrcaClient({ runner });
+
+    const runId = await client.runCreate('the objective of the run');
+
+    expect(runId).toBe('run-1');
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('orchestration');
+    expect(args).toContain('run-create');
+    expect(args).toContain('--objective');
+    expect(args).toContain('the objective of the run');
+  });
+
+  it('refuses a run without an id', async () => {
+    const { runner } = fakeRunner([ok({ created: true })]);
+    const client = new OrcaClient({ runner });
+
+    await expect(client.runCreate('the objective of the run')).rejects.toThrow('without a run id');
+  });
+
+  it('stops a worker by its dispatch', async () => {
+    const { runner, calls } = fakeRunner([ok({ stopped: true })]);
+    const client = new OrcaClient({ runner });
+
+    await client.workerStop('dispatch-1');
+
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('orchestration');
+    expect(args).toContain('worker-stop');
+    expect(args).toContain('--dispatch');
+    expect(args).toContain('dispatch-1');
+  });
+
+  it('refuses to stop a worker that the CLI could not stop', async () => {
+    const { runner } = fakeRunner([
+      { code: 1, stdout: '', stderr: 'the dispatch is gone', timedOut: false },
+    ]);
+    const client = new OrcaClient({ runner });
+
+    await expect(client.workerStop('dispatch-1')).rejects.toThrow('the dispatch is gone');
   });
 
   it('reads the messages of the mailbox of a run', async () => {

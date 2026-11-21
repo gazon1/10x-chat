@@ -419,3 +419,22 @@ against the source:
 
 The check set of that round: typecheck, lint, knip, test (63 files / **1154 tests**), e2e (22 CLI
 scenarios, the 10 live provider scenarios skipped) and build — all pass.
+
+### The fourth round
+
+The fourth round of the same pipeline ran completely — every step of it passed — and returned
+**REQUEST CHANGES** with four findings of the severity BLOCKING or MAJOR and two MINOR ones. The
+verification confirmed one of them; the rest are the reading of the reviewers and were checked
+against the source one by one.
+
+| Finding of the fourth round | The answer |
+|---|---|
+| the outcome of the worker was read from the words of its state, so a worker that only looks successful was accepted | the fallback on the state is gone: the success is the structural result only (`outcome` of the Task, or a `worker_done` in the mail). A terminal state without a result is `unknown` and blocks the workflow — the confirmation of the verification |
+| the worktree was never checked for cleanliness before the review, so a change that was not committed was not reviewed | the workflow asks the git for the state of the worktree before the review and blocks the workflow when the tree is not clean — the review reads the committed state only |
+| `stop` could not reach a worker that was starting at that moment, because the Dispatch of the record was not written yet | `stop` does not trust the record alone: it collects the workers of the Run of the workflow and stops every one of them; a worker that cannot be stopped leaves the workflow `blocked` |
+| the corrections were sent as a message into the finished Dispatch, so the next iteration read the result of the previous worker | every iteration is a supervised work item of its own: a new Dispatch in the same Run, with a new brief. The verb `send` of the adapter is gone — the adapter speaks only the language the workflow needs |
+| the tests replaced the reading of the Issue and the check of the authentication, so the real integration was never exercised | the test reads the Issue through the `gh` CLI of the machine, with the real environment of the process |
+| the tests of the adapter did not cover the protocol of the worktree, the Run and the stop of a worker | the adapter has protocol tests of its own: the worktree, the Run, the start and the stop of a worker, including the answers that carry no name |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1163 tests**), e2e (22 CLI
+scenarios, the 10 live provider scenarios skipped) and build — all pass.

@@ -154,7 +154,9 @@ The workflow reports `completed` only when **all** of these hold:
 4. the review compared the change with the commit the worktree started from — a
    base ref that moved under the workflow is a comparison of another change;
 5. the Issue is still the version the workflow started with — a requirement
-   that changed since is a requirement nobody judged.
+   that changed since is a requirement nobody judged;
+6. the worktree is clean — the review reads the committed state only, and a
+   change that is not committed is a change that nobody judged.
 
 Anything else ends in `blocked` with the reason. **An approval of the model is
 not an approval of a human**: the worktree of the workflow stays for a human,
@@ -174,6 +176,30 @@ and nothing is published.
   stopped workflow.
 - It never treats the text of the Issue as an instruction: the body of the
   Issue is data inside a fence of the brief of the agent.
+
+## The iteration is a supervised work item
+
+Every iteration of the workflow is its own **supervised work item**: the
+corrections of a review are a new Dispatch of the same Run, with a brief of
+their own — the findings of the review. The Dispatch of the judged iteration is
+finished, and a finished Dispatch does not wake up: a correction that reused it
+would read the result of the work that was already judged, and the workflow
+would report that the agent changed nothing.
+
+The outcome of a worker is only read from the **structured result** of its
+Task — the outcome of the Dispatch or the message of the mailbox. A state that
+says `succeeded` is terminal, not successful: a worker that reports no
+structured outcome leaves the result of its Task unknown, and the workflow
+blocks instead of approving a change nobody confirmed.
+
+## The stop stops every worker
+
+`stop` does not take the lock of the run — a workflow must be stoppable while
+another process works on it. It stops **every worker of the Run**, not only the
+Dispatch of the record: the Dispatch is written down after the start command
+answers, and a stop in that window would leave an agent in the worktree that
+nobody knows about. A stop that cannot be confirmed leaves the workflow
+`blocked`: an agent that still works in the worktree is not a stopped workflow.
 
 ## The state on the disk
 
@@ -203,9 +229,11 @@ step of the review is the gate that says that the Issue did not drift.
 | The agent is still working when the wait is over | The workflow keeps its state and gives the turn back. `resume` continues it. |
 | The command was interrupted | The record of the last completed step is on the disk. `resume` continues from there. |
 | The agent changed nothing | The workflow blocks — there is no change to review. |
-| The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. |
+| The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. A Dispatch that says `succeeded` without a structured outcome is unknown. |
+| The worktree is not clean | The workflow blocks — the review reads the committed state only. |
 | The Issue changed | The workflow blocks — the change was judged against older requirements. |
 | The agent could not be stopped | The workflow blocks — the agent may still work in the worktree. |
+| The workers of the Run could not be read | The workflow blocks — an agent of the Run may still work in the worktree. |
 | Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
 | Another process wrote the record | The run stops without a write — the revision of the record is the truth. `stop` merges with the record that is there instead. |
 | The answer of the start command was lost | The Run is asked: the worker that is already there is adopted — a second agent would work in the same worktree. |

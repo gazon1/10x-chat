@@ -17,6 +17,13 @@ export interface WorkflowGit {
   defaultBaseRef(cwd: string): Promise<string>;
   /** The root of the checkout — empty when the directory is not a repository. */
   root(cwd: string): Promise<string>;
+  /**
+   * The paths of the checkout that are not committed — empty when it is clean.
+   *
+   * The review reads the committed state of the worktree: a change that is not
+   * committed is not in the review, and the workflow has to know it.
+   */
+  dirty(cwd: string): Promise<string[]>;
 }
 
 /** Run git and return what it says. */
@@ -76,5 +83,13 @@ export const nodeWorkflowGit: WorkflowGit = {
 
   async root(cwd) {
     return git(['rev-parse', '--show-toplevel'], cwd).catch(() => '');
+  },
+
+  async dirty(cwd) {
+    const status = await git(['status', '--porcelain'], cwd);
+    return status
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '');
   },
 };
