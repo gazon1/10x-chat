@@ -99,7 +99,14 @@ export function parseIssue(payload: unknown, expected: number): IssueData {
   if (title === undefined || body === undefined) {
     throw new Error('it has no title or no body');
   }
-  const url = typeof value.url === 'string' ? value.url : '';
+  // The URL is part of the identity of the Issue: the requirements of a change
+  // name the page a human reads it on, and a snapshot that cannot be linked to
+  // is a requirement nobody can check. The `gh` CLI always answers it — an
+  // answer without it is an answer of another shape, and it is refused.
+  const url = typeof value.url === 'string' && value.url !== '' ? value.url : undefined;
+  if (url === undefined) {
+    throw new Error('it has no URL');
+  }
   return { number, url, title, body };
 }
 

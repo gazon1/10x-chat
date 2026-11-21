@@ -292,6 +292,14 @@ describe('the requirements of a review', () => {
     );
   });
 
+  it('refuses an issue without its URL', () => {
+    // The URL is part of the identity of the Issue: the requirements of a
+    // change name the page a human reads it on, and a snapshot that cannot be
+    // linked to is a requirement nobody can check.
+    expect(() => parseIssue({ number: 7, title: 'a', body: 'b' }, 7)).toThrow(/no URL/);
+    expect(() => parseIssue({ number: 7, url: '', title: 'a', body: 'b' }, 7)).toThrow(/no URL/);
+  });
+
   it('refuses an answer about another issue', () => {
     expect(() => parseIssue({ number: 8, title: 'a', body: 'b' }, 7)).toThrow(
       /the issue #8, not with the issue #7/,
@@ -325,7 +333,14 @@ describe('the requirements of a review', () => {
     expect(unchanged.requirements?.previousHash).toBe(hashRequirements(ISSUE_TITLE, ISSUE_BODY));
 
     // The requirements drift: the body of the Issue changes.
-    await fakeGh({ issue: { number: 7, title: ISSUE_TITLE, body: `${ISSUE_BODY} And more.` } });
+    await fakeGh({
+      issue: {
+        number: 7,
+        url: 'https://github.com/owner/name/issues/7',
+        title: ISSUE_TITLE,
+        body: `${ISSUE_BODY} And more.`,
+      },
+    });
     const changed = await collectReviewContext({ cwd: repo, pr: 42, issue: 7 });
     expect(changed.requirements?.status).toBe('changed');
     expect(changed.requirements?.previousTitle).toBe(ISSUE_TITLE);
@@ -352,7 +367,14 @@ describe('the requirements of a review', () => {
 
     // The body is the same, only the title of the Issue changes: the version
     // of the requirements changes with it.
-    await fakeGh({ issue: { number: 7, title: `${ISSUE_TITLE} And more.`, body: ISSUE_BODY } });
+    await fakeGh({
+      issue: {
+        number: 7,
+        url: 'https://github.com/owner/name/issues/7',
+        title: `${ISSUE_TITLE} And more.`,
+        body: ISSUE_BODY,
+      },
+    });
     const changed = await collectReviewContext({ cwd: repo, pr: 42, issue: 7 });
 
     expect(changed.requirements?.status).toBe('changed');
@@ -521,7 +543,12 @@ describe('the requirements of a review', () => {
         if (request.requestId.endsWith('-tests')) {
           await writeFile(
             issueFile,
-            JSON.stringify({ number: 7, title: ISSUE_TITLE, body: `${ISSUE_BODY} And more.` }),
+            JSON.stringify({
+              number: 7,
+              url: 'https://github.com/owner/name/issues/7',
+              title: ISSUE_TITLE,
+              body: `${ISSUE_BODY} And more.`,
+            }),
             'utf-8',
           );
         }

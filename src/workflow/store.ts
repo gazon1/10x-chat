@@ -180,6 +180,13 @@ function isWorkflowRecord(value: unknown): value is WorkflowRecord {
   if (typeof issue !== 'object' || issue === null) return false;
   if (typeof issue.number !== 'number' || typeof issue.hash !== 'string') return false;
   if (typeof issue.title !== 'string' || typeof issue.body !== 'string') return false;
+  if (typeof issue.url !== 'string') return false;
+  // A record that holds the version of the Issue was read from it, and the
+  // identity it keeps is the whole of it: the number, the URL a human reads it
+  // on, the title and the body. A workflow that failed before it managed to
+  // read the Issue holds no version and no identity — it is blocked with the
+  // reason, and there is nothing to name.
+  if (issue.hash !== '' && issue.url === '') return false;
   return true;
 }
 

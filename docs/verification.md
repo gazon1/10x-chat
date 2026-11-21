@@ -993,3 +993,19 @@ every mandatory step passed, the baseline of the Issue advanced, and the verdict
 is **APPROVE** — not one finding survived the verification, from any of the
 three reviewers. The head is the head of the pull request, so the approval is
 bound to the change a human will merge.
+
+### The twenty-sixth round — the identity of the Issue is the whole of it
+
+The twenty-sixth round of the pipeline ran completely on the pushed head and
+approved it. Two findings stayed below the gate: one of the severity MINOR that
+the verification did not settle, and one that is a decision of the repository
+rather than a defect.
+
+| Finding of the round | The answer |
+|---|---|
+| `parseIssue()` substituted an empty string when the answer of `gh` carried no URL, and the record of the workflow did not validate it either — the workflow could name an Issue whose page nobody can open | the URL is a part of the identity of the Issue: an answer without it is refused, the record of a workflow that holds a version of the Issue holds its URL with it, and a test says so |
+| the brief of the agent reads only the `AGENTS.md` of the root of the checkout, not a nested one that may govern the files of the change | a decision and not a defect: the conventions of this repository are a single root `AGENTS.md`, and it names the files that govern each module (`docs/review-pipeline.md`, `docs/workflow.md`, …). The brief requires the agent to read the files `AGENTS.md` names, which is exactly the convention here. A nested instruction file is not a rule of this repository, and inventing one for the workflow would be a rule nobody asked for |
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1296
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
