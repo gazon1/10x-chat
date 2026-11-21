@@ -1,6 +1,7 @@
 import type {
   DecisionKind,
   Finding,
+  ReviewContext,
   ReviewImprovements,
   ReviewRun,
   ReviewVerdict,
@@ -148,6 +149,25 @@ function cell(value: string): string {
   // A backslash is escaped before a pipe: the escape of a pipe in a table
   // eats the backslash in front of it, and a name of a path has backslashes.
   return literal(value);
+}
+
+/**
+ * The scope of the review — the files the change touches, by name.
+ *
+ * The format of the repository asks for the changed files of the scope, and a
+ * reader of the report has to know what was judged: a count alone says that
+ * something was reviewed, the names say what. The list is capped — a change of
+ * a thousand files does not become a report of a thousand lines — and the rest
+ * is counted.
+ */
+function scopeOf(context: ReviewContext | undefined): string {
+  if (!context) return 'unknown — the context could not be collected';
+  const files = context.changedFiles;
+  if (files.length === 0) return 'no changed file — the change is empty';
+  const shown = files.slice(0, 20).map((file) => literal(file));
+  const rest = files.length - shown.length;
+  const list = rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+  return `${files.length} changed file(s): ${list} — the diff and the changed files of the bundle`;
 }
 
 /**
@@ -346,9 +366,7 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
       `- Requirements: issue #${requirements.number} of ${literal(requirements.repository)} — ${literal(requirements.title)} — version ${requirements.hash.slice(0, 12)} (${state})`,
     );
   }
-  lines.push(
-    `- Scope: ${context?.changedFiles.length ?? 0} changed file(s) — the diff and the changed files of the bundle`,
-  );
+  lines.push(`- Scope: ${scopeOf(context)}`);
   lines.push('');
   lines.push('## Verdict');
   lines.push(`${verdict} — ${reason}`);

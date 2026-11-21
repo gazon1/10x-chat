@@ -82,6 +82,10 @@ The fork is published under the scoped name `@gazon1/10x-chat`, because the unsc
 10x-chat history --provider gemini --limit 10
 10x-chat status
 10x-chat session <id> --render
+
+# The development workflow of a GitHub Issue (needs the Orca runtime)
+10x-chat workflow start --issue 59
+10x-chat workflow status <id>
 ```
 
 Sessions are saved under `~/.10x-chat/sessions/<id>/`; the response is also printed to stdout, so `> review.md` works.
@@ -100,6 +104,8 @@ Ready-made workflows live next to this file. They are provider-neutral and langu
 | Shared report format | [workflows/report-format.md](workflows/report-format.md) | Both playbooks end in this report shape. |
 
 **The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
+
+**The automated path:** when the work starts from a GitHub Issue and the machine has an Orca runtime, `10x-chat workflow start --issue <n>` runs the whole Helix loop — the Issue, an isolated worktree, a coding agent, the independent review, the findings back to the agent — until the review approves the change or the workflow blocks. `10x-chat workflow status|resume|stop|report` inspects, continues, stops and reports it. It never pushes, never opens a pull request and never merges: the change stays in the worktree for a human. Details: [docs/workflow.md](https://github.com/gazon1/10x-chat/blob/main/docs/workflow.md).
 
 **The reviewers read the repository on GitHub themselves.** Both playbooks hand the model the GitHub coordinates — repository URL, the target (pull request URL or compare URL), commit SHAs — instead of sending files. The pipeline commits and pushes the branch to `origin` first — with the user's word — then asks for the review. `--file` and `--attach` are not used.
 

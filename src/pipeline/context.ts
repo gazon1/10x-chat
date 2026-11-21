@@ -296,7 +296,12 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
   // must be there. A comparison of a commit that `origin` does not have shows
   // nothing, and a review of nothing reads like a clean review. A pull request
   // is on GitHub by its own definition.
-  if (repositoryUrl && prUrl === undefined) {
+  //
+  // A local change is the exception the caller asks for: its head commit is
+  // not on `origin` by definition, and the reviewers read the diff of the
+  // change instead of a page that would show nothing.
+  const local = target.local === true;
+  if (repositoryUrl && prUrl === undefined && !local) {
     for (const ref of [
       { name: baseRef, sha: baseSha },
       { name: headRef, sha: headSha },
@@ -380,13 +385,15 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
 
   // The diff is the fallback of a change that has no page on GitHub: a
   // reviewer that can open the change reads it itself, and a pasted diff only
-  // burns the window of the model — a long one is refused outright.
-  const diffOutput = repositoryUrl
-    ? ''
-    : await git(
-        ['diff', range, '--', ':(top)**', ...secretPathspecs(), ...literalExcludes(inherited)],
-        cwd,
-      );
+  // burns the window of the model — a long one is refused outright. A local
+  // change has no page either, and its diff is the only view of it.
+  const diffOutput =
+    repositoryUrl && !local
+      ? ''
+      : await git(
+          ['diff', range, '--', ':(top)**', ...secretPathspecs(), ...literalExcludes(inherited)],
+          cwd,
+        );
   const diffTruncated = diffOutput.length > MAX_DIFF_CHARS;
   const diff = diffTruncated
     ? `${diffOutput.slice(0, MAX_DIFF_CHARS)}\n\n[the diff was cut here — ${diffOutput.length - MAX_DIFF_CHARS} characters are missing]`
@@ -410,6 +417,7 @@ export async function collectReviewContext(target: ReviewTarget): Promise<Review
     secretFiles,
     diff,
     diffTruncated,
+    ...(local ? { local } : {}),
   };
 }
 

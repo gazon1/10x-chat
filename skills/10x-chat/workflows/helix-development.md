@@ -10,6 +10,18 @@ Use it when the user asks for a change to be built in a repository — feature, 
 - **No files are attached.** No `--file` (inlined into the prompt), no `--attach` (uploaded).
 - The checkpoint must be **on `origin`** before the review: the pipeline commits and pushes the branch (step 6), when the user asked for that publication. **A pull request is not required** — a pushed branch without a PR is reviewed by its base and head SHA, exactly as in the PR-review playbook. If the checkpoint cannot be pushed at all, the independent review does not run: the checkpoint stays open and the report says the review was `UNAVAILABLE`. A provider that cannot open the repository must say so; that role is then `UNAVAILABLE`, not silently skipped.
 
+## The automated path: `10x-chat workflow`
+
+The steps below are the manual playbook. When the work starts from **a GitHub Issue** and the repository has an **Orca** runtime, the same loop can run itself:
+
+```bash
+10x-chat workflow start --issue 59
+```
+
+It reads the Issue, creates an isolated worktree for it, starts a coding agent in it, reviews the change with the review pipeline, sends the findings back to the agent and repeats — until the review approves the change or the workflow blocks. `10x-chat workflow status|resume|stop|report` inspect it, continue it, stop it and print its report.
+
+Use the automated path when the task is an Issue of the repository and the environment has Orca; use the manual playbook below when the task is not an Issue, when the agent is not the one of Orca, or when the user wants to steer every checkpoint. **The automated path never publishes**: it does not push, does not open a pull request, does not merge and does not delete the worktree — the change stays for a human, and the approval of the model is not the approval of a human. Details: [docs/workflow.md](https://github.com/gazon1/10x-chat/blob/main/docs/workflow.md).
+
 ## 1. Understand before touching
 
 - Read the target repository's own instructions: `AGENTS.md`, `CLAUDE.md`, `README`, `CONTRIBUTING`, and the CI configuration. They define the conventions, the commands and the definition of done. They outrank your defaults.

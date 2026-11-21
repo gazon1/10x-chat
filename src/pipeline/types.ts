@@ -153,6 +153,14 @@ export interface ReviewTarget {
   base?: string;
   /** The head of the comparison — `HEAD` when absent. */
   head?: string;
+  /**
+   * The change is local: its head commit is not on `origin`.
+   *
+   * A change that was never pushed has no page on GitHub, so the reviewers
+   * read its diff instead of a comparison that would show nothing. It is the
+   * way a worktree of a workflow is reviewed before it is pushed.
+   */
+  local?: boolean;
 }
 
 /** The context of a review: the coordinates and the change itself. */
@@ -216,6 +224,12 @@ export interface ReviewContext {
   diff: string;
   /** Whether the diff was cut — the bound of the fallback. */
   diffTruncated: boolean;
+  /**
+   * The change is local — its head commit is not on `origin`.
+   *
+   * Such a change has no page on GitHub: the reviewers read the diff.
+   */
+  local?: boolean;
 }
 
 /** The verdict of a review — the two the report format knows. */

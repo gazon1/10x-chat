@@ -42,6 +42,17 @@ export function getRequirementsDir(): string {
   return path.join(getAppDir(), 'requirements');
 }
 
+/** Workflows root: ~/.10x-chat/workflows */
+export function getWorkflowsDir(): string {
+  return path.join(getAppDir(), 'workflows');
+}
+
+/** Workflow directory of a run: ~/.10x-chat/workflows/<id> */
+export function getWorkflowDir(workflowId: string): string {
+  assertStoreId(workflowId, 'Workflow id');
+  return path.join(getWorkflowsDir(), workflowId);
+}
+
 /**
  * The identifier of a run — a single name, not a path.
  *
@@ -52,6 +63,13 @@ export function getRequirementsDir(): string {
 function assertReviewId(runId: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId === '.' || runId === '..') {
     throw new Error('Review id must contain only letters, numbers, dots, dashes, or underscores');
+  }
+}
+
+/** The identifier of a store of the app — a single name, not a path. */
+function assertStoreId(id: string, what: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || id === '.' || id === '..') {
+    throw new Error(`${what} must contain only letters, numbers, dots, dashes, or underscores`);
   }
 }
 
