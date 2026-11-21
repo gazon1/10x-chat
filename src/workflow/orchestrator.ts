@@ -141,6 +141,23 @@ const STOPPED =
   /(stop|cancel|terminat|abort|settled|succeed|success|complete|done|finish|fail|escalat)/i;
 
 /**
+ * The steps of the review that judge the change — all of them must have run.
+ *
+ * A review that did not run a step has not judged the change: the absence of
+ * a failure is not the evidence of a judgment.
+ */
+const MANDATORY_REVIEW_STEPS = [
+  'collect-context',
+  'build-bundle',
+  'review-correctness',
+  'review-architecture',
+  'review-tests',
+  'verify-findings',
+  'normalize-findings',
+  'check-requirements',
+];
+
+/**
  * The lock of a workflow — one process at a time works on it.
  *
  * Two processes that resume the same workflow would otherwise both see an
@@ -192,6 +209,10 @@ async function withStateLock<T>(id: string, action: () => Promise<T>): Promise<T
  * elsewhere must not be overwritten by a run that still holds an older copy of
  * the record. The check and the write happen under the lock of the state, so
  * that no other writer can slip in between them.
+ *
+ * The comparison is the revision of the record, not only its state: two
+ * processes can hold the same state and still be two processes — the one that
+ * writes last would lose the identifiers of the other one.
  */
 async function writeRecord(
   record: WorkflowRecord,
@@ -200,18 +221,75 @@ async function writeRecord(
 ): Promise<void> {
   await withStateLock(record.id, async () => {
     const stored = await loadWorkflow(record.id).catch(() => undefined);
-    if (stored && stored.state !== record.state) {
-      throw new WorkflowError(
-        `The workflow ${record.id} is '${stored.state}' now — another process moved it. This run stops here.`,
-      );
+    if (stored) {
+      if (stored.state !== record.state) {
+        throw new WorkflowError(
+          `The workflow ${record.id} is '${stored.state}' now — another process moved it. This run stops here.`,
+        );
+      }
+      if ((stored.revision ?? 0) !== (record.revision ?? 0)) {
+        throw new WorkflowError(
+          `The workflow ${record.id} was written by another process — this run stops here.`,
+        );
+      }
     }
     if (next !== undefined) {
       assertTransition(record.state, next);
       record.state = next;
     }
     record.updatedAt = ctx.now().toISOString();
+    record.revision = (record.revision ?? 0) + 1;
     await saveWorkflow(record);
   });
+}
+
+/**
+ * Merge the record of the process with the record on the disk.
+ *
+ * The record on the disk is the newest one — another process wrote it — but the
+ * process may know more about the iteration it was working on: a step that
+ * failed after it opened an iteration must not lose it.
+ */
+function mergeRecords(stored: WorkflowRecord, mine: WorkflowRecord): WorkflowRecord {
+  const merged: WorkflowRecord = { ...stored };
+  const storedIteration = stored.iterations[stored.iterations.length - 1];
+  const mineIteration = mine.iterations[mine.iterations.length - 1];
+  const richer =
+    mine.iterations.length > stored.iterations.length ||
+    (mine.iterations.length === stored.iterations.length &&
+      (mineIteration?.review !== undefined || mineIteration?.headSha !== undefined) &&
+      storedIteration?.review === undefined &&
+      storedIteration?.headSha === undefined);
+  if (richer) merged.iterations = mine.iterations;
+  return merged;
+}
+
+/**
+ * Block the workflow — a human has to look at it.
+ *
+ * The blocking is a read and a write of its own: the record on the disk is
+ * read again under the lock of the state, so that a workflow that is blocked
+ * keeps the identifiers of the other process — the Run, the Dispatch and the
+ * worktree — and does not lose them to an older copy of the record.
+ */
+async function block(record: WorkflowRecord, reason: string, ctx: WorkflowContext): Promise<void> {
+  await withStateLock(record.id, async () => {
+    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    const target = stored ? mergeRecords(stored, record) : record;
+    assertTransition(target.state, 'blocked');
+    target.state = 'blocked';
+    target.blocked = reason;
+    target.updatedAt = ctx.now().toISOString();
+    target.revision = (target.revision ?? 0) + 1;
+    await saveWorkflow(target);
+    Object.assign(record, target);
+  });
+  await appendEvent(record.id, {
+    at: record.updatedAt,
+    state: 'blocked',
+    detail: reason,
+  });
+  await checkpoint(record, ctx, reason);
 }
 
 /** Write the record down without moving it. */
@@ -331,12 +409,6 @@ async function commentOf(
   return worktrees.find((worktree) => worktree.id === worktreeId)?.comment;
 }
 
-/** Block the workflow — a human has to look at it. */
-async function block(record: WorkflowRecord, reason: string, ctx: WorkflowContext): Promise<void> {
-  record.blocked = reason;
-  await move(record, 'blocked', reason, ctx);
-}
-
 /** The last iteration of a workflow. */
 function lastIteration(record: WorkflowRecord): WorkflowIteration {
   const iteration = record.iterations[record.iterations.length - 1];
@@ -390,11 +462,35 @@ function requirementsOf(
 }
 
 /** The repository of Orca that matches the repository of the checkout. */
-function orcaRepoOf(
+/**
+ * The registration of Orca that belongs to the checkout of the workflow.
+ *
+ * The same repository may be registered twice — a clone and a mirror of it. The
+ * first registration of the list is not the clone of the user, and a worktree
+ * of the wrong clone is a change of somebody else's checkout. The registration
+ * of the checkout wins; when there is none, the ambiguity is a refusal and not
+ * a guess.
+ */
+function resolveRepo(
   repos: { id: string; path: string; canonicalKey?: string }[],
   repository: string,
-) {
-  return repos.find((repo) => repo.canonicalKey?.endsWith(`/${repository}`));
+  checkoutRoot: string,
+): { id: string; path: string; canonicalKey?: string } | undefined {
+  const matches = repos.filter((repo) => repo.canonicalKey?.endsWith(`/${repository}`));
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  const root = checkoutRoot === '' ? '' : path.resolve(checkoutRoot);
+  const own = matches.find((repo) => {
+    if (root === '') return false;
+    const candidate = path.resolve(repo.path);
+    return candidate === root || root.startsWith(`${candidate}${path.sep}`);
+  });
+  if (own) return own;
+  throw new WorkflowError(
+    `The repository ${repository} is registered in Orca at several paths: ${matches
+      .map((repo) => repo.path)
+      .join(', ')} — the workflow does not guess which one is the checkout of the user.`,
+  );
 }
 
 /** The brief of the agent — the requirements of the Issue and nothing else. */
@@ -458,7 +554,9 @@ export function buildFixRequest(record: WorkflowRecord, iteration: WorkflowItera
     return `- [${finding.severity}] ${finding.id} ${finding.title}${where}\n  ${finding.problem}\n  Impact: ${finding.impact}${evidence}${fix}`;
   });
   const fence = fenceFor(lines.join('\n'));
-  const branch = record.worktree?.branch ? `\nThe branch of this task: ${record.worktree.branch}.` : '';
+  const branch = record.worktree?.branch
+    ? `\nThe branch of this task: ${record.worktree.branch}.`
+    : '';
   const base = record.baseRef ? `\nIt is based on ${record.baseRef}.` : '';
   return `# The review of your change
 
@@ -667,7 +765,7 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
     }
   }
   const repos = await ctx.orca.repoList();
-  const repo = orcaRepoOf(repos, record.repository);
+  const repo = resolveRepo(repos, record.repository, await ctx.git.root(ctx.cwd));
   if (!repo) {
     throw new WorkflowError(
       `The repository ${record.repository} is not registered in Orca — register it with 'orca repo add --path <path>'.`,
@@ -683,17 +781,24 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   // make a second worktree of the same Issue — and it is never a reason to
   // take the worktree of somebody else.
   const existing = await ctx.orca.worktreeList(repo.id);
-  const candidate = existing.find(
-    (worktree) => worktree.name === name || sameBranch(worktree.branch, branch),
-  );
+  const candidate = existing.find((worktree) => sameBranch(worktree.branch, branch));
   let worktree: OrcaWorktree;
   let adopted = false;
   if (candidate) {
-    const refusal = refusalOf(candidate, record, repo.path, baseSha);
+    const refusal = refusalOf(candidate, record, repo.path, baseSha, branch);
     if (refusal) throw new WorkflowError(refusal);
     worktree = candidate;
     adopted = true;
   } else {
+    // The name of the worktree belongs to the Issue: a worktree of that name on
+    // another branch is not the worktree of this workflow, and a second
+    // worktree of the same name would collide with it.
+    const namesake = existing.find((candidateWorktree) => candidateWorktree.name === name);
+    if (namesake) {
+      throw new WorkflowError(
+        `The worktree ${namesake.path} is named ${name} and works on the branch ${namesake.branch ?? 'of another branch'} — the workflow needs the branch ${branch}.`,
+      );
+    }
     worktree = await ctx.orca.worktreeCreate({
       repoId: repo.id,
       name,
@@ -752,9 +857,13 @@ function refusalOf(
   record: WorkflowRecord,
   repoPath: string,
   baseSha: string,
+  branch: string,
 ): string | undefined {
   if (candidate.isMainWorktree || samePath(candidate.path, repoPath)) {
     return `The worktree ${candidate.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
+  }
+  if (candidate.branch && !sameBranch(candidate.branch, branch)) {
+    return `The worktree ${candidate.path} works on the branch ${candidate.branch} — the workflow of this Issue works on the branch ${branch}.`;
   }
   const owner = ownerOf(candidate.comment);
   if (owner && owner !== record.id) {
@@ -810,13 +919,37 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     return;
   }
 
-  const worker = await ctx.orca.workerStart({
-    runId,
-    spec: buildSpec(record),
-    worktree: `path:${worktree.path}`,
-    agent: record.agent,
-    taskTitle: `Issue #${record.issue.number}: ${record.issue.title}`,
-  });
+  let worker: OrcaWorker;
+  try {
+    worker = await ctx.orca.workerStart({
+      runId,
+      spec: buildSpec(record),
+      worktree: `path:${worktree.path}`,
+      agent: record.agent,
+      taskTitle: `Issue #${record.issue.number}: ${record.issue.title}`,
+    });
+  } catch (error) {
+    // The answer of the start command was lost — the worker may be there all
+    // the same. A second agent would work in the same worktree, so the Run is
+    // asked before anything else: the worker that is already there is adopted.
+    const reason = error instanceof Error ? error.message : String(error);
+    const started = await ctx.orca.workerList(runId).catch(() => []);
+    const lost = started[0];
+    if (!lost) throw error;
+    record.orca = {
+      repoId: record.orca.repoId,
+      runId,
+      dispatchId: lost.dispatchId,
+      ...(lost.taskId ? { taskId: lost.taskId } : {}),
+    };
+    await move(
+      record,
+      'implementation-running',
+      `the answer of the start command was lost (${reason}) — the worker ${lost.dispatchId} that was already running was adopted`,
+      ctx,
+    );
+    return;
+  }
   record.orca = {
     repoId: record.orca.repoId,
     runId,
@@ -897,7 +1030,10 @@ async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promis
   const review = ctx.review ?? ((request: WorkflowReviewRequest) => defaultReview(ctx, request));
   const run = await review({
     cwd: worktree.path,
-    base: worktree.baseRef,
+    // The base is the commit the worktree started from — not the ref it was
+    // created from: a ref that moved under the workflow is a comparison of
+    // another change.
+    base: worktree.baseSha,
     issue: record.issue.number,
     runId,
     runDir,
@@ -920,7 +1056,20 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
   if (!review) throw new WorkflowError('The iteration has no review.');
 
   // Every mandatory step of the review must have passed: a review that did
-  // not finish has not judged the change.
+  // not finish has not judged the change. A step that is missing is a step
+  // that did not run — the absence of a failure is not the evidence of a
+  // judgment.
+  const missing = MANDATORY_REVIEW_STEPS.filter(
+    (id) => !review.steps.some((step) => step.id === id),
+  );
+  if (missing.length > 0) {
+    await block(
+      record,
+      `The review is incomplete — the step ${missing.join(', ')} is missing.`,
+      ctx,
+    );
+    return;
+  }
   const failed = review.steps.filter((step) => step.status !== 'passed');
   const requirementsStep = review.steps.find((step) => step.id === 'check-requirements');
   if (requirementsStep && requirementsStep.status !== 'passed') {
@@ -935,6 +1084,18 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
     await block(
       record,
       `The review is incomplete — ${failed.map((step) => step.id).join(', ')} did not pass.`,
+      ctx,
+    );
+    return;
+  }
+
+  // The review must have judged the change against the commit the workflow
+  // started from: a base that moved under the workflow is a comparison of
+  // another change.
+  if (review.baseSha !== worktree.baseSha) {
+    await block(
+      record,
+      `The review compared the change with ${review.baseSha.slice(0, 7) || 'an unknown commit'} — the workflow started from ${worktree.baseSha.slice(0, 7)}.`,
       ctx,
     );
     return;
@@ -1214,8 +1375,38 @@ export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<Wo
       return record;
     }
   }
-  await move(record, 'cancelled', 'the workflow was stopped', ctx);
+  await cancelOnDisk(record, ctx);
   return record;
+}
+
+/**
+ * Cancel the workflow — the record on the disk is read again under the lock.
+ *
+ * The stop does not hold the lock of the run: a workflow must be stoppable
+ * while another process works on it. The record on the disk is the truth, so
+ * the cancellation is applied to the record that is there now — the Run, the
+ * Dispatch and the worktree of the other process are kept, and a stop never
+ * overwrites them with an older copy of the record.
+ */
+async function cancelOnDisk(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
+  await withStateLock(record.id, async () => {
+    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    const target = stored ? mergeRecords(stored, record) : record;
+    if (!isTerminal(target.state)) {
+      assertTransition(target.state, 'cancelled');
+      target.state = 'cancelled';
+      target.updatedAt = ctx.now().toISOString();
+      target.revision = (target.revision ?? 0) + 1;
+      await saveWorkflow(target);
+    }
+    Object.assign(record, target);
+  });
+  await appendEvent(record.id, {
+    at: record.updatedAt,
+    state: record.state,
+    detail: 'the workflow was stopped',
+  });
+  await checkpoint(record, ctx, 'the workflow was stopped');
 }
 
 /** Write the report of a workflow — it belongs to its owner alone. */

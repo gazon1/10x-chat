@@ -15,6 +15,8 @@ export interface WorkflowGit {
   revParse(cwd: string, ref: string): Promise<string>;
   /** The branch the worktrees are created from — the default branch of origin. */
   defaultBaseRef(cwd: string): Promise<string>;
+  /** The root of the checkout — empty when the directory is not a repository. */
+  root(cwd: string): Promise<string>;
 }
 
 /** Run git and return what it says. */
@@ -70,5 +72,9 @@ export const nodeWorkflowGit: WorkflowGit = {
         (candidates.length > 0 ? ` and origin has ${candidates.length} branches` : '') +
         '. Name the ref yourself: 10x-chat workflow start --base <ref>.',
     );
+  },
+
+  async root(cwd) {
+    return git(['rev-parse', '--show-toplevel'], cwd).catch(() => '');
   },
 };

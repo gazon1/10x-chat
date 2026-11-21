@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { saveWorkflow } from '../src/workflow/store.js';
+import { loadWorkflow, saveWorkflow } from '../src/workflow/store.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
 import { runCli } from './e2e/helpers.js';
 
@@ -92,5 +92,67 @@ describe('the command of the workflow (CLI)', () => {
     expect(report.code).toBe(0);
     expect(report.stdout).toContain('# Development workflow — issue #59');
     expect(report.stdout).toContain('/wt/issue-59');
+  });
+
+  it('refuses an Issue that is not a number', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+
+    const res = await runCli(['workflow', 'start', '--issue', 'fifty-nine'], {
+      TEN_X_CHAT_HOME: home,
+    });
+
+    expect(res.code).toBe(1);
+    expect(res.output).toContain('Invalid --issue value');
+  });
+
+  it('stops a workflow that waits for its agent', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const original = process.env.TEN_X_CHAT_HOME;
+    process.env.TEN_X_CHAT_HOME = home;
+    try {
+      const record = aRecord('issue-59-20260101000000-abcd1234');
+      await saveWorkflow({ ...record, state: 'implementation-running' });
+
+      const res = await runCli(['workflow', 'stop', 'issue-59-20260101000000-abcd1234'], {
+        TEN_X_CHAT_HOME: home,
+      });
+
+      expect(res.code).toBe(0);
+      expect(res.stdout).toContain('issue-59-20260101000000-abcd1234: cancelled');
+      // The state of the workflow is written down.
+      const stored = await loadWorkflow('issue-59-20260101000000-abcd1234');
+      expect(stored.state).toBe('cancelled');
+    } finally {
+      if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
+      else process.env.TEN_X_CHAT_HOME = original;
+    }
+  });
+
+  it('reports that a workflow cannot be continued', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+
+    const res = await runCli(['workflow', 'resume', 'issue-59-nothing'], {
+      TEN_X_CHAT_HOME: home,
+    });
+
+    expect(res.code).toBe(1);
+    expect(res.output).toContain('Workflow not found');
+  });
+
+  it('refuses to start a workflow of a checkout that is not a repository', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const cwd = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-cwd-'));
+
+    const res = await runCli(
+      ['workflow', 'start', '--issue', '59'],
+      {
+        TEN_X_CHAT_HOME: home,
+      },
+      undefined,
+      { cwd },
+    );
+
+    expect(res.code).toBe(1);
+    expect(res.output).toContain('no origin remote');
   });
 });

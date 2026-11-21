@@ -330,22 +330,27 @@ human. Orca is not required for any other command.
 | The stop | **verified (unit)** | `stop` ends the workflow in `cancelled` — but only when the state of the worker confirms that it stopped; a worker that cannot be stopped leaves the workflow `blocked` with the reason |
 | The lock of the workflow | **verified (unit)** | `start` and `resume` hold the lock of the workflow; two processes that resume the same workflow do not start two agents, and a run that finds a different state on the disk stops instead of overwriting it |
 | The worktree | **verified (unit)** | a worktree of the same Issue that is already there is adopted, never created a second time; the ref of the worktree is the one the user named (`--base`) |
-| The ownership of the worktree | **verified (unit)** | a worktree is adopted only when its ownership is proved — the comment of the workflow, or an empty comment and a head that is still the base; the checkout of the user, a worktree of another workflow, a worktree with uncommitted changes and a worktree with a foreign comment are refused with an actionable reason |
+| The ownership of the worktree | **verified (unit)** | a worktree is adopted only when its ownership is proved — the branch of the workflow, the comment of the workflow, or an empty comment and a head that is still the base; the checkout of the user, a worktree of another branch, a worktree of another workflow, a worktree with uncommitted changes and a worktree with a foreign comment are refused with an actionable reason |
 | The base ref | **verified (unit)** | the base is never guessed: several branches on `origin` and no `origin/HEAD` is a refusal to name `--base`; a single branch of `origin` is the only case where the base is known |
 | One workflow per Issue | **verified (unit)** | a second workflow of the same Issue is refused while the first one is active |
 | The success of the agent | **verified (unit)** | only a structural result counts (`outcome` of the Task, or a `worker_done` in the mail); a terminal state without a result is `unknown` and blocks the workflow |
 | The checkpoints | **verified (unit)** | every iteration writes a checkpoint comment into the Orca worktree; the comment of the user is read first and kept, and a failed comment is an event of the run, not a broken workflow |
 | The report of the workflow | **verified (unit)** | the report carries the worktree, the base ref, the full SHAs, the report of the agent, the remaining risks and the checks that were not available |
+| The base of the review | **verified (unit)** | the change is compared with the commit the worktree started from, not with a ref that may have moved; a review that judged another base blocks the workflow |
+| The mandatory steps of the review | **verified (unit)** | a review that did not run a mandatory step blocks the workflow — the absence of a failure is not the evidence of a judgment |
+| The lost answer of the start command | **verified (unit)** | the Run is asked when the answer is lost: the worker that is already there is adopted and no second agent is started |
+| The registration of the repository | **verified (unit)** | when the checkout is registered in Orca twice, the registration that is the checkout wins; the ambiguity without one is refused and never guessed |
+| The privacy of the store | **verified (unit)** | the privacy is enforced before every read, a link in the store is refused and the record is opened without following a link |
 | The preflight | **verified (unit)** | an unauthenticated `gh`, a checkout without a repository, a runtime that is not ready, a runtime that cannot orchestrate and a repository that is not registered in Orca each end the workflow before a worktree is created |
 | The store | **verified (unit)** | `tests/workflow.test.ts` — the record survives a round trip, the directory is `0700` and the file `0600`, a foreign version is refused, `listWorkflows` finds the workflows |
 | The transitions | **verified (unit)** | an illegal transition is refused; `blocked` and `cancelled` are terminal |
 | The Orca adapter | **verified (unit)** | `tests/orca-client.test.ts` — a ready and a not-ready runtime, an answer that is not JSON, an `ok:false` answer, a non-zero exit code with a valid JSON answer, the repo list, the worktree list, the worker list, a missing dispatch id; the body is passed as an argument, never through a shell |
-| The CLI | **verified (unit + e2e)** | `tests/workflow-cli.test.ts` and `tests/e2e/cli.e2e.ts` — the help lists the steps, an unknown workflow fails with exit 1, a stored workflow is shown by `status` and `report` |
+| The CLI | **verified (unit + e2e)** | `tests/workflow-cli.test.ts` and `tests/e2e/cli.e2e.ts` — the help lists the steps, an unknown workflow fails with exit 1, a stored workflow is shown by `status` and `report`, an Issue that is not a number is refused, the `stop` of a workflow that waits for its agent cancels it, the `resume` of a workflow that is not there fails and the `start` of a checkout that is not a repository is refused |
 | The review of a local change | **verified (unit)** | `src/pipeline/` — the worktree branch is never pushed, so the review falls back to the diff of the local change (`target.local = true`) instead of the page of a pull request |
 | A real Orca runtime | **not verified against a site** | the adapter was exercised against the real `orca` CLI of the machine during the development (status, repo list, worktree list, orchestration), but no workflow was run end to end against a real coding agent |
 | A real GitHub Issue | **not verified against a site** | the Issue is read through `gh`; the flow was not run against a live Issue |
 
-The check set of that change: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22
+The check set of that change: typecheck, lint, knip, test (63 files / **1154 tests**), e2e (22
 CLI scenarios, the 10 live provider scenarios skipped) and build — all pass.
 
 ## 13. The review of pull request #74
@@ -369,7 +374,7 @@ The findings that the verification confirmed were fixed in the change:
 The findings that the verification did not confirm are not claims of this document: they were the
 reading of the reviewers, and they are checked by the tests above.
 
-The check set of that round: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22 CLI
+The check set of that round: typecheck, lint, knip, test (63 files / **1130 tests**), e2e (22 CLI
 scenarios, the 10 live provider scenarios skipped) and build — all pass.
 
 ### The second round
@@ -392,4 +397,25 @@ were checked against the source and answered one by one:
 | the comment of the worktree was never written, and the comment of the user was never read before the update | every iteration writes a checkpoint comment into the Orca worktree: the comment of the user is read first and kept, and a failed comment is an event of the run, not a broken workflow |
 
 The check set of that round: typecheck, lint, knip, test (63 files / **1141 tests**), e2e (22 CLI
+scenarios, the 10 live provider scenarios skipped) and build — all pass.
+
+### The third round
+
+The third round of the same pipeline ran completely — every step of it passed — and returned
+**REQUEST CHANGES** with eight findings: six of the severity MAJOR and two MINOR. The verification
+confirmed none of them: they are the reading of the reviewers, and each of them was answered
+against the source:
+
+| Finding of the third round | The answer |
+|---|---|
+| the review compared the change with the ref of the base, which may have moved | the review is compared with the commit the worktree started from (`worktree.baseSha`), and the workflow blocks when the review judged another base |
+| the adoption of a worktree did not check the branch | the branch is part of the proof of the ownership: a worktree of another branch is refused, and a worktree of the name of the Issue on another branch is refused too |
+| the comparison of the record was the state alone, so two processes in the same state could both write | the record carries the revision of its write: the comparison is the revision and the state, and a run that finds a record another process wrote stops instead of overwriting it |
+| the registration of the repository in Orca was the first of the list | the registration that is the checkout of the user wins; when there is none, the ambiguity is refused and never guessed |
+| the store of the workflows was not checked before a read | the privacy is enforced before every read, a link in the store is refused, and the file is opened without following a link |
+| there was no test for a lost answer of the start command of the worker | the Run is asked when the answer is lost: the worker that is already there is adopted, and the test says that no second agent is started |
+| the review was accepted when a mandatory step was missing | every mandatory step must have run: a step that is missing blocks the workflow — the absence of a failure is not the evidence of a judgment |
+| the CLI tests did not run `start`, `resume` and `stop` | the command of the workflow is driven end to end now: the Issue that is not a number, the checkout that is not a repository, the `stop` of a workflow that waits for its agent and the `resume` of a workflow that is not there |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1154 tests**), e2e (22 CLI
 scenarios, the 10 live provider scenarios skipped) and build — all pass.

@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
   appendFile,
   chmod,
+  lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -70,6 +73,55 @@ async function privateDir(dir: string): Promise<void> {
 }
 
 /**
+ * Refuse a link in the store of the workflows.
+ *
+ * `chmod()` and `readFile()` follow a link: a link in the store would take the
+ * read outside of it, into a file of somebody else.
+ */
+async function refuseLinks(file: string): Promise<void> {
+  const root = getWorkflowsDir();
+  const parts = path.relative(root, file).split(path.sep);
+  let current = root;
+  for (const [index, part] of ['', ...parts].entries()) {
+    if (part !== '') current = path.join(current, part);
+    const info = await lstat(current).catch(() => undefined);
+    // A part that is not there yet is a part that is still to be created.
+    if (!info) continue;
+    if (info.isSymbolicLink()) {
+      throw new Error(`the store of the workflows must not hold a symbolic link: ${current}`);
+    }
+    const last = index === parts.length;
+    if (last ? !info.isFile() : !info.isDirectory()) {
+      throw new Error(
+        `the store of the workflows must hold ${last ? 'a file' : 'a directory'}: ${current}`,
+      );
+    }
+  }
+}
+
+/**
+ * Keep the store private — before every read, not only after every write.
+ *
+ * A store that was restored with wide permissions, or a record that was
+ * replaced by hand, is a store that holds the evidence of a run for everybody:
+ * the privacy of the store is enforced on the way in, not only on the way out.
+ */
+async function enforcePrivacy(file: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  const dir = path.dirname(file);
+  try {
+    await chmod(getWorkflowsDir(), 0o700);
+    await chmod(path.dirname(dir), 0o700);
+    await chmod(dir, 0o700);
+    await chmod(file, 0o600);
+  } catch (error) {
+    // A store that is not there yet holds no record: there is nothing to keep
+    // private.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+/**
  * Whether the value is a record of a workflow.
  *
  * The whole record is checked: a record that lost a field is not a record,
@@ -121,7 +173,19 @@ export async function loadWorkflow(id: string): Promise<WorkflowRecord> {
   const file = recordPath(id);
   let content: string;
   try {
-    content = await readFile(file, 'utf-8');
+    await refuseLinks(file);
+    await enforcePrivacy(file);
+    // The file is opened without following a link and without waiting for a
+    // writer: the record belongs to its owner alone.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      content = await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`Workflow not found: ${id}`);

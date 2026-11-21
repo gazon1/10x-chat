@@ -46,14 +46,24 @@ never leaves a lock behind.
 The lock is held by `start` and by `resume` for the whole run of the loop. It is
 **not** held by `stop`: a workflow must be stoppable while another process is
 working on it. The protection against a lost update is the other half — the
-record is written under the **lock of the state**, and the check of the state on
+record is written under the **lock of the state**, and the check of the record on
 the disk and the write of the record happen together: a run that finds a
-different state stops instead of overwriting the work of the other process.
+different state, or a record that another process wrote in the meantime, stops
+instead of overwriting the work of the other process. The record carries a
+**revision** — the number of its write — because two processes can hold the same
+state and still be two processes.
+
+`stop` and the blocking of a failed step are the exception: they read the record
+on the disk again under the lock of the state and change the state of that
+record. The identifiers of the other process — the Run, the Dispatch and the
+worktree — are never lost to an older copy of the record.
 
 The worktrees of the repository are read before a new one is created: a worktree
 of the same Issue that is already there is **adopted** — but only when it is
 provably the worktree of this workflow. The same holds for the agent: a worker
-that is already there is adopted too.
+that is already there is adopted too — even when the answer of the command that
+started it was lost: the Run is asked, and the worker that is there is adopted
+instead of a second one.
 
 ## The worktree belongs to one workflow
 
@@ -65,6 +75,7 @@ proved to be ours:
 | The worktree that is already there | What the workflow does |
 |---|---|
 | the checkout of the user (the main worktree) | refuses it — the agent never works in the checkout of the user |
+| a worktree of another branch | refuses it — the name of the Issue is not the proof of the ownership |
 | the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout |
 | a worktree with a comment of somebody else | refuses it — the workflow does not take a worktree it cannot prove |
 | a worktree that already carries changes | refuses it — the work of somebody else is not taken over |
@@ -76,6 +87,12 @@ lost answer is reconciled.
 **One workflow at a time per Issue.** A second `start` of the same Issue is
 refused while the first one runs: two workflows of one Issue would share the
 worktree, and two agents would work in the same checkout.
+
+**One registration of the repository in Orca.** The repository of the checkout may
+be registered in Orca more than once — a clone and a mirror of it. The
+registration that is the checkout of the user wins; when there is none, the
+ambiguity is refused and never guessed: a worktree of the wrong clone is a
+change of somebody else's checkout.
 
 ## The commands
 
@@ -128,11 +145,15 @@ worktree, and two agents would work in the same checkout.
 
 The workflow reports `completed` only when **all** of these hold:
 
-1. every mandatory step of the review passed;
+1. every mandatory step of the review ran and passed — a step that is missing is
+   a step that did not run, and the absence of a failure is not the evidence of a
+   judgment;
 2. the verdict of the review is `APPROVE`;
 3. the head of the worktree did not move while the review ran — the review
    judged the commit that is there now;
-4. the Issue is still the version the workflow started with — a requirement
+4. the review compared the change with the commit the worktree started from — a
+   base ref that moved under the workflow is a comparison of another change;
+5. the Issue is still the version the workflow started with — a requirement
    that changed since is a requirement nobody judged.
 
 Anything else ends in `blocked` with the reason. **An approval of the model is
@@ -166,7 +187,10 @@ and nothing is published.
 
 The directory is private (`0700`) and the files belong to their owner alone
 (`0600`). The record is written atomically — a workflow that was interrupted
-leaves a readable record behind, never a half-written one.
+leaves a readable record behind, never a half-written one. The privacy is
+enforced before every read and not only after every write, and a link in the
+store is refused: `readFile()` follows a link, and a link in the store would
+take the read outside of it.
 
 The requirements of the Issue are not stored twice: the snapshot of the
 [review pipeline](review-pipeline.md) is reused, and the `check-requirements`
@@ -183,6 +207,8 @@ step of the review is the gate that says that the Issue did not drift.
 | The Issue changed | The workflow blocks — the change was judged against older requirements. |
 | The agent could not be stopped | The workflow blocks — the agent may still work in the worktree. |
 | Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
+| Another process wrote the record | The run stops without a write — the revision of the record is the truth. `stop` merges with the record that is there instead. |
+| The answer of the start command was lost | The Run is asked: the worker that is already there is adopted — a second agent would work in the same worktree. |
 
 ## The seams
 

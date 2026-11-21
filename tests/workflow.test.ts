@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -81,6 +81,10 @@ class FakeOrca implements OrcaApi {
   onWorkerShow?: () => void;
   /** What the runtime answers when the worker is stopped. */
   stopError?: Error;
+  /** The answer of the start command was lost — the worker is there all the same. */
+  workerStartError?: Error;
+  /** The worker that the lost answer started. */
+  lostWorker?: OrcaWorker;
 
   /** What the mailbox answers when the findings do not arrive. */
   sendError?: Error;
@@ -123,6 +127,11 @@ class FakeOrca implements OrcaApi {
 
   async workerStart(options: { spec: string; worktree: string }) {
     this.started.push({ spec: options.spec, worktree: options.worktree });
+    if (this.workerStartError) {
+      // The runtime started the worker and the answer never came.
+      if (this.lostWorker) this.workers.push(this.lostWorker);
+      throw this.workerStartError;
+    }
     const worker = { dispatchId: 'dispatch-1', taskId: 'task-1', state: 'working' };
     // The runtime knows the worker — a workflow that starts a second one is
     // visible to the next run.
@@ -168,6 +177,8 @@ class FakeGit implements WorkflowGit {
   repositoryName = 'gazon1/10x-chat';
   /** The base ref is unknown — the git of the checkout cannot tell. */
   baseRefError?: Error;
+  /** The root of the checkout — the clone of the user. */
+  rootPath = '/repo';
 
   async repository() {
     return this.repositoryName;
@@ -180,6 +191,10 @@ class FakeGit implements WorkflowGit {
   async defaultBaseRef() {
     if (this.baseRefError) throw this.baseRefError;
     return 'main';
+  }
+
+  async root() {
+    return this.rootPath;
   }
 }
 
@@ -207,13 +222,18 @@ interface Verdict {
   reason: string;
   steps?: StepOutcome[];
   findings?: Finding[];
+  /** The commit the review compared the change with. */
+  baseSha?: string;
 }
 
 const PASSED_STEPS: StepOutcome[] = [
   { id: 'collect-context', status: 'passed' },
   { id: 'build-bundle', status: 'passed' },
   { id: 'review-correctness', status: 'passed' },
+  { id: 'review-architecture', status: 'passed' },
+  { id: 'review-tests', status: 'passed' },
   { id: 'verify-findings', status: 'passed' },
+  { id: 'normalize-findings', status: 'passed' },
   { id: 'check-requirements', status: 'passed' },
   { id: 'update-requirements', status: 'passed' },
 ];
@@ -231,7 +251,7 @@ function fakeReview(git: FakeGit, verdicts: Verdict[]) {
         repoRoot: request.cwd,
         repository: 'gazon1/10x-chat',
         baseRef: request.base,
-        baseSha: 'base-sha',
+        baseSha: next.baseSha ?? 'base-sha',
         headRef: 'HEAD',
         headSha: git.head,
         changedFiles: ['src/workflow/orchestrator.ts'],
@@ -990,6 +1010,196 @@ describe('the development workflow', () => {
     expect(record.iterations[0]?.review?.verdict).toBe('REQUEST CHANGES');
     expect(seen).toHaveLength(1);
   });
+
+  it('never adopts a worktree of another branch', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // A worktree of the name of the Issue, but of another branch: the name is
+    // not the proof of the ownership.
+    orca.worktrees = [
+      {
+        id: 'wt-other',
+        path: '/wt/other',
+        name: 'issue-59',
+        branch: 'feature/other',
+        head: 'base-sha',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('the workflow needs the branch 10x-chat/issue-59');
+
+    // A second worktree of the same name would collide with the first one.
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('reviews the change against the commit the worktree started from', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The base of the review is the commit of the worktree, not the ref it was
+    // created from: a ref that moves is a comparison of another change.
+    expect(seen[0]?.base).toBe('base-sha');
+    expect(record.state).toBe('completed');
+  });
+
+  it('blocks when the review compared the change with another base', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct', baseSha: 'another-base' },
+    ]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('another');
+  });
+
+  it('blocks when the review did not run every step', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [
+      {
+        verdict: 'APPROVE',
+        reason: 'the change is correct',
+        steps: PASSED_STEPS.filter((step) => step.id !== 'review-tests'),
+      },
+    ]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The absence of a failure is not the evidence of a judgment.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('review-tests');
+  });
+
+  it('takes the worker of a lost answer instead of starting a second one', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // Orca started the worker and the answer of the command was lost.
+    orca.workerStartError = new Error('the answer of the command was lost');
+    orca.lostWorker = { dispatchId: 'dispatch-lost', taskId: 'task-lost', state: 'working' };
+    // The agent is still working: the workflow waits for it.
+    orca.messages = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The worker that is already there is adopted — a second agent would work
+    // in the same worktree.
+    expect(orca.started).toHaveLength(1);
+    expect(record.state).toBe('implementation-running');
+    expect(record.orca?.dispatchId).toBe('dispatch-lost');
+  });
+
+  it('keeps the identifiers of another process when the workflow is stopped', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const started = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // Another process writes the record while this one holds an older copy.
+    const other = await loadWorkflow(started.id);
+    other.orca = { repoId: 'repo-1', runId: 'run-of-the-other-process' };
+    await saveWorkflow(other);
+
+    const stopped = await stopWorkflow(started.id, ctx);
+    expect(stopped.state).toBe('cancelled');
+    // The stop must not lose the Run of the other process.
+    const stored = await loadWorkflow(started.id);
+    expect(stored.orca?.runId).toBe('run-of-the-other-process');
+  });
+
+  it('takes the registration of the checkout when the repository is registered twice', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.repos = [
+      {
+        id: 'repo-mirror',
+        path: '/mirror',
+        displayName: '10x-chat',
+        canonicalKey: 'github.com/gazon1/10x-chat',
+      },
+      {
+        id: 'repo-1',
+        path: '/repo',
+        displayName: '10x-chat',
+        canonicalKey: 'github.com/gazon1/10x-chat',
+      },
+    ];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The clone of the user wins over the mirror that is first in the list.
+    expect(record.orca?.repoId).toBe('repo-1');
+  });
+
+  it('refuses to guess which registration of the repository is the checkout', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.repos = [
+      {
+        id: 'repo-a',
+        path: '/clone',
+        displayName: '10x-chat',
+        canonicalKey: 'github.com/gazon1/10x-chat',
+      },
+      {
+        id: 'repo-b',
+        path: '/mirror',
+        displayName: '10x-chat',
+        canonicalKey: 'github.com/gazon1/10x-chat',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('registered in Orca at several paths');
+
+    expect(orca.created).toHaveLength(0);
+  });
 });
 
 describe('the store of the workflows', () => {
@@ -1067,6 +1277,22 @@ describe('the store of the workflows', () => {
     await saveWorkflow(aRecord('issue-60-bbbbbbbb'));
 
     expect(await listWorkflows()).toEqual(['issue-59-aaaaaaaa', 'issue-60-bbbbbbbb']);
+  });
+
+  it('refuses a record that is a link to a file outside of the store', async () => {
+    if (process.platform === 'win32') return;
+    const record = aRecord();
+    await saveWorkflow(record);
+    const dir = getWorkflowDir(record.id);
+    const file = path.join(dir, 'workflow.json');
+    const outside = path.join(home, 'outside.json');
+    await writeFile(outside, JSON.stringify({ version: 1 }), 'utf-8');
+    await rm(file);
+    await symlink(outside, file);
+
+    // The record of a workflow is its owner's: a link in the store would take
+    // the read outside of it.
+    await expect(loadWorkflow(record.id)).rejects.toThrow('symbolic link');
   });
 });
 

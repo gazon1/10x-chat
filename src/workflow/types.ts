@@ -153,6 +153,14 @@ export interface WorkflowRecord {
   maxIterations: number;
   /** The iterations of the workflow. */
   iterations: WorkflowIteration[];
+  /**
+   * The number of the write of the record — the compare-and-swap of the state.
+   *
+   * Two processes that hold the same state are still two processes: the
+   * revision tells whether the record on the disk is the one the process
+   * holds, or whether somebody wrote it in the meantime.
+   */
+  revision?: number;
   /** Why the workflow is blocked, when it is. */
   blocked?: string;
   createdAt: string;
