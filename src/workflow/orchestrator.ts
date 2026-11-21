@@ -126,6 +126,16 @@ const CHECK_SLICE_MS = 60_000;
  */
 const TERMINAL_SLICE_MS = 2_000;
 
+/**
+ * How often the Issue is read while the agent works.
+ *
+ * The Issue is the source of truth of the requirements: a change of it during
+ * the implementation invalidates the context the agent works on, and the
+ * workflow has to stop for the reevaluation instead of waiting for a change
+ * that was judged against another version of the Issue.
+ */
+const REQUIREMENTS_POLL_MS = 60_000;
+
 /** The states of a worker that mean that it is done — in any way. */
 const TERMINAL =
   /(succeeded|success|completed|done|finished|failed|escalat|settled|terminat|stop|cancel)/i;
@@ -151,6 +161,7 @@ const MANDATORY_REVIEW_STEPS = [
   'review-tests',
   'verify-findings',
   'normalize-findings',
+  'render-report',
   'check-requirements',
 ];
 
@@ -681,7 +692,7 @@ async function waitForWorker(
   record: WorkflowRecord,
   ctx: WorkflowContext,
 ): Promise<{
-  kind: 'succeeded' | 'failed' | 'unknown' | 'pending';
+  kind: 'succeeded' | 'failed' | 'unknown' | 'pending' | 'stale';
   report?: string;
   detail?: string;
 }> {
@@ -690,8 +701,23 @@ async function waitForWorker(
     throw new WorkflowError('The workflow has no Orca worker.');
   }
   const deadline = ctx.now().getTime() + ctx.waitTimeoutMs;
+  // The Issue is read while the agent works: a requirement that changed during
+  // the implementation invalidates the context the agent works on, and the
+  // workflow has to stop for the reevaluation instead of waiting for a change
+  // that was judged against another version of the Issue.
+  let lastRead = 0;
 
   for (;;) {
+    if (Date.now() - lastRead >= REQUIREMENTS_POLL_MS) {
+      lastRead = Date.now();
+      const current = await requirementsOf(ctx, record.issue.number, record.repository);
+      if (current.hash !== record.issue.hash) {
+        return {
+          kind: 'stale',
+          detail: `the issue #${record.issue.number} changed while the agent was working — the change was judged against another version of the requirements`,
+        };
+      }
+    }
     // The state of the worker is read first: a worker that finished while the
     // command was away must not be waited for a second time.
     const worker = await ctx.orca.workerShow(orca.dispatchId);
@@ -1063,6 +1089,14 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
       `The agent did not finish the task — ${outcome.detail ?? 'it reported a failure'}.`,
       ctx,
     );
+    return true;
+  }
+  if (outcome.kind === 'stale') {
+    // The requirements changed under the agent: the work it does now is judged
+    // against a version of the Issue that nobody read. The workflow stops for
+    // the reevaluation — it never waits for a change that was made against
+    // requirements that are not the current ones.
+    await block(record, `The workflow stopped — ${outcome.detail}.`, ctx);
     return true;
   }
 

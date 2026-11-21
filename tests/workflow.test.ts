@@ -248,6 +248,7 @@ const PASSED_STEPS: StepOutcome[] = [
   { id: 'review-tests', status: 'passed' },
   { id: 'verify-findings', status: 'passed' },
   { id: 'normalize-findings', status: 'passed' },
+  { id: 'render-report', status: 'passed' },
   { id: 'check-requirements', status: 'passed' },
   { id: 'update-requirements', status: 'passed' },
 ];
@@ -509,14 +510,46 @@ describe('the development workflow', () => {
         review,
         requirements: async () => {
           reads += 1;
-          // The Issue is read again after the review: it has changed since.
-          return requirementsOf(reads > 1 ? 'another-hash' : 'hash-of-the-issue');
+          // The Issue is read when the agent works and once more after the
+          // review: it has changed since the workflow started.
+          return requirementsOf(reads > 2 ? 'another-hash' : 'hash-of-the-issue');
         },
       }),
     );
 
     expect(record.state).toBe('blocked');
     expect(record.blocked).toContain('changed while the workflow ran');
+  });
+
+  it('blocks when the issue changed while the agent was working', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review, seen } = fakeReview(git, [
+      { verdict: 'APPROVE', reason: 'the change is correct' },
+    ]);
+    let reads = 0;
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, {
+        review,
+        requirements: async () => {
+          reads += 1;
+          // The Issue changed while the agent worked: the change was made
+          // against requirements that are not the current ones.
+          return requirementsOf(reads > 1 ? 'another-hash' : 'hash-of-the-issue');
+        },
+      }),
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('changed while the agent was working');
+    // The change is never judged against the version of the Issue that the
+    // workflow does not know any more.
+    expect(seen).toHaveLength(0);
   });
 
   it('does not review a worktree that is not clean', async () => {
@@ -566,6 +599,31 @@ describe('the development workflow', () => {
 
     expect(record.state).toBe('blocked');
     expect(record.blocked).toContain('The review is incomplete');
+  });
+
+  it('blocks when the review did not render its report', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    // A review that approved the change but never rendered its report has not
+    // produced the report the workflow refers to.
+    const { review } = fakeReview(git, [
+      {
+        verdict: 'APPROVE',
+        reason: 'the change is correct',
+        steps: PASSED_STEPS.filter((step) => step.id !== 'render-report'),
+      },
+    ]);
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, { review }),
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('render-report');
   });
 
   it('blocks when the state of the agent is unknown', async () => {

@@ -438,3 +438,22 @@ against the source one by one.
 
 The check set of that round: typecheck, lint, knip, test (63 files / **1163 tests**), e2e (22 CLI
 scenarios, the 10 live provider scenarios skipped) and build — all pass.
+
+### The fifth round
+
+The fifth round of the same pipeline was **incomplete**: the steps
+`review-architecture` and `verify-findings` failed with a timeout of the
+backend — the ChatGPT page was replaced while the turn was still running, and
+the answer never came. The run had a verdict of **REQUEST CHANGES** with two
+findings of the severity MAJOR, and the verification of the findings could not
+settle them. The findings were checked against the source instead, and both of
+them were real:
+
+| Finding of the fifth round | The answer |
+|---|---|
+| the Issue was read only after the review, so a requirement that changed while the agent worked was not noticed until the change was judged | the Issue is read while the agent works: a hash that is not the one the workflow started with stops the workflow with `blocked` and the reason — the change is never judged against a version of the Issue that the workflow does not know |
+| the gate of the completion did not ask for the step that renders the report of the review, so a review that approved the change without writing its report could complete the workflow | the step `render-report` is one of the mandatory steps of the review, and the fixture of the tests carries it too — a review that never wrote its report does not complete the workflow |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1165
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

@@ -147,14 +147,21 @@ The workflow reports `completed` only when **all** of these hold:
 
 1. every mandatory step of the review ran and passed — a step that is missing is
    a step that did not run, and the absence of a failure is not the evidence of a
-   judgment;
+   judgment. The mandatory steps are the steps of the pipeline that judge the
+   change, the rendering of its report included: a review that approved the
+   change and never wrote its report has not produced the report the workflow
+   refers to;
 2. the verdict of the review is `APPROVE`;
 3. the head of the worktree did not move while the review ran — the review
    judged the commit that is there now;
 4. the review compared the change with the commit the worktree started from — a
    base ref that moved under the workflow is a comparison of another change;
 5. the Issue is still the version the workflow started with — a requirement
-   that changed since is a requirement nobody judged;
+   that changed since is a requirement nobody judged. The Issue is read while
+   the agent works as well: a requirement that changes under the agent
+   invalidates the context the agent works on, and the workflow stops for the
+   reevaluation instead of waiting for a change that was made against
+   requirements that are not the current ones;
 6. the worktree is clean — the review reads the committed state only, and a
    change that is not committed is a change that nobody judged.
 
