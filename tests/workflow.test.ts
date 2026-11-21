@@ -251,6 +251,17 @@ class FakeGit implements WorkflowGit {
   branches: Record<string, string> = {};
   /** The repositories of the paths — the map of the paths of another repository. */
   repositories: Record<string, string> = {};
+  /**
+   * The physical root of the paths — the map of the paths that resolve
+   * somewhere else. A path that is not in the map is its own root.
+   */
+  toplevels: Record<string, string> = {};
+  /**
+   * The main worktree of the repository of the paths — the map of the paths.
+   * A path that is not in the map belongs to the main worktree of the
+   * checkout of the user.
+   */
+  mainWorktrees: Record<string, string> = {};
   /** The branch of the worktree of the Issue — the branch the workflow wants. */
   defaultBranch = '10x-chat/issue-59';
   /** The URL of the origin remote of the checkout. */
@@ -287,6 +298,14 @@ class FakeGit implements WorkflowGit {
 
   async branch(cwd: string) {
     return this.branches[cwd] ?? this.defaultBranch;
+  }
+
+  async toplevel(cwd: string) {
+    return this.toplevels[cwd] ?? cwd;
+  }
+
+  async mainWorktree(cwd: string) {
+    return this.mainWorktrees[cwd] ?? '/repo';
   }
 }
 
@@ -1162,6 +1181,65 @@ describe('the development workflow', () => {
     expect(orca.created).toHaveLength(0);
   });
 
+  it('never works in a worktree that is a symbolic link to the checkout of the user', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The path of the worktree is its own path, but it names the checkout of
+    // the user: the git of the checkout resolves it, and the agent would work
+    // in the checkout of the user.
+    orca.worktrees = [
+      {
+        id: 'wt-link',
+        path: '/wt/link',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        comment: '10x-chat workflow issue-59-link: created — issue #59',
+      },
+    ];
+    git.toplevels['/wt/link'] = '/repo';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('the checkout of the repository');
+
+    expect(orca.created).toHaveLength(0);
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('never works in a worktree that is the main worktree of the repository', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The repository is registered under a worktree of its own, and its main
+    // worktree is somewhere else. The worktree of Orca is a symbolic link to
+    // that main worktree — the checkout of the user.
+    orca.repos = [
+      {
+        id: 'repo-1',
+        path: '/clone',
+        displayName: '10x-chat',
+        canonicalKey: 'github.com/gazon1/10x-chat',
+      },
+    ];
+    orca.worktrees = [
+      {
+        id: 'wt-main',
+        path: '/wt/link-to-main',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+      },
+    ];
+    git.toplevels['/wt/link-to-main'] = '/clone-main';
+    git.mainWorktrees['/clone'] = '/clone-main';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('the checkout of the repository');
+
+    expect(orca.created).toHaveLength(0);
+  });
+
   it('never shares the worktree with another workflow', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -1742,6 +1820,82 @@ describe('the development workflow', () => {
     const args = await readFile(log, 'utf-8');
     expect(args).toContain('auth status');
     expect(args).toContain('issue view 59 --repo gazon1/10x-chat --json number,url,title,body');
+  });
+
+  describe('when the gh CLI cannot answer with the Issue', () => {
+    /**
+     * The workflow reads the Issue through the `gh` CLI of the machine — and
+     * a CLI that cannot answer with the Issue stops the workflow before it
+     * creates anything.
+     */
+    async function startWithGh(answer: string): Promise<{
+      orca: FakeOrca;
+      error: unknown;
+    }> {
+      const bin = path.join(home, 'bin');
+      await mkdir(bin, { recursive: true });
+      const gh = path.join(bin, 'gh');
+      await writeFile(
+        gh,
+        `#!/bin/sh\ncase "$1 $2" in\n"auth status") exit 0;;\n"issue view") ${answer};;\nesac\n`,
+        'utf-8',
+      );
+      await chmod(gh, 0o755);
+      const ghEnv: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
+      const checkout = path.join(home, 'checkout');
+      await mkdir(checkout, { recursive: true });
+
+      const orca = new FakeOrca();
+      const git = new FakeGit();
+      const ctx = contextOf(orca, git, { useRealGh: true, cwd: checkout, ghEnv });
+      let error: unknown;
+      try {
+        await startWorkflow({ issue: 59, cwd: checkout, backend: createFakeBackend() }, ctx);
+      } catch (caught) {
+        error = caught;
+      }
+      return { orca, error };
+    }
+
+    it('does not create a worktree when the CLI answers with a failure', async () => {
+      const { orca, error } = await startWithGh('echo "no such issue" >&2; exit 1');
+
+      expect(String((error as Error)?.message ?? error)).toContain('Cannot read the issue #59');
+      expect(orca.created).toHaveLength(0);
+      expect(orca.runs).toHaveLength(0);
+      expect(orca.started).toHaveLength(0);
+    });
+
+    it('does not create a worktree when the CLI answers with no JSON', async () => {
+      const { orca, error } = await startWithGh('echo "not json at all"');
+
+      expect(String((error as Error)?.message ?? error)).toContain('answered with no JSON');
+      expect(orca.created).toHaveLength(0);
+      expect(orca.runs).toHaveLength(0);
+      expect(orca.started).toHaveLength(0);
+    });
+
+    it('does not create a worktree when the CLI answers with another Issue', async () => {
+      const { orca, error } = await startWithGh(
+        `echo '{"number":60,"url":"https://github.com/gazon1/10x-chat/issues/60","title":"Another","body":"Another body."}'`,
+      );
+
+      expect(String((error as Error)?.message ?? error)).toContain('the issue #60');
+      expect(orca.created).toHaveLength(0);
+      expect(orca.runs).toHaveLength(0);
+      expect(orca.started).toHaveLength(0);
+    });
+
+    it('does not create a worktree when the CLI answers with an Issue without a body', async () => {
+      const { orca, error } = await startWithGh(
+        `echo '{"number":59,"url":"https://github.com/gazon1/10x-chat/issues/59","title":"The issue of the workflow"}'`,
+      );
+
+      expect(String((error as Error)?.message ?? error)).toContain('no title or no body');
+      expect(orca.created).toHaveLength(0);
+      expect(orca.runs).toHaveLength(0);
+      expect(orca.started).toHaveLength(0);
+    });
   });
 
   it('does not start an agent in a workflow that is being stopped', async () => {

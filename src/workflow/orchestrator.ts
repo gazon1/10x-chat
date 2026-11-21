@@ -1145,7 +1145,7 @@ async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The worktree ${worktree.path} of the workflow is not in Orca anymore — the workflow does not continue on a worktree it does not own.`,
     );
   }
-  if (!samePath(found.path, worktree.path)) {
+  if (!(await sameCheckout(ctx, found.path, worktree.path))) {
     throw new WorkflowError(
       `The worktree ${worktree.id} of Orca is at ${found.path} — the workflow started it at ${worktree.path}. The worktree of the workflow is not the worktree of Orca.`,
     );
@@ -1212,11 +1212,58 @@ async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The worktree ${worktree.path} belongs to the repository ${repository} — the workflow of this Issue works in ${record.repository}.`,
     );
   }
+  // The worktree of the workflow is never the checkout of the user: a
+  // symbolic link to the checkout of the user is not a worktree of its own,
+  // and the agent that works there would change the checkout of the user.
+  if (await isUserCheckout(ctx, worktree.path, repo.path)) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} is the checkout of the repository — the workflow never works in the checkout of the user.`,
+    );
+  }
 }
 
 /** Whether two paths are the same checkout. */
 function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
+}
+
+/**
+ * Whether two paths name the same checkout.
+ *
+ * A path and the directory it names are two different things: a symbolic link
+ * to the checkout of the user is a path of its own, and the git of the
+ * checkout resolves it. The identity of a checkout is the directory it
+ * really is — and the git of the checkout is the one that knows it.
+ */
+async function sameCheckout(ctx: WorkflowContext, left: string, right: string): Promise<boolean> {
+  const [topLeft, topRight] = await Promise.all([ctx.git.toplevel(left), ctx.git.toplevel(right)]);
+  if (topLeft !== '' && topRight !== '') return topLeft === topRight;
+  return samePath(left, right);
+}
+
+/**
+ * Whether the worktree is the checkout of the user.
+ *
+ * The checkout of the user is never the place the agent of the workflow
+ * works: the change would land in the checkout of the user, and the worktree
+ * of the workflow would be a fiction. The main worktree of the repository is
+ * that checkout, and a worktree that resolves to it is that checkout too —
+ * a symbolic link to it does not make it a worktree of its own.
+ */
+async function isUserCheckout(
+  ctx: WorkflowContext,
+  candidate: string,
+  repoPath: string,
+): Promise<boolean> {
+  if (samePath(candidate, repoPath)) return true;
+  if (await sameCheckout(ctx, candidate, repoPath)) return true;
+  // The main worktree of the repository is the checkout of the user, and the
+  // git of the repository names it — a worktree that is it is not a worktree
+  // of its own, whatever path names it.
+  const main = await ctx.git.mainWorktree(repoPath);
+  if (main === '') return false;
+  if (samePath(candidate, main)) return true;
+  return sameCheckout(ctx, candidate, main);
 }
 
 /** The workflow that owns the comment of a worktree. */
@@ -1251,7 +1298,7 @@ async function refusalOfCreated(
   repoPath: string,
   branch: string,
 ): Promise<string | undefined> {
-  if (created.isMainWorktree || samePath(created.path, repoPath)) {
+  if (created.isMainWorktree || (await isUserCheckout(ctx, created.path, repoPath))) {
     return `The worktree ${created.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
   }
   if (!created.path || created.path.trim() === '') {
@@ -1293,7 +1340,7 @@ async function refusalOf(
   baseSha: string,
   branch: string,
 ): Promise<string | undefined> {
-  if (candidate.isMainWorktree || samePath(candidate.path, repoPath)) {
+  if (candidate.isMainWorktree || (await isUserCheckout(ctx, candidate.path, repoPath))) {
     return `The worktree ${candidate.path} is the checkout of the repository — the workflow never works in the checkout of the user.`;
   }
   if (candidate.branch && !sameBranch(candidate.branch, branch)) {

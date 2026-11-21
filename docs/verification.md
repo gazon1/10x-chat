@@ -594,3 +594,22 @@ round.
 The check set of that round: typecheck, lint, knip, test (63 files / **1218
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The eleventh round
+
+The eleventh round of the same pipeline was **incomplete**: the step
+`review-correctness` failed with a timeout of the backend — the page of
+ChatGPT was replaced while the first turn was still running, and the run has no
+conversation to reattach to. The round still returned **REQUEST CHANGES**, with
+two findings: one of the severity MAJOR and one MINOR. Neither of them was
+confirmed by the verification — they are the reading of the reviewers — and both
+were checked against the source and fixed in the same round.
+
+| Finding of the eleventh round | The answer |
+|---|---|
+| the checks that tell the checkout of the user from a worktree of the workflow compared the paths lexically (`path.resolve`), so a symbolic link to the checkout of the user could pass the comparison, while `commonDir` confirms only that both paths belong to one repository | the identity of a checkout is the directory it really is: the git of the checkout resolves the symbolic links (`rev-parse --show-toplevel`), and the main worktree of the repository (`git worktree list`) is refused as well. The check is applied where a worktree is created, where one is adopted and on every run of the record |
+| the workflow tests proved only that an unauthenticated `gh` CLI prevents the creation of a worktree — the failures of the reading of the Issue itself were not covered | the failures of the reading of the Issue are covered now: the CLI that answers with a failure, with no JSON, with another Issue and with an Issue without a body stops the workflow before it creates a worktree, a Run or an agent |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1224
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

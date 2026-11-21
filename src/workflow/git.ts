@@ -42,6 +42,24 @@ export interface WorkflowGit {
   commonDir(cwd: string): Promise<string>;
   /** The branch a checkout is on — empty when it has none. */
   branch(cwd: string): Promise<string>;
+  /**
+   * The physical root of a checkout — the top level of its git.
+   *
+   * The path of a checkout and the directory it is are two different things:
+   * a symbolic link to the checkout of the user is a path of its own, and the
+   * git of the checkout resolves it. The identity of a checkout is the
+   * directory it really is, and not the path that names it.
+   */
+  toplevel(cwd: string): Promise<string>;
+  /**
+   * The main worktree of the repository of a checkout — empty when it cannot
+   * be read.
+   *
+   * The worktrees of a repository are listed by its git, and the main one
+   * comes first. The main worktree is the checkout of the user, and a
+   * worktree of the workflow is never it.
+   */
+  mainWorktree(cwd: string): Promise<string>;
 }
 
 /** Run git and return what it says. */
@@ -170,5 +188,18 @@ export const nodeWorkflowGit: WorkflowGit = {
 
   async branch(cwd) {
     return git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd).catch(() => '');
+  },
+
+  async toplevel(cwd) {
+    // `--show-toplevel` names the directory the checkout really is: the git
+    // resolves the symbolic links of the path it was given.
+    return git(['rev-parse', '--show-toplevel'], cwd).catch(() => '');
+  },
+
+  async mainWorktree(cwd) {
+    // The first entry of the list of the worktrees is the main one.
+    const listed = await git(['worktree', 'list', '--porcelain'], cwd).catch(() => '');
+    const line = listed.split('\n').find((entry) => entry.startsWith('worktree '));
+    return line ? line.slice('worktree '.length).trim() : '';
   },
 };

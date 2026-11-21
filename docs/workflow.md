@@ -77,6 +77,7 @@ taken over only when it can be proved to be ours:
 | The worktree that is already there | What the workflow does |
 |---|---|
 | the checkout of the user (the main worktree) | refuses it — the agent never works in the checkout of the user |
+| a symbolic link to the checkout of the user | refuses it — the identity of a checkout is the directory it really is, and the git of the checkout resolves the links |
 | a worktree of another branch | refuses it — the name of the Issue is not the proof of the ownership |
 | the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout — unless the record of that run is a run of the same Issue, and then it is the worktree of a run that died |
 | a worktree linked to another Issue | refuses it — the worktree of another Issue is not the worktree of this one |
@@ -103,6 +104,15 @@ has another one), and it must work on the branch of the Issue. A worktree whose
 branch cannot be read at all is refused too: a branch that cannot be proved is
 not the branch of the Issue. A worktree that does not pass the check is refused,
 and the agent never works in it.
+
+**The identity of a checkout is the directory it really is.** A path and the
+checkout it names are two different things: a symbolic link to the checkout of
+the user is a path of its own, and a lexical comparison of the paths does not
+see it. The git of the checkout resolves the links (`rev-parse --show-toplevel`),
+and the main worktree of the repository (`git worktree list`) is the checkout of
+the user under whatever path names it. A worktree that resolves to the checkout
+of the user is refused — when it is created, when it is adopted and on every run
+of the record.
 
 **The worktree of the record is the worktree of Orca.** On every run the worktree
 of the record is compared with the worktrees of Orca: the id, the path, the
