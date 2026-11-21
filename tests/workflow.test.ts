@@ -1172,6 +1172,10 @@ describe('the development workflow', () => {
     ).rejects.toThrow('no origin remote');
 
     expect(orca.created).toHaveLength(0);
+    // The start leaves no record behind: a record whose repository is empty
+    // would be refused by the reader, and the workflow could not be inspected,
+    // resumed or stopped.
+    expect(await listWorkflows()).toEqual([]);
   });
 
   it('does not create a worktree when the Orca runtime is not ready', async () => {
@@ -4020,6 +4024,16 @@ describe('the store of the workflows', () => {
     const dir = getWorkflowDir(record.id);
     expect((await stat(dir)).mode & 0o777).toBe(0o700);
     expect((await stat(path.join(dir, 'workflow.json'))).mode & 0o777).toBe(0o600);
+  });
+
+  it('refuses to write a record it could not read back', async () => {
+    // The reader refuses a record of a state other than `created` that names no
+    // repository. Such a record is not written at all: a workflow whose record
+    // nobody can read cannot be inspected, resumed or stopped.
+    const record = { ...aRecord(), state: 'blocked' as const, repository: '' };
+
+    await expect(saveWorkflow(record)).rejects.toThrow(/cannot be written/);
+    await expect(loadWorkflow(record.id)).rejects.toThrow();
   });
 
   it('refuses a record of another format', async () => {

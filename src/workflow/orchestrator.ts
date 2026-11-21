@@ -1188,12 +1188,7 @@ async function waitForWorker(
 /** The step that reads the Issue and its requirements. */
 async function loadIssue(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   const repository = await ctx.git.repository(ctx.cwd);
-  if (repository === '') {
-    throw new WorkflowError(
-      'The checkout has no origin remote of the form owner/name — the repository of the Issue is unknown.',
-    );
-  }
-  assertRepository(repository);
+  assertRepositoryIdentity(repository);
   await assertGh(ctx);
   const requirements = await requirementsOf(ctx, record.issue.number, repository);
   record.repository = repository;
@@ -2676,6 +2671,24 @@ export async function advanceWorkflow(
   }
 }
 
+/** Whether a value names the repository of an Issue — `owner/name`, and nothing else. */
+function isRepositoryName(value: string): boolean {
+  try {
+    assertRepository(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Refuse a workflow whose repository cannot be named — before anything is written. */
+function assertRepositoryIdentity(repository: string): void {
+  if (isRepositoryName(repository)) return;
+  throw new WorkflowError(
+    `The checkout has no origin remote of the form owner/name — the repository of the Issue is unknown (${repository === '' ? 'no repository' : repository}).`,
+  );
+}
+
 /** Start a workflow for an Issue of the repository of the checkout. */
 export async function startWorkflow(
   options: WorkflowStartOptions,
@@ -2683,6 +2696,12 @@ export async function startWorkflow(
 ): Promise<WorkflowRecord> {
   const now = ctx.now().toISOString();
   const repository = await ctx.git.repository(options.cwd);
+  // The repository is the identity of the workflow: it names the record and the
+  // paths of its files, and the store refuses a record that does not name it.
+  // The check happens before anything is written — a start that cannot name its
+  // repository leaves no record behind, so that no workflow is left unreadable
+  // because of the checkout it was started from.
+  assertRepositoryIdentity(repository);
   const record = await withIssueLock(repository, options.issue, async () => {
     // One workflow at a time per Issue: a second run of the same Issue would
     // share the worktree of the first one, and two agents would work in the

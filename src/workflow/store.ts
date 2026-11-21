@@ -185,6 +185,15 @@ function isWorkflowRecord(value: unknown): value is WorkflowRecord {
 
 /** Write the record of a workflow. */
 export async function saveWorkflow(record: WorkflowRecord): Promise<void> {
+  // A record is written only when it can be read back: a record that the
+  // reader would refuse is evidence that nobody can inspect, and `status` would
+  // report a broken workflow where a broken write happened.
+  const written = { ...record, version: RECORD_VERSION };
+  if (!isWorkflowRecord(written)) {
+    throw new Error(
+      `The workflow ${record.id} cannot be written: the record has another format (state '${record.state}', repository '${record.repository}').`,
+    );
+  }
   const dir = getWorkflowDir(record.id);
   // The links of the store are refused before the write: `mkdir()` and
   // `chmod()` follow a link, and a link in the store would take the record
@@ -192,10 +201,7 @@ export async function saveWorkflow(record: WorkflowRecord): Promise<void> {
   await refuseLinks(recordPath(record.id));
   await privateDir(getWorkflowsDir());
   await privateDir(dir);
-  await writeAtomic(
-    recordPath(record.id),
-    `${JSON.stringify({ ...record, version: RECORD_VERSION }, null, 2)}\n`,
-  );
+  await writeAtomic(recordPath(record.id), `${JSON.stringify(written, null, 2)}\n`);
 }
 
 /** Read the record of a workflow. */

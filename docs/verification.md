@@ -844,3 +844,22 @@ The check set of that round: typecheck, lint, knip, test (63 files /**1284
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
 
+
+### The nineteenth round
+
+The nineteenth round of the same pipeline ran completely and returned
+**REQUEST CHANGES** with a single finding of the severity MAJOR. The
+verification did not settle it either — it named the finding plausible and not
+confirmed — but the finding was checked against the source and it is real.
+
+| Finding of the nineteenth round | The answer |
+|---|---|
+| `startWorkflow` created and persisted a workflow before the repository identity was validated. A checkout without a usable origin remote made `repository()` answer an empty string, `loadIssue()` refused it, and the failure was still persisted as a `blocked` record — which the reader of the store refuses, because a state other than `created` must name its repository. `status`, `resume` and `stop` could then neither inspect nor recover the workflow | the repository identity is checked **before** anything is written: a start that cannot name its repository leaves no record behind. The store refuses to write a record that its own reader would refuse, so the two halves of the contract cannot drift apart again |
+
+Two tests were added with the fix: a start of a checkout without a repository
+leaves the store empty, and the store refuses to write a record that it could
+not read back.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1285
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
