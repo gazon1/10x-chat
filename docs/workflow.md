@@ -238,9 +238,17 @@ The workflow reports `completed` only when **all** of these hold:
    the agent works as well: a requirement that changes under the agent
    invalidates the context the agent works on, and the workflow stops for the
    reevaluation instead of waiting for a change that was made against
-   requirements that are not the current ones;
+   requirements that are not the current ones. The agent is stopped before the
+   workflow is blocked there — a blocked workflow is terminal and nobody
+   supervises the worker any more, and a worker that keeps working changes the
+   worktree against requirements that are already obsolete. A stop that cannot
+   be confirmed is named in the reason of the block;
 6. the worktree is clean — the review reads the committed state only, and a
-   change that is not committed is a change that nobody judged;
+   change that is not committed is a change that nobody judged. The worktree is
+   checked when the review starts **and** when it ends: a change that appears
+   while the review runs was never judged, and a commit is not the only form of
+   a change — the head of the worktree can stay where it is while the worktree
+   gets dirty;
 7. the approval is bound to the version of the requirements that the review
    really read — the record keeps the hash of that version, and the hash the
    workflow remembers has to be the same one: an approval of another version of

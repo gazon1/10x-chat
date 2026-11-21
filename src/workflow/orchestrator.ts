@@ -1840,7 +1840,27 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     // against a version of the Issue that nobody read. The workflow stops for
     // the reevaluation — it never waits for a change that was made against
     // requirements that are not the current ones.
-    await block(record, `The workflow stopped — ${outcome.detail}.`, ctx);
+    //
+    // The agent is stopped before the workflow is blocked: a blocked workflow
+    // is terminal and nobody supervises the worker any more, and a worker
+    // that keeps working in the worktree changes it against requirements
+    // that are already obsolete. A stop that cannot be confirmed is named in
+    // the reason of the block — the workflow does not claim a stop it did not
+    // see.
+    const dispatch = record.orca?.dispatchId;
+    let stopped: { stopped: boolean; failure?: string } = { stopped: false };
+    if (dispatch) stopped = await stopWorker(ctx, dispatch);
+    await block(
+      record,
+      `The workflow stopped — ${outcome.detail}.${
+        stopped.stopped
+          ? ' The agent was stopped.'
+          : stopped.failure
+            ? ` The agent could not be stopped — ${stopped.failure}.`
+            : ''
+      }`,
+      ctx,
+    );
     return true;
   }
 
@@ -1999,6 +2019,21 @@ async function settleReview(record: WorkflowRecord, ctx: WorkflowContext): Promi
     await block(
       record,
       `The review judged the issue #${record.issue.number} in another version — the workflow started with ${record.issue.hash.slice(0, 7)} and the review read ${review.requirementsHash.slice(0, 7)}.`,
+      ctx,
+    );
+    return;
+  }
+
+  // The worktree is clean at the moment of the approval: the review read the
+  // committed state, and a change that appeared while the review ran was
+  // never judged. The head of the worktree is not enough — a commit is not
+  // the only form of a change.
+  const dirty = await ctx.git.dirty(worktree.path);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 10).join('; ');
+    await block(
+      record,
+      `The worktree is not clean — the review read the committed state only: ${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}. Commit the change or remove it.`,
       ctx,
     );
     return;

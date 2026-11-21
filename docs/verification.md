@@ -653,3 +653,26 @@ checked against the source and fixed in the same round.
 The check set of that round: typecheck, lint, knip, test (63 files / **1236
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The fourteenth round
+
+The fourteenth round of the same pipeline ran completely — every step of it
+passed — and returned **REQUEST CHANGES** with two findings of the severity
+MAJOR. Neither of them was settled by the verification: both stayed
+unverified, because the source of the workflow was not in the excerpt the
+verifier read. Both were checked against the source and were real: the two
+gaps existed exactly as the reviewers described them.
+
+| Finding of the fourteenth round | The answer |
+|---|---|
+| the approval gate compared the head of the worktree with the head the review read, but never checked that the worktree was still clean — a change that appeared while the review ran was never judged, and a commit is not the only form of a change | the worktree is checked twice: when the review starts and when it ends. The second check is immediately before the approval: a dirty worktree at that moment blocks the workflow with the list of the changes. The head of the worktree can stay where it is while the worktree gets dirty, so the head alone never proves that the review judged everything the worktree carries |
+| the branch of the workflow that blocks on requirements that changed under the agent left the agent running — a blocked workflow is terminal and nobody supervises the worker any more, so the agent kept changing the worktree against requirements that were already obsolete | the agent is stopped before the workflow is blocked, exactly as in the branch of an unknown outcome: the state of the worker is the truth, and a stop that cannot be confirmed is named in the reason of the block — the workflow never claims a stop it did not see |
+
+Three tests were added with the fixes: the stop of the agent when the Issue
+changes under it, the naming of the failure of a stop that could not be
+confirmed, and the refusal of the approval of a worktree that is not clean when
+the review ends.
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1239
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

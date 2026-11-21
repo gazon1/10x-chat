@@ -767,6 +767,91 @@ describe('the development workflow', () => {
     expect(seen).toHaveLength(0);
   });
 
+  it('stops the agent when the issue changed while it was working', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    let reads = 0;
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, {
+        review,
+        requirements: async () => {
+          reads += 1;
+          return requirementsOf(reads > 1 ? 'another-hash' : 'hash-of-the-issue');
+        },
+      }),
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('changed while the agent was working');
+    // A blocked workflow is terminal and nobody supervises the worker any
+    // more: the agent is stopped before the block, so that it does not keep
+    // changing the worktree against requirements that are already obsolete.
+    expect(orca.stopped).toContain('dispatch-1');
+    expect(record.blocked).toContain('The agent was stopped.');
+  });
+
+  it('names the failure of a stop that could not be confirmed', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    let reads = 0;
+    // The runtime refuses to stop the worker — the workflow must not claim a
+    // stop that it did not see.
+    orca.stopError = new Error('the runtime refuses the stop');
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, {
+        review,
+        requirements: async () => {
+          reads += 1;
+          return requirementsOf(reads > 1 ? 'another-hash' : 'hash-of-the-issue');
+        },
+      }),
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('The agent could not be stopped');
+    expect(record.blocked).toContain('the runtime refuses the stop');
+  });
+
+  it('does not approve a worktree that is not clean when the review ends', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    // The worktree gets dirty while the review runs: the review read the
+    // committed state, and the change that appeared under it was never
+    // judged.
+    const dirtying = async (request: WorkflowReviewRequest) => {
+      const run = await review(request);
+      git.dirtyPaths = [' M src/workflow/orchestrator.ts', '?? src/workflow/new.ts'];
+      return run;
+    };
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git, { review: dirtying }),
+    );
+
+    // The head of the worktree did not move, and the approval is still
+    // refused: a commit is not the only form of a change.
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('not clean');
+    expect(record.blocked).toContain('src/workflow/orchestrator.ts');
+  });
+
   it('does not review a worktree that is not clean', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
