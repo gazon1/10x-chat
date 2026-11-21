@@ -78,6 +78,8 @@ export interface OrcaWorker {
   branch?: string;
   /** The state of the Dispatch — `ready`, `working`, `settled`, … */
   state?: string;
+  /** The title of the task of the worker — what it was asked to do. */
+  taskTitle?: string;
   /** The structured outcome of the Dispatch — `succeeded` or `failed`. */
   outcome?: string;
   /** The report of the worker — what it did and how it verified it. */
@@ -176,6 +178,33 @@ function findValue(payload: unknown, names: string[]): unknown {
 function findString(payload: unknown, names: string[]): string | undefined {
   const value = findValue(payload, names);
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+/**
+ * The worktree a worker works in.
+ *
+ * The runtime names it in several ways, and the shape of its answer is not a
+ * contract: the worktree is read as a field of its own, as a path of a nested
+ * object, and under the name of the checkout. A worker whose worktree cannot
+ * be read is a worker the workflow cannot prove — it refuses it, and it must
+ * not refuse it because the runtime spelled the name differently.
+ */
+function worktreePathOf(payload: unknown): string | undefined {
+  const direct = findString(payload, ['worktreePath', 'checkoutPath', 'worktree']);
+  if (direct) return direct;
+  const value = findValue(payload, ['worktree']);
+  if (isRecord(value)) return findString(value, ['path', 'worktreePath', 'checkoutPath']);
+  return undefined;
+}
+
+/** The branch a worker works on — the branch of its worktree. */
+function branchOf(payload: unknown): string | undefined {
+  return findString(payload, ['branch', 'gitBranch']);
+}
+
+/** The title of the task of a worker — what it was asked to do. */
+function taskTitleOf(payload: unknown): string | undefined {
+  return findString(payload, ['taskTitle']);
 }
 
 /** The number of an answer — the number of an Issue, for example. */
@@ -462,9 +491,13 @@ export class OrcaClient implements OrcaApi {
       throw new OrcaError('orca orchestration worker-start answered without a dispatch id');
     }
     const taskId = findString(result, ['taskId']);
-    const worktreePath = findString(result, ['worktreePath']);
-    const branch = findString(result, ['branch']);
+    const worktreePath = worktreePathOf(result);
+    const branch = branchOf(result);
     const state = findString(result, ['state', 'status']);
+    // The title of the task is the title the command was given: the runtime
+    // does not have to name it again for the workflow to know which task a
+    // worker works on.
+    const taskTitle = taskTitleOf(result) ?? options.taskTitle;
     return {
       dispatchId,
       ...(taskId ? { taskId } : {}),
@@ -472,6 +505,7 @@ export class OrcaClient implements OrcaApi {
       ...(worktreePath ? { worktreePath } : {}),
       ...(branch ? { branch } : {}),
       ...(state ? { state } : {}),
+      ...(taskTitle ? { taskTitle } : {}),
     };
   }
 
@@ -484,7 +518,9 @@ export class OrcaClient implements OrcaApi {
     // Task, and it is not the state of the Dispatch.
     const outcome = findString(result, ['outcome', 'result.outcome', 'task.outcome']);
     const report = findString(result, ['report', 'summary', 'result.report', 'result.text']);
-    const worktreePath = findString(result, ['worktreePath']);
+    const worktreePath = worktreePathOf(result);
+    const branch = branchOf(result);
+    const taskTitle = taskTitleOf(result);
     return {
       dispatchId: id,
       ...(taskId ? { taskId } : {}),
@@ -492,6 +528,8 @@ export class OrcaClient implements OrcaApi {
       ...(outcome ? { outcome } : {}),
       ...(report ? { report } : {}),
       ...(worktreePath ? { worktreePath } : {}),
+      ...(branch ? { branch } : {}),
+      ...(taskTitle ? { taskTitle } : {}),
     };
   }
 
@@ -503,11 +541,19 @@ export class OrcaClient implements OrcaApi {
       if (!dispatchId) continue;
       const taskId = findString(entry, ['taskId']);
       const state = findString(entry, ['state', 'status', 'taskStatus']);
+      // The worktree, the branch and the title of the task are the identity
+      // of the worker: the list of the workers is not only their states.
+      const worktreePath = worktreePathOf(entry);
+      const branch = branchOf(entry);
+      const taskTitle = taskTitleOf(entry);
       workers.push({
         dispatchId,
         ...(taskId ? { taskId } : {}),
         runId,
         ...(state ? { state } : {}),
+        ...(worktreePath ? { worktreePath } : {}),
+        ...(branch ? { branch } : {}),
+        ...(taskTitle ? { taskTitle } : {}),
       });
     }
     if (workers.length > 0) return workers;
@@ -522,11 +568,17 @@ export class OrcaClient implements OrcaApi {
       if (!dispatchId) continue;
       const taskId = findString(entry, ['taskId']);
       const state = findString(entry, ['state', 'status', 'taskStatus']);
+      const worktreePath = worktreePathOf(entry);
+      const branch = branchOf(entry);
+      const taskTitle = taskTitleOf(entry);
       workers.push({
         dispatchId,
         ...(taskId ? { taskId } : {}),
         runId,
         ...(state ? { state } : {}),
+        ...(worktreePath ? { worktreePath } : {}),
+        ...(branch ? { branch } : {}),
+        ...(taskTitle ? { taskTitle } : {}),
       });
     }
     return workers;

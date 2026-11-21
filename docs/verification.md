@@ -676,3 +676,46 @@ the review ends.
 The check set of that round: typecheck, lint, knip, test (63 files / **1239
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The fifteenth round
+
+The fifteenth round of the same pipeline ran completely — every step of it
+passed — and returned **REQUEST CHANGES** with one finding of the severity
+MAJOR. The verification did not settle it (the source of the workflow was not
+in the excerpt the verifier read), but it was real: the gap existed exactly as
+the reviewer described it.
+
+| Finding of the fifteenth round | The answer |
+|---|---|
+| the head of the worktree was compared with the head the review read, but never with the head the agent left behind — a commit that appeared between the end of the agent and the start of the review was never noticed, and the report of the agent belonged to another commit | the gate of the start of the review compares the head of the worktree with the head of the iteration: a commit that appeared under the workflow between the agent and the review blocks the workflow with the reason "The head of the worktree changed before the review" |
+
+Beside the round, the source of the workflow was read by a second reviewer
+(`verifier`, read-only, no change of the repository). It returned eight
+findings; all of them were checked against the source and all of them were
+real. They were fixed in the same round:
+
+| Finding of the audit | The answer |
+|---|---|
+| the adapter of Orca did not map the worktree, the branch and the title of the task of a worker — the identity of a worker could not be proved from what the runtime names | the adapter reads all three (`worktreePathOf`, `branchOf`, `taskTitleOf`), including the nested `worktree.path` of the answer of the runtime |
+| the regular expression of the stop matched `succeeded` — the workflow claimed that it stopped an agent that finished on its own | the stop is strict: only `stopped`, `cancelled`, `canceled`, `terminated`, `aborted`, `halted` and `killed` are a stop |
+| the adoption of a worker could adopt a worker that never received the findings of the review | the corrections go to the worker whose task carries the title of the corrections, and a worker of an earlier task that still works in the worktree is stopped |
+| the merge of the records lost the worktree, the Run and the Dispatch of the older record | the merge keeps the worktree, the Run, the Dispatch and the Issue of the record |
+| the state `stopping` was a dead end — a workflow stopped by a killed process waited for ever | a `resume` finishes the stop: the workers of the Run are stopped and the workflow is cancelled, or blocked when a worker cannot be stopped |
+| the report of the run was written in a `finally` and masked the error of the run itself | a report that cannot be written is noted in the history of the workflow and does not turn the outcome of the run into a failure |
+| the gate of the approval did not prove again that the worktree is still the worktree of the workflow | the identity of the worktree is proved again immediately before the approval |
+| the branches of an unknown outcome and of the stale requirements did not write the outcome of the agent and the moment of its end | both branches write `agentOutcome='unknown'` and `finishedAt` |
+
+Nine tests of the workflow and three tests of the adapter were added with the
+fixes: the stop of the worker of an earlier task before it starts the
+corrections, the adoption of the worker that received the findings, the
+refusal to claim that it stopped an agent that finished on its own, the
+unknown outcome of the agent, the identifiers of the Run in a record that is
+older on the disk, the stop that was interrupted, the outcome of a run whose
+report cannot be written, the approval of a worktree that Orca moved under the
+review, the head that changed before the review, the identity of the workers of
+a run, the identity of a worker, and the title of the task of a worker that the
+runtime does not name.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1252
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

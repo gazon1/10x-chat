@@ -122,6 +122,69 @@ describe('the adapter of the Orca CLI', () => {
     expect(workers[0]?.state).toBe('working');
   });
 
+  it('reads the identity of the workers of a run', async () => {
+    const { runner } = fakeRunner([
+      ok({
+        workers: [
+          {
+            dispatchId: 'dispatch-1',
+            taskId: 'task-1',
+            state: 'working',
+            branch: '10x-chat/issue-59',
+            taskTitle: 'Issue #59: the corrections of the iteration 1',
+            // The worktree is a nested object of the answer of the runtime.
+            worktree: { path: '/wt/issue-59' },
+          },
+        ],
+      }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    const workers = await client.workerList('run-1');
+
+    // The identity of a worker is in the answer: the checkout it works in, the
+    // branch and the task it was given.
+    expect(workers[0]?.worktreePath).toBe('/wt/issue-59');
+    expect(workers[0]?.branch).toBe('10x-chat/issue-59');
+    expect(workers[0]?.taskTitle).toBe('Issue #59: the corrections of the iteration 1');
+  });
+
+  it('reads the identity of a worker', async () => {
+    const { runner } = fakeRunner([
+      ok({
+        dispatchId: 'dispatch-1',
+        state: 'working',
+        worktreePath: '/wt/issue-59',
+        branch: '10x-chat/issue-59',
+        taskTitle: 'Issue #59: the corrections of the iteration 1',
+      }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    const worker = await client.workerShow('dispatch-1');
+
+    expect(worker.worktreePath).toBe('/wt/issue-59');
+    expect(worker.branch).toBe('10x-chat/issue-59');
+    expect(worker.taskTitle).toBe('Issue #59: the corrections of the iteration 1');
+  });
+
+  it('keeps the title of the task of a worker that the runtime does not name', async () => {
+    const { runner } = fakeRunner([ok({ dispatchId: 'dispatch-1', state: 'working' })]);
+    const client = new OrcaClient({ runner });
+
+    const worker = await client.workerStart({
+      runId: 'run-1',
+      spec: 'the spec',
+      worktree: 'path:/wt',
+      agent: 'codex',
+      taskTitle: 'Issue #59: the corrections of the iteration 1',
+    });
+
+    // The runtime does not have to name the task again: the workflow knows
+    // which task a worker works on.
+    expect(worker.taskTitle).toBe('Issue #59: the corrections of the iteration 1');
+  });
+
   it('refuses a worker that has no dispatch id', async () => {
     const { runner } = fakeRunner([ok({ taskId: 'task-1' })]);
     const client = new OrcaClient({ runner });

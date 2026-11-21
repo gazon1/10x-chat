@@ -142,6 +142,13 @@ class FakeOrca implements OrcaApi {
   worktreeListError?: Error;
   /** The state the worker reports. */
   workerState = 'working';
+  /**
+   * The states of the workers — the map of the dispatches.
+   *
+   * The runtime tells the state of every worker of it: the list of the workers
+   * is poor, and the details of a Dispatch are asked for by the workflow.
+   */
+  readonly shownStates: Record<string, string> = {};
   /** The structured outcome the worker reports — it settles the Task. */
   workerOutcome?: string;
   /** The report of the worker. */
@@ -236,7 +243,7 @@ class FakeOrca implements OrcaApi {
     return this.runListEntries;
   }
 
-  async workerStart(options: { spec: string; worktree: string }) {
+  async workerStart(options: { spec: string; worktree: string; taskTitle?: string }) {
     this.started.push({ spec: options.spec, worktree: options.worktree });
     const number = this.started.length;
     if (this.workerStartError && number >= this.workerStartFailAt) {
@@ -246,6 +253,8 @@ class FakeOrca implements OrcaApi {
     }
     // Every worker has its own Dispatch — the corrections are a new one.
     const worker = this.workerOf(`dispatch-${number}`, `task-${number}`, options.worktree);
+    // The runtime knows the title of the task it was given.
+    if (options.taskTitle) worker.taskTitle = options.taskTitle;
     // The runtime knows the worker — a workflow that starts a second one is
     // visible to the next run.
     this.workers.push(worker);
@@ -273,10 +282,19 @@ class FakeOrca implements OrcaApi {
     this.onWorkerShow?.();
     const worker = this.workers.find((entry) => entry.dispatchId === dispatchId);
     // A worker that was stopped reports it — the runtime knows it.
-    const state = worker?.state === 'stopped' ? 'stopped' : this.workerState;
+    const state =
+      this.shownStates[dispatchId] ??
+      (worker?.state === 'stopped' || this.stopped.includes(dispatchId)
+        ? 'stopped'
+        : this.workerState);
     return {
       dispatchId,
       state,
+      // The details of the worker are the details of its Dispatch: the
+      // checkout it works in, the branch and the task it was given.
+      ...(worker?.worktreePath ? { worktreePath: worker.worktreePath } : {}),
+      ...(worker?.branch ? { branch: worker.branch } : {}),
+      ...(worker?.taskTitle ? { taskTitle: worker.taskTitle } : {}),
       ...(this.workerOutcome ? { outcome: this.workerOutcome } : {}),
       ...(this.workerReport ? { report: this.workerReport } : {}),
     };
@@ -290,8 +308,9 @@ class FakeOrca implements OrcaApi {
     if (this.stopError) throw this.stopError;
     this.stopped.push(dispatchId);
     const worker = this.workers.find((entry) => entry.dispatchId === dispatchId);
+    // The runtime stops this worker and not the others: the state of a worker
+    // is the state of that worker.
     if (worker) worker.state = 'stopped';
-    this.workerState = 'stopped';
   }
 
   async check() {
@@ -354,6 +373,17 @@ class FakeGit implements WorkflowGit {
   defaultBranch = '10x-chat/issue-59';
   /** The URL of the origin remote of the checkout. */
   remote = 'https://github.com/gazon1/10x-chat.git';
+  /**
+   * The heads of the worktree — one after the other.
+   *
+   * The head of a worktree moves when the agent commits — and it may move
+   * again between the end of the agent and the review. The sequence is read
+   * one value after the other: the last one is the head of the worktree from
+   * then on.
+   */
+  headSequence?: string[];
+  /** The reads of the head — the sequence is read by them. */
+  private headReads = 0;
 
   async repository(cwd: string) {
     return this.repositories[cwd] ?? this.repositoryName;
@@ -363,7 +393,12 @@ class FakeGit implements WorkflowGit {
     return this.remote;
   }
 
-  async revParse(cwd: string) {
+  async revParse(cwd: string, ref = 'HEAD') {
+    if (ref === 'HEAD' && this.headSequence) {
+      const value = this.headSequence[Math.min(this.headReads, this.headSequence.length - 1)];
+      this.headReads += 1;
+      return value;
+    }
     return this.heads[cwd] ?? this.head;
   }
 
@@ -820,7 +855,7 @@ describe('the development workflow', () => {
     );
 
     expect(record.state).toBe('blocked');
-    expect(record.blocked).toContain('The agent could not be stopped');
+    expect(record.blocked).toContain('The stop could not be confirmed');
     expect(record.blocked).toContain('the runtime refuses the stop');
   });
 
@@ -2714,10 +2749,11 @@ describe('the development workflow', () => {
   it('refuses to start a workflow when the store cannot be listed', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
-    // The store of the workflows is there, but its content cannot be read.
+    // The store of the workflows is not a directory: its content cannot be
+    // read.
     const store = path.join(home, 'workflows');
-    await mkdir(store, { recursive: true });
-    await chmod(store, 0o300);
+    await mkdir(home, { recursive: true });
+    await writeFile(store, 'not a store');
     const ctx = contextOf(orca, git);
 
     // A store that cannot be read may still hold a workflow of this Issue:
@@ -2727,6 +2763,19 @@ describe('the development workflow', () => {
     ).rejects.toThrow(/cannot be listed/);
 
     expect(orca.created).toHaveLength(0);
+  });
+
+  it('keeps the store of the workflows private when it is listed', async () => {
+    const store = path.join(home, 'workflows');
+    await mkdir(store, { recursive: true });
+    // The store was restored with wide permissions: the names of the
+    // workflows are evidence too.
+    await chmod(store, 0o755);
+
+    await listWorkflows();
+
+    const info = await stat(store);
+    expect(info.mode & 0o777).toBe(0o700);
   });
 
   it('refuses a runtime that names only one verb of the worktrees', async () => {
@@ -3039,6 +3088,267 @@ describe('the development workflow', () => {
 
     // No agent works without a home of the mailbox.
     expect(orca.started).toHaveLength(0);
+  });
+
+  it('stops the worker of an earlier task before it starts the corrections', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    let commits = 0;
+    orca.onCheck = () => {
+      git.head = `head-sha-${++commits}`;
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the check does not run', findings: [aFinding()] },
+      { verdict: 'APPROVE', reason: 'the correction is right' },
+    ]);
+    // The Run holds a worker of an earlier task: it does not know the
+    // findings of this iteration, and it must not be taken for the worker of
+    // the corrections.
+    let reviews = 0;
+    const withAnEarlierWorker = async (request: WorkflowReviewRequest) => {
+      reviews += 1;
+      if (reviews === 1) {
+        orca.workers.push({
+          dispatchId: 'dispatch-earlier',
+          taskId: 'task-earlier',
+          state: 'working',
+          worktreePath: '/wt/issue-59',
+          branch: '10x-chat/issue-59',
+          taskTitle: 'Issue #59: an earlier task',
+        });
+      }
+      return review(request);
+    };
+    const ctx = contextOf(orca, git, { review: withAnEarlierWorker });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The worker of the earlier task is stopped — two agents in one worktree
+    // are a change nobody judges.
+    expect(orca.stopped).toContain('dispatch-earlier');
+    // The corrections go to a worker of their own.
+    expect(orca.started).toHaveLength(2);
+    expect(record.state).toBe('completed');
+  });
+
+  it('adopts the worker that received the findings', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    let commits = 0;
+    orca.onCheck = () => {
+      git.head = `head-sha-${++commits}`;
+    };
+    const { review } = fakeReview(git, [
+      { verdict: 'REQUEST CHANGES', reason: 'the check does not run', findings: [aFinding()] },
+      { verdict: 'APPROVE', reason: 'the correction is right' },
+    ]);
+    // The worker that got the findings is already there: it is adopted, and
+    // no second agent works in the worktree.
+    let reviews = 0;
+    const withTheWorkerOfTheFindings = async (request: WorkflowReviewRequest) => {
+      reviews += 1;
+      if (reviews === 1) {
+        orca.workers.push({
+          dispatchId: 'dispatch-of-the-findings',
+          taskId: 'task-of-the-findings',
+          state: 'working',
+          worktreePath: '/wt/issue-59',
+          branch: '10x-chat/issue-59',
+          taskTitle: 'Issue #59: the corrections of the iteration 1',
+        });
+      }
+      return review(request);
+    };
+    const ctx = contextOf(orca, git, { review: withTheWorkerOfTheFindings });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The worker of the findings was adopted — a second agent would work in
+    // the same worktree.
+    expect(orca.started).toHaveLength(1);
+    expect(record.orca?.dispatchId).toBe('dispatch-of-the-findings');
+    expect(record.state).toBe('completed');
+  });
+
+  it('does not claim that it stopped an agent that finished on its own', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The agent reported a completion without an outcome: the workflow does
+    // not know what it did.
+    orca.messages = [{ type: 'worker_done', text: 'I am done' }];
+    // The agent finished on its own — it was not stopped by the workflow.
+    orca.workerState = 'succeeded';
+    // The runtime refuses the stop: the workflow cannot claim it.
+    orca.stopError = new Error('the runtime is gone');
+    const ctx = contextOf(orca, git);
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(record.state).toBe('blocked');
+    // The workflow did not stop the agent — and it says so.
+    expect(record.blocked).not.toContain('The agent was stopped.');
+    expect(record.blocked).toContain('The agent does not work in the worktree any more.');
+    // The failure of the stop is not swallowed.
+    expect(record.blocked).toContain('The stop could not be confirmed');
+  });
+
+  it('records the unknown outcome of the agent when the workflow is blocked', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // A worker that reports neither an outcome nor a failure has not settled.
+    orca.messages = [{ type: 'worker_done', text: 'I am done' }];
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      contextOf(orca, git),
+    );
+
+    expect(record.state).toBe('blocked');
+    // The iteration says what happened: the workflow must not tell that an
+    // agent that failed did not report.
+    expect(record.iterations[0]?.agentOutcome).toBe('unknown');
+    expect(record.iterations[0]?.finishedAt).toBeTruthy();
+  });
+
+  it('keeps the identifiers of the run when the record on the disk is older', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    // Another process wrote an older copy of the record while this one was
+    // working: the copy on the disk knows neither the worktree nor the
+    // Dispatch.
+    const withAnOlderCopy = async (request: WorkflowReviewRequest) => {
+      const run = await review(request);
+      const ids = await listWorkflows();
+      const older = await loadWorkflow(ids[0] ?? '');
+      await saveWorkflow({
+        ...older,
+        worktree: undefined,
+        orca: { repoId: 'repo-1' },
+      });
+      return run;
+    };
+    const ctx = contextOf(orca, git, { review: withAnOlderCopy });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The identifiers of the run are not lost to the older copy: a record
+    // without them cannot be stopped, inspected or resumed.
+    const stored = await loadWorkflow(record.id);
+    expect(stored.worktree?.path).toBe('/wt/issue-59');
+    expect(stored.orca?.dispatchId).toBe('dispatch-1');
+    expect(stored.orca?.runId).toBe('run-1');
+  });
+
+  it('finishes a stop that was interrupted', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktrees = [anOrcaWorktree()];
+    // The process that was stopping the workflow was killed between the mark
+    // of the stop and the cancellation.
+    const record = aRecord('issue-59-33333333', 'stopping');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git);
+
+    const resumed = await resumeWorkflow(record.id, ctx);
+
+    // The state `stopping` is not a dead end: the agent is stopped and the
+    // workflow is over.
+    expect(resumed.state).toBe('cancelled');
+    expect(orca.stopped).toContain('dispatch-1');
+    expect((await loadWorkflow(record.id)).state).toBe('cancelled');
+  });
+
+  it('keeps the outcome of a run whose report cannot be written', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    // The path of the report is a directory: the report cannot be written.
+    const withABrokenReport = async (request: WorkflowReviewRequest) => {
+      const run = await review(request);
+      const ids = await listWorkflows();
+      await mkdir(path.join(getWorkflowDir(ids[0] ?? ''), 'report.md'), { recursive: true });
+      return run;
+    };
+    const ctx = contextOf(orca, git, { review: withABrokenReport });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    // The report is evidence and not the outcome: a report that cannot be
+    // written does not turn a completed workflow into a failure.
+    expect(record.state).toBe('completed');
+    const events = await readEvents(record.id);
+    expect(events.map((event) => event.detail).join('\n')).toContain(
+      'the report of the workflow could not be written',
+    );
+  });
+
+  it('does not approve a worktree that Orca moved under the review', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.onCheck = () => {
+      git.head = 'head-sha-1';
+    };
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    // The worktree moves while the review runs: the checkout the review judged
+    // is not the checkout of the workflow any more.
+    const moving = async (request: WorkflowReviewRequest) => {
+      const run = await review(request);
+      const worktree = orca.worktrees[0];
+      if (worktree) worktree.path = '/wt/issue-59-moved';
+      return run;
+    };
+    const ctx = contextOf(orca, git, { review: moving });
+
+    // The step fails: the workflow is blocked, and the failure is reported.
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/\/wt\/issue-59-moved/);
+
+    const ids = await listWorkflows();
+    const stored = await loadWorkflow(ids[0] ?? '');
+    expect(stored.state).toBe('blocked');
+    expect(stored.blocked).toContain('/wt/issue-59-moved');
+  });
+
+  it('blocks when the head of the worktree changed before the review', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The head of the worktree moves between the end of the agent and the
+    // start of the review: the report of the agent belongs to another commit.
+    git.headSequence = ['base-sha', 'head-sha-1', 'head-sha-2'];
+    const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
+    const ctx = contextOf(orca, git, { review });
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(record.state).toBe('blocked');
+    expect(record.blocked).toContain('The head of the worktree changed before the review');
   });
 });
 

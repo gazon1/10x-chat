@@ -230,7 +230,11 @@ The workflow reports `completed` only when **all** of these hold:
    refers to;
 2. the verdict of the review is `APPROVE`;
 3. the head of the worktree did not move while the review ran — the review
-   judged the commit that is there now;
+   judged the commit that is there now. The head is also compared with the head
+   the agent left behind **before** the review starts: a commit that appeared
+   between the end of the agent and the start of the review is a change that
+   nobody asked the agent for, and the report of the agent belongs to another
+   commit;
 4. the review compared the change with the commit the worktree started from — a
    base ref that moved under the workflow is a comparison of another change;
 5. the Issue is still the version the workflow started with — a requirement
@@ -249,10 +253,18 @@ The workflow reports `completed` only when **all** of these hold:
    while the review runs was never judged, and a commit is not the only form of
    a change — the head of the worktree can stay where it is while the worktree
    gets dirty;
-7. the approval is bound to the version of the requirements that the review
+7. the worktree is still the worktree of the workflow — the review takes
+   minutes, and a worktree that was moved to another path or to another branch
+   under the review is not the checkout the workflow started. The identity of it
+   is proved again, immediately before the approval;
+8. the approval is bound to the version of the requirements that the review
    really read — the record keeps the hash of that version, and the hash the
    workflow remembers has to be the same one: an approval of another version of
    the Issue is not an approval of this change, whatever the verdict says.
+
+The report of the run is **evidence, not the outcome**: a report that cannot be
+written is noted in the history of the workflow, and it does not turn a
+completed workflow into a failure.
 
 Anything else ends in `blocked` with the reason. **An approval of the model is
 not an approval of a human**: the worktree of the workflow stays for a human,
@@ -322,6 +334,20 @@ adopt a worker it cannot identify, and it blocks instead of guessing. A worker
 of an **own** start names the worktree in the command itself, so it only has
 to be free of a contradiction.
 
+A worker that the workflow refuses is stopped before the workflow is blocked —
+unless it works provably somewhere else: a worker of another checkout is not
+the worker of this workflow, and the workflow does not stop what is not its own.
+A blocked workflow is terminal, and nobody supervises the worker any more: an
+agent that keeps working in the worktree changes it while the workflow says
+that it is over.
+
+The **corrections go to a worker that received them**. The findings of a review
+are the brief of a new Dispatch, and a worker of an earlier task does not know
+them: the workflow adopts the worker whose task carries the title of the
+corrections, and a worker of an earlier task that still works in the worktree is
+stopped before the workflow starts its own agent — two agents in one worktree
+are a change nobody judges.
+
 ## The brief carries the instructions of the repository
 
 The brief of the agent is not only the Issue: it carries the instructions of the
@@ -349,6 +375,19 @@ answers, and a stop in that window would leave an agent in the worktree that
 nobody knows about. A stop that cannot be confirmed leaves the workflow
 `blocked`: an agent that still works in the worktree is not a stopped workflow.
 
+The state of the worker is the truth, and it says three different things:
+
+| What the runtime reports | What the workflow says |
+|---|---|
+| the worker was stopped | "The agent was stopped." |
+| the worker does not work in the worktree any more — it finished on its own | "The agent does not work in the worktree any more." — it was not stopped by the workflow |
+| the state is unknown | "The state of the agent is unknown — it may still work in the worktree." |
+
+A worker that **succeeded** is in the second row and not in the first: the
+workflow never claims that it stopped an agent that finished on its own. A stop
+that could not be confirmed is named in the reason of the block — it is never
+swallowed.
+
 The stop reaches a workflow that is **over** as well. A workflow that was
 blocked may still have an agent in its worktree — the block of an iteration
 does not stop the agent it blocked on — and the stop of such a workflow stops
@@ -374,6 +413,13 @@ after it started.
 A workflow that is being stopped is not blocked by the step that ran into the
 stop: the stop decides whether the workflow is `cancelled` or `blocked`.
 
+The state `stopping` is **not a dead end**. The process that was stopping the
+workflow may have been killed between the mark of the stop and the
+cancellation, and the workflow would wait there for ever, doing nothing and
+occupying its Issue. A `resume` finishes the stop: the workers of the Run are
+stopped and the workflow is cancelled — or blocked, when a worker cannot be
+stopped.
+
 ## The resume keeps the review of the workflow
 
 A workflow is resumed with the backend and the model it was started with: the
@@ -398,7 +444,10 @@ The directory is private (`0700`) and the files belong to their owner alone
 leaves a readable record behind, never a half-written one. The privacy is
 enforced before every read and not only after every write, and a link in the
 store is refused: `readFile()` follows a link, and a link in the store would
-take the read outside of it.
+take the read outside of it. The directory of the store is made private before
+every **listing** too: the names of the workflows are evidence as well — a
+store that was restored with wide permissions tells everybody which Issues were
+worked on.
 
 **A record that cannot be read is never replaced.** A record that is not there
 and a record that is broken are two different failures: only the first one is

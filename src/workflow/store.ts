@@ -105,6 +105,27 @@ async function refuseLinks(file: string): Promise<void> {
 }
 
 /**
+ * Keep the directory of the store private — before every read of it.
+ *
+ * The names of the workflows are evidence too: a store that was restored with
+ * wide permissions tells everybody which Issues were worked on, even when the
+ * records inside of it are private. The directory is made private on the way
+ * in, and a store that is not there yet holds nothing to keep private.
+ */
+async function enforceDirPrivacy(dir: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  try {
+    const info = await lstat(dir);
+    // The path is not a directory: there is nothing to keep private, and the
+    // listing of it fails on its own.
+    if (!info.isDirectory()) return;
+    await chmod(dir, 0o700);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+/**
  * Keep the store private — before every read, not only after every write.
  *
  * A store that was restored with wide permissions, or a record that was
@@ -231,6 +252,9 @@ export async function loadWorkflow(id: string): Promise<WorkflowRecord> {
 export async function listWorkflows(): Promise<string[]> {
   let entries: string[];
   try {
+    // The listing is a read of the store: the privacy of the store is
+    // enforced before it, and not only after a write.
+    await enforceDirPrivacy(getWorkflowsDir());
     entries = await readdir(getWorkflowsDir());
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
