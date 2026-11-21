@@ -60,7 +60,13 @@ class FakeOrca implements OrcaApi {
   readonly stopped: string[] = [];
   readonly runs: string[] = [];
   /** The worktrees the workflow created — a second one is a defect. */
-  readonly created: { name: string; branch: string; baseRef: string }[] = [];
+  readonly created: {
+    name: string;
+    branch: string;
+    baseRef: string;
+    issue?: number;
+    comment?: string;
+  }[] = [];
   /** The workers of the Run — the workflow must not start a second one. */
   workers: OrcaWorker[] = [];
   /** The worktrees of the repository — a lost answer is reconciled with them. */
@@ -103,6 +109,8 @@ class FakeOrca implements OrcaApi {
   lostWorker?: OrcaWorker;
   /** The path of the worktree that is created — its identity is checked. */
   worktreePath = '/wt/issue-59';
+  /** The answer of the create command was lost — the worktree is there all the same. */
+  worktreeCreateError?: Error;
   /** The Runs of the orchestration — the answer of a lost runCreate. */
   runListEntries: OrcaRun[] = [];
   /** The answer of the runCreate was lost. */
@@ -120,16 +128,26 @@ class FakeOrca implements OrcaApi {
     return this.repos;
   }
 
-  async worktreeCreate(options: { name: string; branch: string; baseRef: string }) {
+  async worktreeCreate(options: {
+    name: string;
+    branch: string;
+    baseRef: string;
+    issue?: number;
+    comment?: string;
+  }) {
     this.created.push(options);
+    const comment = this.createdComment ?? options.comment;
     const worktree = {
       id: 'wt-1',
       path: this.worktreePath,
       name: options.name,
       branch: options.branch,
-      ...(this.createdComment ? { comment: this.createdComment } : {}),
+      ...(options.issue !== undefined ? { linkedIssue: options.issue } : {}),
+      ...(comment ? { comment } : {}),
     };
     this.worktrees.push(worktree);
+    // The answer of the command was lost — the worktree is there all the same.
+    if (this.worktreeCreateError) throw this.worktreeCreateError;
     return worktree;
   }
 
@@ -952,6 +970,41 @@ describe('the development workflow', () => {
     expect(orca.created).toHaveLength(0);
   });
 
+  it('does not create a worktree when the runtime names only some verbs of the worktrees', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The runtime names two of the three verbs of the worktrees: it cannot
+    // comment in a worktree, and the workflow needs that.
+    orca.capabilities = ['orchestration.contract.v1', 'worktree.list', 'worktree.create'];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/worktree\.comment/);
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('creates a worktree when the runtime names every verb of the worktrees', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.capabilities = [
+      'orchestration.contract.v1',
+      'worktree.list',
+      'worktree.create',
+      'worktree.comment',
+    ];
+    const ctx = contextOf(orca, git);
+
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(orca.created).toHaveLength(1);
+    expect(record.worktree?.id).toBe('wt-1');
+  });
+
   it('does not create a worktree when the repository is not registered in Orca', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -979,13 +1032,21 @@ describe('the development workflow', () => {
     expect(record.worktree?.baseRef).toBe('release/2.x');
   });
 
-  it('adopts the worktree that is already there instead of creating a second one', async () => {
+  it('adopts the worktree of a lost answer instead of creating a second one', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
     // The worktree was created, but the answer of the command was lost before
-    // the workflow could write it down.
+    // the workflow could write it down. Orca links it to the Issue, and it
+    // carries the name and the branch of the Issue — the proof that it is the
+    // worktree of this Issue.
     orca.worktrees = [
-      { id: 'wt-9', path: '/wt/issue-59', name: 'issue-59', branch: '10x-chat/issue-59' },
+      {
+        id: 'wt-9',
+        path: '/wt/issue-59',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        linkedIssue: 59,
+      },
     ];
     const ctx = contextOf(orca, git);
 
@@ -996,6 +1057,87 @@ describe('the development workflow', () => {
 
     expect(orca.created).toHaveLength(0);
     expect(record.worktree?.id).toBe('wt-9');
+  });
+
+  it('takes over the worktree of a run that died before it wrote its mark', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The worktree was created, but the answer of the command was lost — the
+    // run that created it died before it could write it down.
+    orca.worktreeCreateError = new Error('the answer of the create command was lost');
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('the answer of the create command was lost');
+
+    // The worktree carries the mark of the run that died — the workflow wrote
+    // it at once.
+    expect(orca.worktrees[0]?.comment).toContain('10x-chat workflow');
+
+    // A new run of the same Issue takes that worktree over: it does not make
+    // a second one, and it does not work in the worktree of somebody else.
+    const record = await startWorkflow(
+      { issue: 59, cwd: '/repo', backend: createFakeBackend() },
+      ctx,
+    );
+
+    expect(orca.created).toHaveLength(1);
+    expect(record.worktree?.id).toBe('wt-1');
+  });
+
+  it('never takes over a worktree that carries no proof of its owner', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // A worktree of somebody else: nobody wrote the mark of a workflow in it.
+    orca.worktrees = [
+      { id: 'wt-9', path: '/wt/issue-59', name: 'issue-59', branch: '10x-chat/issue-59' },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('carries no proof');
+
+    expect(orca.created).toHaveLength(0);
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('never takes over a worktree that is linked to another Issue', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktrees = [
+      {
+        id: 'wt-9',
+        path: '/wt/issue-59',
+        name: 'issue-59',
+        branch: '10x-chat/issue-59',
+        linkedIssue: 60,
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('linked to the Issue #60');
+
+    expect(orca.created).toHaveLength(0);
+  });
+
+  it('does not guess which worktree is its own when Orca has two of them', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.worktrees = [
+      { id: 'wt-8', path: '/wt/one', name: 'issue-59', branch: '10x-chat/issue-59' },
+      { id: 'wt-9', path: '/wt/two', name: 'issue-59-old', branch: '10x-chat/issue-59' },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow('does not guess which one is its own');
+
+    expect(orca.created).toHaveLength(0);
   });
 
   it('never works in the checkout of the user', async () => {
@@ -1421,6 +1563,22 @@ describe('the development workflow', () => {
     // The absence of a failure is not the evidence of a judgment.
     expect(record.state).toBe('blocked');
     expect(record.blocked).toContain('review-tests');
+  });
+
+  it('does not guess which worker is its own when the Run has two of them', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // Two agents work in the Run of the workflow: the workflow does not guess
+    // which one is its own and starts no third agent next to them.
+    orca.workers.push({ dispatchId: 'dispatch-a', taskId: 'task-a', state: 'working' });
+    orca.workers.push({ dispatchId: 'dispatch-b', taskId: 'task-b', state: 'working' });
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/does not guess which one is its own/);
+
+    expect(orca.started).toHaveLength(0);
   });
 
   it('takes the worker of a lost answer instead of starting a second one', async () => {
@@ -2136,6 +2294,40 @@ describe('the development workflow', () => {
     const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
 
     await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/belongs to the repository/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not continue on a worktree whose checkout belongs to another repository', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-44444444', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.worktrees = [anOrcaWorktree()];
+    // The common directory of the worktree is the one of another repository —
+    // the worktree does not belong to the repository of the workflow.
+    git.commonDirs = { '/wt/issue-59': '/elsewhere/.git' };
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/belongs to another repository/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('does not continue when the repository of the worktree cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    const record = aRecord('issue-59-33333333', 'implementation-running');
+    record.orca = { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' };
+    orca.worktrees = [anOrcaWorktree()];
+    // The identity of the repository of the worktree is empty: nothing proves
+    // that the agent works in the repository of the Issue.
+    git.repositories = { '/wt/issue-59': '' };
+    await saveWorkflow(record);
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/cannot be read/);
 
     expect(orca.started).toHaveLength(0);
   });

@@ -573,3 +573,24 @@ fixed in the same round.
 The check set of that round: typecheck, lint, knip, test (63 files / **1209
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The tenth round
+
+The tenth round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with five findings: four of the severity MAJOR
+and one MINOR. The verification settled four of them: three MAJOR and the MINOR
+one were real. The one that stayed unsettled is the reading of the reviewers, and
+it was checked against the source — it was real as well and is fixed in the same
+round.
+
+| Finding of the tenth round | The answer |
+|---|---|
+| a worktree that was already there was adopted when its comment was empty — an empty comment is not a proof that the worktree belongs to this workflow | the ownership is a proof now: the worktree carries the mark of the workflow (the workflow writes it when it creates the worktree), or the record of the workflow already knows the worktree, or Orca links the worktree to the Issue of the workflow (`linkedIssue`) and it carries the name and the branch of the Issue. A worktree without such a proof is refused, and a worktree of a run that died is taken over only when the record of that run is a run of the same Issue |
+| the resume compared the common directory of the worktree with nothing — a worktree of another repository passed the check | the common directory of the worktree is compared with the common directory of the repository that is registered in Orca: two checkouts of one repository share it, and a checkout of another repository does not |
+| the identity of the repository of the worktree was allowed to be empty, so an unreadable identity passed the check | an identity that cannot be read is a refusal: the workflow cannot prove that the agent works in the repository of the Issue |
+| two workers of the Run of the workflow were candidates at once — the first one was taken and the second one was ignored | two candidates are an ambiguity that is refused: the workflow does not guess which one is its own and starts no agent next to them. The same rule holds for the answer of a lost start command |
+| there were no tests of the partial support of the worktree capabilities | the tests name the verbs now: a runtime that names two of the three verbs of the worktrees is refused with the name of the missing one, and a runtime that names all of them creates the worktree |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1218
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

@@ -145,6 +145,8 @@ describe('the adapter of the Orca CLI', () => {
           path: '/wt/issue-59',
           branch: 'refs/heads/10x-chat/issue-59',
           head: 'abc123',
+          comment: '10x-chat workflow issue-59-1: created',
+          linkedIssue: 59,
         },
       }),
     ]);
@@ -156,12 +158,17 @@ describe('the adapter of the Orca CLI', () => {
       branch: '10x-chat/issue-59',
       baseRef: 'main',
       issue: 59,
+      comment: '10x-chat workflow issue-59-1: created',
     });
 
     expect(worktree.id).toBe('wt-1');
     expect(worktree.path).toBe('/wt/issue-59');
     expect(worktree.branch).toBe('refs/heads/10x-chat/issue-59');
     expect(worktree.head).toBe('abc123');
+    // The owner of the worktree is written at once — the worktree of a lost
+    // answer carries the proof that it is ours.
+    expect(worktree.comment).toBe('10x-chat workflow issue-59-1: created');
+    expect(worktree.linkedIssue).toBe(59);
     const args = calls[0]?.args ?? [];
     expect(args).toContain('worktree');
     expect(args).toContain('create');
@@ -175,6 +182,8 @@ describe('the adapter of the Orca CLI', () => {
     expect(args).toContain('main');
     expect(args).toContain('--issue');
     expect(args).toContain('59');
+    expect(args).toContain('--comment');
+    expect(args).toContain('10x-chat workflow issue-59-1: created');
   });
 
   it('refuses a worktree that has no path', async () => {
@@ -188,6 +197,7 @@ describe('the adapter of the Orca CLI', () => {
         branch: '10x-chat/issue-59',
         baseRef: 'main',
         issue: 59,
+        comment: '10x-chat workflow issue-59-1: created',
       }),
     ).rejects.toThrow('without the worktree it created');
   });
@@ -300,6 +310,7 @@ describe('the adapter of the Orca CLI', () => {
             branch: 'refs/heads/10x-chat/issue-59',
             head: 'abc123',
             comment: 'the checkpoint of the workflow',
+            linkedIssue: 59,
             isMainWorktree: false,
           },
         ],
@@ -316,6 +327,8 @@ describe('the adapter of the Orca CLI', () => {
     // The comment is the checkpoint of the workflow — it is read before it is
     // written, and the main worktree is never taken over.
     expect(worktrees[0]?.comment).toBe('the checkpoint of the workflow');
+    // The Issue of the worktree is the proof that it belongs to the Issue.
+    expect(worktrees[0]?.linkedIssue).toBe(59);
     expect(worktrees[0]?.isMainWorktree).toBe(false);
     expect(calls[0]?.args).toContain('id:repo-1');
   });

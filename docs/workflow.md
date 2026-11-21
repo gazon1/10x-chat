@@ -69,18 +69,28 @@ instead of a second one.
 
 The branch and the name of the worktree are derived from the Issue
 (`10x-chat/issue-<n>` and `issue-<n>`), so that the worktree of a lost answer is
-found again. A worktree that is already there is taken over only when it can be
-proved to be ours:
+found again. The workflow writes its mark into the comment of the worktree when
+it creates it (`orca worktree create --comment …`), so that a worktree of a lost
+answer still carries the proof of its owner. A worktree that is already there is
+taken over only when it can be proved to be ours:
 
 | The worktree that is already there | What the workflow does |
 |---|---|
 | the checkout of the user (the main worktree) | refuses it — the agent never works in the checkout of the user |
 | a worktree of another branch | refuses it — the name of the Issue is not the proof of the ownership |
-| the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout |
+| the worktree of another workflow (its checkpoint names it) | refuses it — two workflows never share a checkout — unless the record of that run is a run of the same Issue, and then it is the worktree of a run that died |
+| a worktree linked to another Issue | refuses it — the worktree of another Issue is not the worktree of this one |
 | a worktree with a comment of somebody else | refuses it — the workflow does not take a worktree it cannot prove |
+| a worktree without any proof of its owner | refuses it — an empty comment is not a proof |
 | a worktree that already carries changes | refuses it — the work of somebody else is not taken over |
 | a worktree with changes that are not committed | refuses it — the agent would carry the work of somebody else into the change of the Issue |
 | the worktree of this workflow, untouched at the base | adopts it — the answer of a lost command is not a reason to make a second worktree |
+
+The ownership is a proof and not a guess: the worktree carries the mark of this
+workflow, or the record of the workflow already knows it, or Orca links it to the
+Issue of the workflow (`linkedIssue`) and it carries the name and the branch of
+the Issue. Two worktrees of the branch of the Issue are an ambiguity that is
+refused, never guessed.
 
 The worktrees of the repository are read for the same reason: the list is how a
 lost answer is reconciled.
@@ -93,6 +103,19 @@ has another one), and it must work on the branch of the Issue. A worktree whose
 branch cannot be read at all is refused too: a branch that cannot be proved is
 not the branch of the Issue. A worktree that does not pass the check is refused,
 and the agent never works in it.
+
+**The worktree of the record is the worktree of Orca.** On every run the worktree
+of the record is compared with the worktrees of Orca: the id, the path, the
+branch of Orca (a branch that is not named is a refusal) and the git of the
+checkout — its branch, its common directory against the common directory of the
+repository that is registered in Orca, and its identity against the repository of
+the workflow. An identity that cannot be read is a refusal: nothing proves that
+the agent works in the repository of the Issue.
+
+**One agent in the worktree.** Two candidates in the Run of the workflow — two
+workers that are not settled, or two that are — are an ambiguity that is refused:
+the workflow does not guess which one is its own and starts no agent next to
+them.
 
 **One workflow at a time per Issue.** A second `start` of the same Issue is
 refused while the first one runs: two workflows of one Issue would share the

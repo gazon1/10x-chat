@@ -1033,7 +1033,16 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
   // make a second worktree of the same Issue — and it is never a reason to
   // take the worktree of somebody else.
   const existing = await ctx.orca.worktreeList(repo.id);
-  const candidate = existing.find((worktree) => sameBranch(worktree.branch, branch));
+  const candidates = existing.filter((worktree) => sameBranch(worktree.branch, branch));
+  if (candidates.length > 1) {
+    // Two worktrees of one branch are an ambiguity: the workflow does not
+    // guess which one is its own, and it never takes a worktree of somebody
+    // else to make a second one.
+    throw new WorkflowError(
+      `Orca has ${candidates.length} worktrees on the branch ${branch} (${candidates.map((entry) => entry.path).join(', ')}) — the workflow does not guess which one is its own.`,
+    );
+  }
+  const candidate = candidates[0];
   let worktree: OrcaWorktree;
   let adopted = false;
   if (candidate) {
@@ -1057,6 +1066,9 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       branch,
       baseRef,
       issue: record.issue.number,
+      // The owner of the worktree is written at once: the worktree that a
+      // lost answer left behind carries the proof that it is ours.
+      comment: ownerMark(record, `created — issue #${record.issue.number}`),
     });
     // The answer of Orca is not the proof of the worktree: the workflow works
     // in a checkout of the repository of the Issue, on the branch of the
@@ -1167,8 +1179,35 @@ async function verifyWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
       `The worktree ${worktree.path} is not a checkout of a repository — the workflow cannot prove that the agent works in the repository of the Issue.`,
     );
   }
+  // The worktree belongs to the repository of the workflow: the common
+  // directory of the worktree and the common directory of the repository that
+  // is registered in Orca are the same — two checkouts of one repository share
+  // it, and a checkout of another repository does not.
+  const repos = await ctx.orca.repoList();
+  const repo = repos.find((entry) => entry.id === repoId);
+  if (!repo) {
+    throw new WorkflowError(
+      `The repository ${repoId} of the workflow is not registered in Orca anymore — the workflow does not continue on a worktree of an unknown repository.`,
+    );
+  }
+  const expected = await ctx.git.commonDir(repo.path);
+  if (expected === '') {
+    throw new WorkflowError(
+      `The common directory of the repository ${repo.path} cannot be read — the workflow cannot prove that the agent works in the repository of the Issue.`,
+    );
+  }
+  if (common !== expected) {
+    throw new WorkflowError(
+      `The worktree ${worktree.path} belongs to another repository — the workflow of this Issue works in ${record.repository}.`,
+    );
+  }
   const repository = await ctx.git.repository(worktree.path);
-  if (repository && repository !== record.repository) {
+  if (repository === '') {
+    throw new WorkflowError(
+      `The repository of the worktree ${worktree.path} cannot be read — the workflow cannot prove that the agent works in the repository of the Issue.`,
+    );
+  }
+  if (repository !== record.repository) {
     throw new WorkflowError(
       `The worktree ${worktree.path} belongs to the repository ${repository} — the workflow of this Issue works in ${record.repository}.`,
     );
@@ -1184,6 +1223,18 @@ function samePath(left: string, right: string): boolean {
 function ownerOf(comment: string | undefined): string | undefined {
   const match = /10x-chat workflow ([^\s:]+):/.exec(comment ?? '');
   return match?.[1];
+}
+
+/**
+ * The mark of the owner of a worktree.
+ *
+ * The comment of a worktree is the proof of who owns it: the workflow writes
+ * its mark when the worktree is created, so a worktree that a lost answer
+ * left behind still carries the proof that it is ours — and a worktree of
+ * somebody else carries none.
+ */
+function ownerMark(record: WorkflowRecord, detail: string): string {
+  return `10x-chat workflow ${record.id}: ${detail}`;
 }
 
 /**
@@ -1250,10 +1301,16 @@ async function refusalOf(
   }
   const owner = ownerOf(candidate.comment);
   if (owner && owner !== record.id) {
-    return `The worktree ${candidate.path} belongs to the workflow ${owner} — a workflow never shares a worktree with another run.`;
+    // A worktree of another run of the same Issue may be taken over: the
+    // record of that run is the proof that it is a run of this Issue, and the
+    // worktree of a run of another Issue never is.
+    const previous = await loadWorkflow(owner).catch(() => undefined);
+    if (!previous || previous.issue.number !== record.issue.number) {
+      return `The worktree ${candidate.path} belongs to the workflow ${owner} — a workflow never shares a worktree with another run.`;
+    }
   }
-  if ((candidate.comment ?? '').trim() !== '' && !owner) {
-    return `The worktree ${candidate.path} already carries a comment of somebody else — the workflow does not reuse a worktree it cannot prove.`;
+  if (candidate.linkedIssue !== undefined && candidate.linkedIssue !== record.issue.number) {
+    return `The worktree ${candidate.path} is linked to the Issue #${candidate.linkedIssue} — the workflow of this Issue works on #${record.issue.number}.`;
   }
   if (candidate.head && candidate.head !== baseSha) {
     return `The worktree ${candidate.path} already has changes (${candidate.head.slice(0, 7)}) — the workflow does not take over a worktree with work in it.`;
@@ -1265,6 +1322,24 @@ async function refusalOf(
   if (dirty.length > 0) {
     const shown = dirty.slice(0, 10).join('; ');
     return `The worktree ${candidate.path} has changes that are not committed (${shown}${dirty.length > 10 ? ` (+${dirty.length - 10} more)` : ''}) — the workflow does not take over a worktree with work in it.`;
+  }
+  // The ownership is proved, never assumed: the worktree carries the mark of
+  // this workflow, or the record of the workflow already knows it, or Orca
+  // links it to the Issue of the workflow and it carries the name and the
+  // branch of the Issue — the worktree of a run that died before it wrote
+  // its mark. A worktree without such a proof is the worktree of somebody
+  // else.
+  const known = record.worktree?.id === candidate.id;
+  const linked =
+    candidate.linkedIssue === record.issue.number &&
+    candidate.name === `issue-${record.issue.number}` &&
+    candidate.branch !== undefined &&
+    sameBranch(candidate.branch, branch);
+  if (!owner && !known && !linked) {
+    if ((candidate.comment ?? '').trim() !== '') {
+      return `The worktree ${candidate.path} already carries a comment of somebody else — the workflow does not reuse a worktree it cannot prove.`;
+    }
+    return `The worktree ${candidate.path} carries no proof that this workflow owns it — the workflow does not reuse a worktree of somebody else.`;
   }
   return undefined;
 }
@@ -1326,7 +1401,7 @@ async function startOrAdoptWorker(
     );
   }
   const alive = (workers: OrcaWorker[]) =>
-    workers.find(
+    workers.filter(
       (worker) => worker.dispatchId !== options.exclude && !TERMINAL.test(worker.state ?? ''),
     );
   if (options.adopt) {
@@ -1341,15 +1416,28 @@ async function startOrAdoptWorker(
     const candidates = (await ctx.orca.workerList(runId)).filter(
       (worker) => !used.has(worker.dispatchId),
     );
-    const running = candidates.find((worker) => !TERMINAL.test(worker.state ?? ''));
-    if (running) return { worker: running, origin: 'adopted' };
+    // One agent works in the worktree of the workflow. Two candidates are an
+    // ambiguity: the workflow does not guess which one is its own, and it
+    // never starts a third agent next to them.
+    const running = candidates.filter((worker) => !TERMINAL.test(worker.state ?? ''));
+    if (running.length > 1) {
+      throw new WorkflowError(
+        `The Run ${runId} has ${running.length} workers that are not settled (${running.map((worker) => worker.dispatchId).join(', ')}) — the workflow does not guess which one is its own and starts no agent next to them.`,
+      );
+    }
+    if (running.length === 1) return { worker: running[0], origin: 'adopted' };
     // The agent of an interrupted start may have finished before its Dispatch
     // was written down. A second agent would work in the same worktree, so the
     // worker that is there is taken: its result is read by the wait, and a
     // result that nobody confirmed blocks the workflow instead of starting a
     // second agent.
-    const settled = candidates.find((worker) => TERMINAL.test(worker.state ?? ''));
-    if (settled) return { worker: settled, origin: 'settled' };
+    const settled = candidates.filter((worker) => TERMINAL.test(worker.state ?? ''));
+    if (settled.length > 1) {
+      throw new WorkflowError(
+        `The Run ${runId} has ${settled.length} workers that are settled (${settled.map((worker) => worker.dispatchId).join(', ')}) — the workflow does not guess which one is its own and starts no agent next to them.`,
+      );
+    }
+    if (settled.length === 1) return { worker: settled[0], origin: 'settled' };
   }
   // The agent works in a clean worktree: the review reads the committed state
   // only, and the changes that are not committed are nobody's change.
@@ -1375,17 +1463,23 @@ async function startOrAdoptWorker(
     // asked before anything else.
     const reason = error instanceof Error ? error.message : String(error);
     const lost = alive(await ctx.orca.workerList(runId).catch(() => []));
-    if (!lost) throw error;
+    if (lost.length > 1) {
+      throw new WorkflowError(
+        `The Run ${runId} has ${lost.length} workers that are not settled (${lost.map((worker) => worker.dispatchId).join(', ')}) — the workflow does not guess which one is the lost answer and starts no agent next to them.`,
+      );
+    }
+    if (lost.length === 0) throw error;
+    const worker = lost[0];
     // The workflow may have been stopped while the agent was starting, and the
     // lost answer hides the worker from the stop: the worker of a lost answer
     // is stopped again, exactly like the worker of a received answer.
     if (isStopping(await storedState(record))) {
-      const result = await stopWorker(ctx, lost.dispatchId);
+      const result = await stopWorker(ctx, worker.dispatchId);
       throw new WorkflowError(
-        `The workflow was stopped while the agent was starting — the worker ${lost.dispatchId} was stopped again${result.stopped ? '' : `, but it could not be confirmed: ${result.failure ?? 'the state of the worker is unknown'}`}.`,
+        `The workflow was stopped while the agent was starting — the worker ${worker.dispatchId} was stopped again${result.stopped ? '' : `, but it could not be confirmed: ${result.failure ?? 'the state of the worker is unknown'}`}.`,
       );
     }
-    return { worker: lost, origin: 'lost', reason };
+    return { worker, origin: 'lost', reason };
   }
   // The workflow may have been stopped while the agent was starting. The
   // worker that was just started is stopped again: an agent that works in a

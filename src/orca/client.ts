@@ -50,6 +50,8 @@ export interface OrcaWorktree {
   head?: string;
   /** The comment of the worktree — the checkpoint of the workflow lives there. */
   comment?: string;
+  /** The GitHub Issue the worktree is linked to — the ownership of the Issue. */
+  linkedIssue?: number;
   /** Whether the worktree is the checkout of the user — it is never reused. */
   isMainWorktree?: boolean;
 }
@@ -103,6 +105,8 @@ export interface OrcaApi {
     branch: string;
     baseRef: string;
     issue: number;
+    /** The comment that names the owner of the worktree — the workflow writes it at once. */
+    comment: string;
   }): Promise<OrcaWorktree>;
   worktreeList(repoId: string): Promise<OrcaWorktree[]>;
   worktreeComment(selector: string, comment: string): Promise<void>;
@@ -172,6 +176,14 @@ function findValue(payload: unknown, names: string[]): unknown {
 function findString(payload: unknown, names: string[]): string | undefined {
   const value = findValue(payload, names);
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+/** The number of an answer — the number of an Issue, for example. */
+function findNumber(payload: unknown, names: string[]): number | undefined {
+  const value = findValue(payload, names);
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return undefined;
 }
 
 /** The objects of the answer that carry a type of their own. */
@@ -314,6 +326,7 @@ export class OrcaClient implements OrcaApi {
     branch: string;
     baseRef: string;
     issue: number;
+    comment: string;
   }): Promise<OrcaWorktree> {
     const result = await this.call([
       'worktree',
@@ -328,6 +341,8 @@ export class OrcaClient implements OrcaApi {
       options.baseRef,
       '--issue',
       String(options.issue),
+      '--comment',
+      options.comment,
     ]);
     const worktree = isRecord(result) && isRecord(result.worktree) ? result.worktree : result;
     const id = findString(worktree, ['id']);
@@ -337,7 +352,16 @@ export class OrcaClient implements OrcaApi {
     }
     const branch = findString(worktree, ['branch']);
     const head = findString(worktree, ['head', 'headSha', 'sha']);
-    return { id, path, ...(branch ? { branch } : {}), ...(head ? { head } : {}) };
+    const comment = findString(worktree, ['comment', 'description']);
+    const linkedIssue = findNumber(worktree, ['linkedIssue']);
+    return {
+      id,
+      path,
+      ...(branch ? { branch } : {}),
+      ...(head ? { head } : {}),
+      ...(comment ? { comment } : {}),
+      ...(linkedIssue !== undefined ? { linkedIssue } : {}),
+    };
   }
 
   async worktreeComment(selector: string, comment: string): Promise<void> {
@@ -364,6 +388,7 @@ export class OrcaClient implements OrcaApi {
       const branch = findString(entry, ['branch']);
       const head = findString(entry, ['head', 'headSha', 'sha']);
       const comment = findString(entry, ['comment', 'description']);
+      const linkedIssue = findNumber(entry, ['linkedIssue']);
       const isMain = findValue(entry, ['isMainWorktree']);
       worktrees.push({
         id,
@@ -372,6 +397,7 @@ export class OrcaClient implements OrcaApi {
         ...(branch ? { branch } : {}),
         ...(head ? { head } : {}),
         ...(comment ? { comment } : {}),
+        ...(linkedIssue !== undefined ? { linkedIssue } : {}),
         ...(typeof isMain === 'boolean' ? { isMainWorktree: isMain } : {}),
       });
     }
