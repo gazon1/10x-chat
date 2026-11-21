@@ -357,17 +357,20 @@ function fakeReview(git: FakeGit, verdicts: Verdict[]) {
 }
 
 describe('the development workflow', () => {
-  const originalEnv = process.env;
+  // The environment of the process is changed in place, not replaced with a
+  // copy of it: the child processes inherit the environment that the process
+  // has when they are started, and a copy of it is not that environment.
+  const originalHome = process.env.TEN_X_CHAT_HOME;
   let home = '';
 
   beforeEach(async () => {
-    process.env = { ...originalEnv };
     home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-'));
     process.env.TEN_X_CHAT_HOME = home;
   });
 
   afterEach(() => {
-    process.env = originalEnv;
+    if (originalHome === undefined) delete process.env.TEN_X_CHAT_HOME;
+    else process.env.TEN_X_CHAT_HOME = originalHome;
   });
 
   /** The context of a test — the clock moves on every call. */
@@ -387,6 +390,8 @@ describe('the development workflow', () => {
       now?: () => Date;
       /** The instructions of the repository — the `AGENTS.md` of the checkout. */
       readInstructions?: (cwd: string) => Promise<string>;
+      /** The environment of the `gh` CLI — the CLI of another PATH. */
+      ghEnv?: NodeJS.ProcessEnv;
     } = {},
   ): WorkflowContext {
     let tick = 0;
@@ -400,6 +405,7 @@ describe('the development workflow', () => {
       waitTimeoutMs: options.waitTimeoutMs ?? 60_000,
       ...(options.review ? { review: options.review } : {}),
       ...(options.readInstructions ? { readInstructions: options.readInstructions } : {}),
+      ...(options.ghEnv ? { ghEnv: options.ghEnv } : {}),
       ...(options.useRealGh
         ? {}
         : {
@@ -1509,8 +1515,9 @@ describe('the development workflow', () => {
   });
 
   it('reads the Issue through the gh CLI of the machine', async () => {
-    // The real integration: the `gh` CLI of the PATH answers the Issue, and
-    // the workflow reads it without a fake in between.
+    // The real integration: the `gh` CLI is really started, and the workflow
+    // reads the Issue through it — the answer of the CLI of the PATH that the
+    // workflow was given.
     const bin = path.join(home, 'bin');
     await mkdir(bin, { recursive: true });
     const log = path.join(home, 'gh-args.txt');
@@ -1532,10 +1539,9 @@ describe('the development workflow', () => {
       'utf-8',
     );
     await chmod(gh, 0o755);
-    // The `gh` CLI is found through the PATH of the process — the environment
-    // of the child processes is the real one, not the copy of the test.
-    const previousPath = originalEnv.PATH;
-    originalEnv.PATH = `${bin}:${previousPath ?? ''}`;
+    // The `gh` CLI is the one of the PATH that the workflow is given: the
+    // environment of the command is named, and the CLI of that PATH answers.
+    const ghEnv: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
     const checkout = path.join(home, 'checkout');
     await mkdir(checkout, { recursive: true });
 
@@ -1545,27 +1551,23 @@ describe('the development workflow', () => {
       git.head = 'head-sha-1';
     };
     const { review } = fakeReview(git, [{ verdict: 'APPROVE', reason: 'the change is correct' }]);
-    const ctx = contextOf(orca, git, { review, useRealGh: true, cwd: checkout });
+    const ctx = contextOf(orca, git, { review, useRealGh: true, cwd: checkout, ghEnv });
 
-    try {
-      const record = await startWorkflow(
-        { issue: 59, cwd: checkout, backend: createFakeBackend() },
-        ctx,
-      );
+    const record = await startWorkflow(
+      { issue: 59, cwd: checkout, backend: createFakeBackend() },
+      ctx,
+    );
 
-      expect(record.state).toBe('completed');
-      // The requirements are the ones the CLI answered with.
-      expect(record.issue.title).toBe('The issue of the workflow');
-      expect(record.issue.hash).toBe(
-        hashRequirements('The issue of the workflow', 'The body of the issue.'),
-      );
-      // The CLI was asked for the authentication and for the Issue itself.
-      const args = await readFile(log, 'utf-8');
-      expect(args).toContain('auth status');
-      expect(args).toContain('issue view 59 --repo gazon1/10x-chat --json number,url,title,body');
-    } finally {
-      originalEnv.PATH = previousPath;
-    }
+    expect(record.state).toBe('completed');
+    // The requirements are the ones the CLI answered with.
+    expect(record.issue.title).toBe('The issue of the workflow');
+    expect(record.issue.hash).toBe(
+      hashRequirements('The issue of the workflow', 'The body of the issue.'),
+    );
+    // The CLI was asked for the authentication and for the Issue itself.
+    const args = await readFile(log, 'utf-8');
+    expect(args).toContain('auth status');
+    expect(args).toContain('issue view 59 --repo gazon1/10x-chat --json number,url,title,body');
   });
 
   it('does not start an agent in a workflow that is being stopped', async () => {
@@ -2110,17 +2112,17 @@ describe('the development workflow', () => {
 });
 
 describe('the store of the workflows', () => {
-  const originalEnv = process.env;
+  const originalHome = process.env.TEN_X_CHAT_HOME;
   let home = '';
 
   beforeEach(async () => {
-    process.env = { ...originalEnv };
     home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-'));
     process.env.TEN_X_CHAT_HOME = home;
   });
 
   afterEach(() => {
-    process.env = originalEnv;
+    if (originalHome === undefined) delete process.env.TEN_X_CHAT_HOME;
+    else process.env.TEN_X_CHAT_HOME = originalHome;
   });
 
   /** A record of a workflow — the smallest one the store accepts. */

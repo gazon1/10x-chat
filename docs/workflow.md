@@ -354,7 +354,7 @@ step of the review is the gate that says that the Issue did not drift.
 
 ## The seams
 
-The workflow depends on three things that are replaceable, so that its own
+The workflow depends on a few things that are replaceable, so that its own
 tests need no Orca, no GitHub and no model:
 
 | Seam | Default | Replaced by the tests with |
@@ -364,6 +364,7 @@ tests need no Orca, no GitHub and no model:
 | the review | `runReviewPipeline()` (`src/pipeline/review.ts`) | a fake that answers with a verdict |
 | the Issue | `gh` (`src/pipeline/requirements.ts`) | a fake that answers with a version |
 | the instructions of the repository | the `AGENTS.md` of the worktree | a fake that answers with the rules of the change |
+| the environment of `gh` | the environment of the process | the PATH of a `gh` of the test |
 
 A local change — the change of a worktree that was never pushed — is reviewed
 from its diff: the reviewers have no page of it on GitHub. That is the one

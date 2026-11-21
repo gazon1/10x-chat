@@ -103,17 +103,30 @@ export function parseIssue(payload: unknown, expected: number): IssueData {
   return { number, url, title, body };
 }
 
-/** Run `gh` and capture what it says. */
+/**
+ * Run `gh` and capture what it says.
+ *
+ * The environment of the command is the environment of the process, unless the
+ * caller names another one: the `gh` CLI of a different PATH is another CLI,
+ * and a caller that needs a particular one has to be able to say so.
+ */
 export function runGh(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve) => {
     execFile(
       'gh',
       args,
-      { cwd, maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' },
+      {
+        cwd,
+        maxBuffer: 32 * 1024 * 1024,
+        timeout: timeoutMs,
+        killSignal: 'SIGKILL',
+        ...(options.env ? { env: options.env } : {}),
+      },
       (error, stdout, stderr) => {
         // A command that had to be killed answered nothing: it is a timeout,
         // and the reason says so — the run must not wait for it any longer.
@@ -148,12 +161,13 @@ export async function fetchIssue(
   number: number,
   repository: string,
   cwd: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<IssueData> {
   const result = await runGh(
     ['issue', 'view', String(number), '--repo', repository, '--json', 'number,url,title,body'],
     cwd,
     options.timeoutMs ?? GH_TIMEOUT_MS,
+    { env: options.env },
   );
   if (result.code !== 0) {
     const reason = result.stderr.trim() || result.stdout.trim() || 'gh is not available';
@@ -358,7 +372,7 @@ export async function collectRequirements(
   number: number,
   repository: string,
   cwd: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<IssueRequirements> {
   assertRepository(repository);
   const issue = await fetchIssue(number, repository, cwd, options);

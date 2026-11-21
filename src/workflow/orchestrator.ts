@@ -95,6 +95,12 @@ export interface WorkflowContext {
   readInstructions?: (cwd: string) => Promise<string>;
   /** The check that the `gh` CLI is there and authenticated. */
   assertAuthenticated?: (cwd: string) => Promise<void>;
+  /**
+   * The environment of the `gh` CLI — the environment of the process by
+   * default. The CLI of another PATH is another CLI, and a caller that needs
+   * a particular one has to be able to say so.
+   */
+  ghEnv?: NodeJS.ProcessEnv;
 }
 
 /** The options of a new workflow. */
@@ -398,6 +404,7 @@ export function createWorkflowContext(options: {
   readRequirements?: (issue: number, repository: string, cwd: string) => Promise<IssueRequirements>;
   readInstructions?: (cwd: string) => Promise<string>;
   assertAuthenticated?: (cwd: string) => Promise<void>;
+  ghEnv?: NodeJS.ProcessEnv;
 }): WorkflowContext {
   return {
     orca: options.orca,
@@ -412,6 +419,7 @@ export function createWorkflowContext(options: {
     ...(options.readRequirements ? { readRequirements: options.readRequirements } : {}),
     ...(options.readInstructions ? { readInstructions: options.readInstructions } : {}),
     ...(options.assertAuthenticated ? { assertAuthenticated: options.assertAuthenticated } : {}),
+    ...(options.ghEnv ? { ghEnv: options.ghEnv } : {}),
   };
 }
 
@@ -531,7 +539,7 @@ async function assertGh(ctx: WorkflowContext): Promise<void> {
     await ctx.assertAuthenticated(ctx.cwd);
     return;
   }
-  const result = await runGh(['auth', 'status'], ctx.cwd, 30_000);
+  const result = await runGh(['auth', 'status'], ctx.cwd, 30_000, { env: ctx.ghEnv });
   if (result.code === 0) return;
   const reason = result.stderr.trim() || result.stdout.trim();
   throw new WorkflowError(
@@ -547,7 +555,7 @@ function requirementsOf(
 ): Promise<IssueRequirements> {
   return ctx.readRequirements
     ? ctx.readRequirements(issue, repository, ctx.cwd)
-    : collectRequirements(issue, repository, ctx.cwd);
+    : collectRequirements(issue, repository, ctx.cwd, { env: ctx.ghEnv });
 }
 
 /** The repository of Orca that matches the repository of the checkout. */

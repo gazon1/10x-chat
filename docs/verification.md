@@ -534,3 +534,20 @@ fixed in the same round.
 The check set of that round: typecheck, lint, knip, test (63 files / **1201
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The check set of the CI of the eighth round
+
+The run of the eighth round on the CI failed on one test — the one that reads
+the Issue through the `gh` CLI of the machine. The CLI of the CI is installed
+and not authenticated, and the test replaced it with a CLI of its own through
+the PATH of the process: the child processes of the test did not inherit that
+PATH — the PATH of the process and the PATH of its environment are not the same
+thing — so the real CLI answered and the test failed.
+
+The environment of the `gh` CLI is a seam now (`ghEnv` of the context of the
+workflow, `runGh` of `src/pipeline/requirements.ts`): the CLI of the PATH that
+the workflow was given is the one that answers. The test names the PATH of its
+own CLI, and it does not depend on the machine it runs on any more. The
+environment of the process is also changed in place in the tests of the
+workflow: a copy of it is not the environment that the child processes
+inherit.
