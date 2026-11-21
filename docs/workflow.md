@@ -193,6 +193,11 @@ change of the Issue.
 ```
 
 `start` prints the id of the workflow — the argument of every other command.
+`status` reads the workflow and changes nothing. The report names the reviewer,
+the model, the commit every iteration started at and the range that the review
+of the iteration compared — the base of the iteration and the base of the
+review are not always the same commit: the iteration of the corrections starts
+at the head of the previous iteration.
 
 ## What it needs
 
@@ -397,6 +402,19 @@ the workers of its Run all the same. The state of a workflow that is over does
 not move: a stop is not the cancellation of it, and the reason of the stop is
 written into the history of the run and into the reason of the block.
 
+**A stopped worker is not a failed worker.** The outcome of a Task that was
+stopped is `stopped`, and it is not `failed`: a workflow that a user stopped
+on purpose does not block itself with the reason "the agent did not finish the
+task". The stop owns the outcome of the workflow — a process that waited for
+its agent and saw the worker stopped reads the record on the disk again, sees
+that another process is stopping the workflow or that it is over already, and
+leaves it alone. The state of a workflow is not moved by a process that came
+later, and the reason of the block of a process that lost that race is never
+written.
+
+`stop` exits with the code of the state it leaves behind: a workflow that ends
+`blocked` — a worker that could not be stopped — is not a clean exit.
+
 ## The stop and the start never meet
 
 The stop does not take the lock of the run, so it can run while another process
@@ -431,6 +449,13 @@ line still wins — `--backend` and `--model` change the review on purpose. A
 backend of the record that is not available is a refusal and not a silent
 fallback to another one.
 
+The run of the pipeline that was interrupted is read back — but only when it
+judged the same commit, the same base, the same version of the Issue **and the
+same reviewer**. The binding of the run (its head, its base, the hash of the
+Issue, the backend and the model) is written down before the review starts, so
+that a run of another reviewer is never reused as the evidence of this one: the
+change is judged again by the reviewer that this run would use.
+
 ## The state on the disk
 
 ```text
@@ -439,6 +464,9 @@ fallback to another one.
 ├── events.jsonl           ← the history of the states (0600)
 ├── report.md              ← the report of the workflow (0600)
 └── reviews/iteration-N/   ← the review of every iteration
+    ├── binding.json       ← what the run judged and who judged it (0600)
+    ├── review.json        ← the run of the pipeline (0600)
+    └── report.md          ← the report of the review (0600)
 ```
 
 The directory is private (`0700`) and the files belong to their owner alone
@@ -475,7 +503,7 @@ step of the review is the gate that says that the Issue did not drift.
 |---|---|
 | The agent is still working when the wait is over | The workflow keeps its state and gives the turn back. `resume` continues it. |
 | The command was interrupted | The record of the last completed step is on the disk. `resume` continues from there. |
-| The command was interrupted while the review ran | The review of the interrupted run is read back instead of judging the change a second time — but only when it judged the same head, the same base and the same version of the requirements. Otherwise the change is reviewed again. |
+| The command was interrupted while the review ran | The review of the interrupted run is read back instead of judging the change a second time — but only when it judged the same head, the same base, the same version of the requirements and the same reviewer (the backend and the model). Otherwise the change is reviewed again. |
 | The agent changed nothing | The workflow blocks — there is no change to review. |
 | The state of the agent is unknown | The workflow blocks — an unknown outcome is not a success. A Dispatch that says `succeeded` without a structured outcome is unknown. |
 | The worktree is not clean | The workflow blocks — the review reads the committed state only. The same check keeps the agent from starting in a dirty checkout. |
@@ -486,6 +514,7 @@ step of the review is the gate that says that the Issue did not drift.
 | The agent could not be stopped | The workflow blocks — the agent may still work in the worktree. |
 | The workers of the Run could not be read | The workflow blocks — an agent of the Run may still work in the worktree. |
 | Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
+| Another process stopped the workflow | The run stops without a write — the stop owns the outcome of the workflow, and a worker that was stopped is not a worker that failed. |
 | Another process wrote the record | The run stops without a write — the revision of the record is the truth. `stop` merges with the record that is there instead. |
 | The answer of the start command was lost | The Run is asked: the worker that is already there is adopted — a second agent would work in the same worktree. |
 | The answer of the creation of the Run was lost | The Runs are asked: the Run of the objective of the workflow is adopted — a second Run would be a second home of the mailbox. Two Runs of the same objective are an ambiguity that is refused, never guessed. |
@@ -513,3 +542,13 @@ A local change — the change of a worktree that was never pushed — is reviewe
 from its diff: the reviewers have no page of it on GitHub. That is the one
 place where the pipeline differs from the review of a pull request, and it is
 opt-in per target (`local: true`).
+
+**The lists of Orca are read strictly.** A list that the runtime answers in a
+form the workflow does not know is a refusal, not an empty list, and a row of
+the list that cannot be named — a repository without an id or a path, a
+worktree without an id or a path — is a refusal too: a worktree that was
+dropped from the list would be a second worktree for the same Issue, and a
+repository that was dropped would be a checkout that the workflow cannot
+identify. The same holds for the workers of the Run: an answer that holds no
+list at all is a refusal, because a worker that is there all the same must be
+visible — a second agent would start next to it.

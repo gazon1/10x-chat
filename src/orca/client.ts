@@ -372,21 +372,31 @@ export class OrcaClient implements OrcaApi {
 
   async repoList(): Promise<OrcaRepo[]> {
     const result = await this.call(['repo', 'list']);
-    const repos = isRecord(result) ? result.repos : undefined;
-    if (!Array.isArray(repos)) return [];
+    const repos = findArray(result, ['repos', 'repositories']);
+    if (!repos) {
+      throw new OrcaError(
+        'orca repo list answered without the repositories of the runtime — an unknown list is not an empty list',
+      );
+    }
     const parsed: OrcaRepo[] = [];
     for (const entry of repos) {
-      if (!isRecord(entry)) continue;
-      const id = typeof entry.id === 'string' ? entry.id : undefined;
-      const path = typeof entry.path === 'string' ? entry.path : undefined;
-      if (!id || !path) continue;
+      if (!isRecord(entry)) {
+        throw new OrcaError('orca repo list answered with a repository that is not an object');
+      }
+      const id = findString(entry, ['id']);
+      const path = findString(entry, ['path']);
+      if (!id || !path) {
+        throw new OrcaError(
+          'orca repo list answered with a repository without an id or a path — a repository that cannot be named is not a repository that can be ignored',
+        );
+      }
       const identity = isRecord(entry.gitRemoteIdentity) ? entry.gitRemoteIdentity : undefined;
       const canonicalKey =
         typeof identity?.canonicalKey === 'string' ? identity.canonicalKey : undefined;
       parsed.push({
         id,
         path,
-        displayName: typeof entry.displayName === 'string' ? entry.displayName : path,
+        displayName: findString(entry, ['displayName', 'name']) ?? path,
         ...(canonicalKey ? { canonicalKey } : {}),
       });
     }
@@ -457,10 +467,16 @@ export class OrcaClient implements OrcaApi {
     }
     const worktrees: OrcaWorktree[] = [];
     for (const entry of list) {
-      if (!isRecord(entry)) continue;
+      if (!isRecord(entry)) {
+        throw new OrcaError('orca worktree list answered with a worktree that is not an object');
+      }
       const id = findString(entry, ['id']);
       const path = findString(entry, ['path']);
-      if (!id || !path) continue;
+      if (!id || !path) {
+        throw new OrcaError(
+          'orca worktree list answered with a worktree without an id or a path — a worktree that cannot be named is not a worktree that can be ignored: the workflow would create a second one for the same Issue',
+        );
+      }
       const name = findString(entry, ['displayName', 'name']);
       const branch = findString(entry, ['branch']);
       const head = findString(entry, ['head', 'headSha', 'sha']);

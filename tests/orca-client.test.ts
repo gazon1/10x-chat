@@ -109,6 +109,35 @@ describe('the adapter of the Orca CLI', () => {
     expect(repos[0]?.canonicalKey).toBe('github.com/gazon1/10x-chat');
   });
 
+  it('refuses to read a list of repositories that the answer does not hold', async () => {
+    const { runner } = fakeRunner([ok({ nothing: true })]);
+    const client = new OrcaClient({ runner });
+
+    // An unknown list is not an empty list: a repository that cannot be seen
+    // may be there, and the workflow would refuse the wrong one.
+    await expect(client.repoList()).rejects.toThrow(/without the repositories/);
+  });
+
+  it('refuses a repository that the answer does not name', async () => {
+    const { runner } = fakeRunner([ok({ repos: [{ id: 'repo-1' }] })]);
+    const client = new OrcaClient({ runner });
+
+    // A repository without a path is not a repository that can be ignored:
+    // the workflow cannot tell which checkout it works in.
+    await expect(client.repoList()).rejects.toThrow(/without an id or a path/);
+  });
+
+  it('refuses a worktree that the answer does not name', async () => {
+    const { runner } = fakeRunner([
+      ok({ worktrees: [{ id: 'wt-1', path: '/wt/issue-59' }, { branch: '10x-chat/issue-59' }] }),
+    ]);
+    const client = new OrcaClient({ runner });
+
+    // A worktree that cannot be named is not a worktree that can be ignored:
+    // the workflow would create a second one for the same Issue.
+    await expect(client.worktreeList('repo-1')).rejects.toThrow(/without an id or a path/);
+  });
+
   it('reads the field of the name that the caller asks for first', async () => {
     // The order of the keys of the answer is not the priority of the caller:
     // the report of the worker is the field 'report', and the summary beside

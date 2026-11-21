@@ -115,8 +115,13 @@ export interface WorkflowIteration {
   index: number;
   startedAt: string;
   finishedAt?: string;
-  /** What the agent reported — `succeeded`, `failed` or `unknown`. */
-  agentOutcome?: 'succeeded' | 'failed' | 'unknown';
+  /**
+   * What the agent reported — `succeeded`, `failed`, `stopped` or `unknown`.
+   *
+   * A worker that was stopped is not a worker that failed: the outcome of a
+   * stop belongs to the process that stopped the workflow.
+   */
+  agentOutcome?: 'succeeded' | 'failed' | 'stopped' | 'unknown';
   /** The report of the agent. */
   agentReport?: string;
   /** The commit the iteration started at. */

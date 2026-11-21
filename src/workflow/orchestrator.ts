@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBackend } from '../backend/contract.js';
 import { fenceFor } from '../core/bundle.js';
@@ -89,6 +89,8 @@ export interface WorkflowContext {
   model?: string;
   /** The label of the backend in the report. */
   backendLabel?: string;
+  /** The name of the backend that reviews the change. */
+  backendName?: string;
   /** The clock of the workflow. */
   now: () => Date;
   /** How long the workflow waits for the agent before it gives the turn back. */
@@ -460,11 +462,29 @@ function iterationWeight(iteration: WorkflowIteration | undefined): number {
  * read again under the lock of the state, so that a workflow that is blocked
  * keeps the identifiers of the other process — the Run, the Dispatch and the
  * worktree — and does not lose them to an older copy of the record.
+ *
+ * A workflow that is over is not blocked again: its state does not move any
+ * more, and the record of the disk is the truth. A workflow that another
+ * process is stopping is not blocked by this one either — the stop owns the
+ * outcome of the workflow, and a process that lost that race must not turn
+ * the stop into a failure of the agent. The block reports whether it was
+ * made.
  */
-async function block(record: WorkflowRecord, reason: string, ctx: WorkflowContext): Promise<void> {
+async function block(
+  record: WorkflowRecord,
+  reason: string,
+  ctx: WorkflowContext,
+): Promise<boolean> {
+  let blocked = false;
   await withStateLock(record.id, async () => {
     const stored = await storedRecord(record.id);
     const target = stored ? mergeRecords(stored, record) : record;
+    if (isTerminal(target.state)) {
+      // The workflow is over: the state of it is not moved by a process that
+      // came later.
+      Object.assign(record, target);
+      return;
+    }
     assertTransition(target.state, 'blocked');
     target.state = 'blocked';
     target.blocked = reason;
@@ -472,13 +492,35 @@ async function block(record: WorkflowRecord, reason: string, ctx: WorkflowContex
     target.revision = (target.revision ?? 0) + 1;
     await saveWorkflow(target);
     Object.assign(record, target);
+    blocked = true;
   });
+  if (!blocked) return false;
   await appendEvent(record.id, {
     at: record.updatedAt,
     state: 'blocked',
     detail: reason,
   });
   await checkpoint(record, ctx, reason);
+  return true;
+}
+
+/**
+ * Whether the stop of another process owns the outcome of the workflow.
+ *
+ * A workflow that is being stopped is on its way out: the process that stops
+ * it decides how it ends. A process that waited for its agent and saw the
+ * worker stopped does not turn that stop into a failure of the agent, and it
+ * does not move the state of a workflow that is over.
+ */
+async function stopOwnsOutcome(record: WorkflowRecord): Promise<boolean> {
+  const stored = await storedRecord(record.id);
+  if (!stored) return false;
+  if (stored.state !== 'stopping' && !isTerminal(stored.state)) return false;
+  // The record of the disk is the truth: this process adopts its state, so
+  // that its loop leaves the workflow alone instead of waiting for an agent
+  // that the other process stopped on purpose.
+  Object.assign(record, mergeRecords(stored, record));
+  return true;
 }
 
 /** Write the record down without moving it. */
@@ -494,6 +536,7 @@ export function createWorkflowContext(options: {
   git?: WorkflowGit;
   model?: string;
   backendLabel?: string;
+  backendName?: string;
   now?: () => Date;
   waitTimeoutMs?: number;
   review?: (request: WorkflowReviewRequest) => Promise<ReviewRun>;
@@ -509,6 +552,7 @@ export function createWorkflowContext(options: {
     cwd: options.cwd,
     ...(options.model ? { model: options.model } : {}),
     ...(options.backendLabel ? { backendLabel: options.backendLabel } : {}),
+    ...(options.backendName ? { backendName: options.backendName } : {}),
     now: options.now ?? (() => new Date()),
     waitTimeoutMs: options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
     ...(options.review ? { review: options.review } : {}),
@@ -938,16 +982,35 @@ function reviewOf(run: ReviewRun, reportPath: string): WorkflowReview {
  * of a worker that reports no structured outcome is a worker whose result
  * nobody confirmed, and the workflow must not treat it as a finished task.
  */
-function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
-  const outcome = worker.outcome?.toLowerCase().trim();
-  if (outcome) {
-    if (/^(succeeded|success|successful|passed)$/.test(outcome)) return 'succeeded';
-    if (/^(failed|failure|error|escalated|cancelled|canceled)$/.test(outcome)) return 'failed';
-  }
+function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | 'stopped' | undefined {
+  const reported = outcomeTextOf(worker.outcome);
+  if (reported) return reported;
   const state = worker.state ?? '';
   if (FAILED.test(state)) return 'failed';
-  // A worker that was stopped or cancelled did not finish the task.
-  if (/(stop|cancel|terminat)/i.test(state)) return 'failed';
+  // A worker that was stopped or cancelled did not finish the task — but it
+  // did not fail either: the stop of the workflow owns that outcome, and a
+  // workflow that the user stopped must not be blocked as a failure of the
+  // agent.
+  if (STOPPED.test(state)) return 'stopped';
+  return undefined;
+}
+
+/**
+ * The outcome a structured result carries.
+ *
+ * The runtime writes the outcome of a Task in its own words: the comparison
+ * is made against the same vocabulary everywhere, so that a runtime that
+ * writes "Succeeded" is understood like the one that writes "succeeded".
+ */
+function outcomeTextOf(
+  outcome: string | undefined,
+): 'succeeded' | 'failed' | 'stopped' | undefined {
+  const value = outcome?.toLowerCase().trim();
+  if (!value) return undefined;
+  if (/^(succeeded|success|successful|passed)$/.test(value)) return 'succeeded';
+  if (/^(failed|failure|error|escalated)$/.test(value)) return 'failed';
+  // A worker that was cancelled did not fail — it was stopped.
+  if (/^(cancelled|canceled|stopped|aborted)$/.test(value)) return 'stopped';
   return undefined;
 }
 
@@ -960,10 +1023,12 @@ function outcomeOf(worker: OrcaWorker): 'succeeded' | 'failed' | undefined {
  * no Dispatch at all can be the result of any of them — the workflow does not
  * guess which one.
  *
- * A message without a Dispatch belongs to the worker that still works: a
- * worker that is done cannot send a message any more. When every worker of
- * the Run is done, the message may be the last one of any of them, and only a
- * Run with a single worker may answer it.
+ * A message without a Dispatch is attributed only when the Run holds a single
+ * worker: a Run that holds more than one cannot tell which of its workers
+ * sent the message, and a message that arrives late — of the worker of an
+ * earlier iteration — must never close the iteration that runs now. A message
+ * that cannot be attributed stays unowned: the wait reports it, and the
+ * outcome of the worker is read from its own Dispatch.
  */
 async function dispatchOfMessage(
   message: OrcaMessage,
@@ -975,12 +1040,7 @@ async function dispatchOfMessage(
   if (!known.dispatches) {
     try {
       const workers = await ctx.orca.workerList(runId);
-      const working = workers.filter((worker) => !TERMINAL.test(worker.state ?? ''));
-      // Every worker of the Run is done: the message is the last one of one
-      // of them, and the Run may answer it only when it has a single worker.
-      known.dispatches = (working.length > 0 ? working : workers).map(
-        (worker) => worker.dispatchId,
-      );
+      known.dispatches = workers.map((worker) => worker.dispatchId);
     } catch {
       // The workers of the Run cannot be read: the message belongs to nobody
       // that the workflow can prove.
@@ -995,7 +1055,7 @@ async function waitForWorker(
   record: WorkflowRecord,
   ctx: WorkflowContext,
 ): Promise<{
-  kind: 'succeeded' | 'failed' | 'unknown' | 'pending' | 'stale';
+  kind: 'succeeded' | 'failed' | 'stopped' | 'unknown' | 'pending' | 'stale';
   report?: string;
   detail?: string;
 }> {
@@ -1038,6 +1098,9 @@ async function waitForWorker(
         ...(worker.report ? { report: worker.report } : {}),
         ...(outcome === 'failed' && !worker.report
           ? { detail: 'the worker reported a failure' }
+          : {}),
+        ...(outcome === 'stopped' && !worker.report
+          ? { detail: 'the worker was stopped without a report' }
           : {}),
       };
     }
@@ -1084,13 +1147,20 @@ async function waitForWorker(
         };
       }
       if (message.type === 'worker_done') {
-        if (message.outcome === 'succeeded') {
+        const reported = outcomeTextOf(message.outcome);
+        if (reported === 'succeeded') {
           return { kind: 'succeeded', ...(message.text ? { report: message.text } : {}) };
         }
-        if (message.outcome === 'failed') {
+        if (reported === 'failed') {
           return {
             kind: 'failed',
             detail: message.text ?? 'the worker reported a failure',
+          };
+        }
+        if (reported === 'stopped') {
+          return {
+            kind: 'stopped',
+            detail: message.text ?? 'the worker was stopped without a report',
           };
         }
         // A worker that reported neither an outcome nor a failure did not
@@ -2037,6 +2107,10 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     if (dispatch) stopped = await stopWorker(ctx, dispatch);
     iteration.agentOutcome = 'unknown';
     iteration.finishedAt = ctx.now().toISOString();
+    // The stop of another process owns the outcome of the workflow: the
+    // worker was stopped on purpose, and the workflow is not blocked as a
+    // failure of the agent.
+    if (await stopOwnsOutcome(record)) return true;
     await block(
       record,
       `The state of the agent is unknown — ${outcome.detail ?? 'the worker did not report an outcome'}.${stopNote(stopped)}`,
@@ -2044,12 +2118,18 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     );
     return true;
   }
-  if (outcome.kind === 'failed') {
-    iteration.agentOutcome = 'failed';
+  if (outcome.kind === 'failed' || outcome.kind === 'stopped') {
+    // A worker that was stopped is not a worker that failed: when another
+    // process stopped the workflow, the stop owns the outcome, and the
+    // workflow is not blocked as a failure of the agent.
+    iteration.agentOutcome = outcome.kind === 'stopped' ? 'stopped' : 'failed';
     iteration.finishedAt = ctx.now().toISOString();
+    if (await stopOwnsOutcome(record)) return true;
     await block(
       record,
-      `The agent did not finish the task — ${outcome.detail ?? 'it reported a failure'}.`,
+      outcome.kind === 'stopped'
+        ? `The agent stopped without a report — ${outcome.detail ?? 'it was stopped'}.`
+        : `The agent did not finish the task — ${outcome.detail ?? 'it reported a failure'}.`,
       ctx,
     );
     return true;
@@ -2071,6 +2151,7 @@ async function awaitWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
     if (dispatch) stopped = await stopWorker(ctx, dispatch);
     iteration.agentOutcome = 'unknown';
     iteration.finishedAt = ctx.now().toISOString();
+    if (await stopOwnsOutcome(record)) return true;
     await block(record, `The workflow stopped — ${outcome.detail}.${stopNote(stopped)}`, ctx);
     return true;
   }
@@ -2123,6 +2204,66 @@ async function persistedReview(runDir: string): Promise<ReviewRun | undefined> {
   }
 }
 
+/**
+ * The binding of a review run — the change it judges and the reviewer it is.
+ *
+ * The run of the pipeline names the commit and the version of the Issue, but
+ * not the reviewer that wrote it. The workflow writes the binding down before
+ * the review starts, so that a run of another reviewer is never reused as the
+ * evidence of this one: a workflow that is resumed with another backend or
+ * another model judges the change again.
+ */
+export interface ReviewBinding {
+  version: 1;
+  headSha: string;
+  baseSha: string;
+  requirementsHash: string;
+  backend: string;
+  model: string;
+}
+
+/** The name of the file of the binding in the directory of the run. */
+const BINDING_FILE = 'binding.json';
+
+/**
+ * Write the binding of a review run down.
+ *
+ * The file is written before the review starts: a process that dies between
+ * the run and the record of it leaves the binding behind, and the run is read
+ * back. The directory and the file belong to the owner alone.
+ */
+export async function writeReviewBinding(runDir: string, binding: ReviewBinding): Promise<void> {
+  await mkdir(runDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') await chmod(runDir, 0o700);
+  const file = path.join(runDir, BINDING_FILE);
+  await writeFile(file, `${JSON.stringify(binding, null, 2)}\n`, {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+  if (process.platform !== 'win32') await chmod(file, 0o600);
+}
+
+/** The binding of a run that is on the disk — the one of another reviewer is not the binding of this one. */
+async function persistedBinding(runDir: string): Promise<ReviewBinding | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(path.join(runDir, BINDING_FILE), 'utf-8');
+  } catch {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<ReviewBinding>;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    if (parsed.version !== 1) return undefined;
+    if (typeof parsed.headSha !== 'string' || typeof parsed.baseSha !== 'string') return undefined;
+    if (typeof parsed.backend !== 'string' || typeof parsed.model !== 'string') return undefined;
+    return parsed as ReviewBinding;
+  } catch {
+    // A binding that cannot be read is no binding: the review runs again.
+    return undefined;
+  }
+}
+
 /** The step that runs the review of the change. */
 async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   const worktree = record.worktree;
@@ -2164,11 +2305,21 @@ async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promis
   // The review of an interrupted run is the evidence the pipeline left behind:
   // a process that died between the run and the record of it did not judge the
   // change twice. The run is reused only when it judged the commit that the
-  // workflow holds now and the version of the Issue that the workflow reads —
-  // a run of another change is not the evidence of this one.
+  // workflow holds now, the version of the Issue that the workflow reads and
+  // the reviewer that this run would use — a run of another change or of
+  // another reviewer is not the evidence of this one.
+  const binding = await persistedBinding(runDir);
+  const reviewer = ctx.backendName ?? record.backendName ?? record.backend;
+  const model = ctx.model ?? record.model ?? '';
   const persisted = await persistedReview(runDir);
   if (
     persisted &&
+    binding &&
+    binding.backend === reviewer &&
+    binding.model === model &&
+    binding.headSha === headSha &&
+    binding.baseSha === worktree.baseSha &&
+    binding.requirementsHash === record.issue.hash &&
     persisted.context?.headSha === headSha &&
     persisted.context?.baseSha === worktree.baseSha &&
     persisted.context?.requirements?.hash === record.issue.hash
@@ -2182,6 +2333,17 @@ async function startReview(record: WorkflowRecord, ctx: WorkflowContext): Promis
     );
     return;
   }
+  // The binding is written down before the review starts: a process that dies
+  // between the run and the record of it leaves it behind, and the run of the
+  // pipeline is read back the next time.
+  await writeReviewBinding(runDir, {
+    version: 1,
+    headSha,
+    baseSha: worktree.baseSha,
+    requirementsHash: record.issue.hash,
+    backend: reviewer,
+    model,
+  });
   const run = await review({
     cwd: worktree.path,
     // The base is the commit the worktree started from — not the ref it was
@@ -3072,6 +3234,7 @@ export function renderWorkflowReport(record: WorkflowRecord): string {
   if (record.blocked) lines.push(`- Blocked: ${record.blocked}`);
   lines.push(`- Agent: ${record.agent}`);
   lines.push(`- Reviewer: ${record.backend}`);
+  lines.push(`- Model: ${record.model ?? '(the default of the reviewer)'}`);
   if (worktree) {
     lines.push(`- Worktree: ${worktree.path}`);
     lines.push(`- Worktree id: ${worktree.id}`);
@@ -3094,11 +3257,18 @@ export function renderWorkflowReport(record: WorkflowRecord): string {
       `### Iteration ${iteration.index} — the agent ${iteration.agentOutcome ?? 'did not report'}`,
     );
     lines.push('');
-    lines.push(`- The change started at ${iteration.baseSha || '(unknown)'}.`);
+    lines.push(`- The iteration started at ${iteration.baseSha || '(unknown)'}.`);
     if (iteration.headSha) {
-      lines.push(`- The change ended at ${iteration.headSha}.`);
+      lines.push(`- The iteration ended at ${iteration.headSha}.`);
     }
     if (iteration.review) {
+      // The review judges the change of the branch, from the commit the
+      // worktree started at: the iteration of the corrections starts at the
+      // head of the previous iteration, and the two bases are not the same
+      // commit. The report names both.
+      lines.push(
+        `- The review compared ${worktree?.baseSha ?? '(the base of the worktree)'}..${iteration.headSha ?? '(the head of the iteration)'}.`,
+      );
       lines.push(`- The review: ${iteration.review.verdict} — ${iteration.review.verdictReason}`);
       lines.push(`- The report: ${iteration.review.reportPath ?? '(none)'}`);
       const findings = iteration.review.findings;

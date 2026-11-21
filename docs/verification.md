@@ -776,3 +776,71 @@ a workflow that waits for its agent and the backend of the record.
 The check set of that round: typecheck, lint, knip, test (63 files /**1273
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The seventeenth round
+
+The seventeenth round of the same pipeline did **not** run to the end: the step
+`review-architecture` timed out — the page of the ChatGPT was replaced while
+the first turn was still running — and the round was recorded as a failure
+(`REQUEST CHANGES`, the step `review-architecture` failed, the step
+`update-requirements` was skipped). The findings of the rounds that did run
+were two: one of the severity MAJOR and one of the severity MINOR, neither of
+them settled by the verification.
+
+| Finding of the seventeenth round | The answer |
+|---|---|
+| a message of the mailbox that names no Dispatch was attributed to the only worker that works in the Run — the workers of an earlier iteration were ignored, and a message that arrives late could close the iteration that runs now | a message without a Dispatch is attributed only when the Run holds a single worker; a Run with several workers leaves it ambiguous, and an ambiguous message never settles an iteration |
+| no test covered that `workflow status` changes nothing | the test is there: the record and the history of the workflow are read and not written |
+
+Beside the round, the source of the workflow was read by a fourth reviewer
+(`verifier`, read-only, no change of the repository). It returned ten findings —
+three of the severity MAJOR and seven of the severity MINOR — and all of them
+were checked against the source and all of them were real. They were fixed in
+the same round:
+
+| Finding of the audit | The answer |
+|---|---|
+| a worker that was stopped was counted as a failed one — a concurrent `stop` blocked the workflow with the reason "the agent did not finish the task" | the outcome of a stopped Task is `stopped`, and it is not `failed` |
+| the race of a stop threw the internal message "The workflow cannot move from 'cancelled' to 'blocked'" | a workflow that is over is not blocked again, and a workflow that another process is stopping is not blocked by this one: the stop owns the outcome |
+| the command `stop` exited with the code 0 when the workflow it stopped ended `blocked` | the code of the exit is the code of the state: a blocked workflow is a failure of the command |
+| the state of a worker was read without a difference between a stopped worker and a failed one | the states are read as three different things: stopped, done, unknown |
+| the outcome of the mailbox was compared with the register of the runtime — "Succeeded" was not the outcome of a success | the outcome is normalized before it is compared: the vocabulary of the runtime is read the same way everywhere |
+| the list of the repositories of Orca was read as an empty list when the answer of the runtime held an unknown form | an unknown form is a refusal, and a repository without an id or a path is a refusal too |
+| the list of the worktrees of Orca dropped the rows that it could not name — a worktree that was there all the same was invisible, and a second worktree of the same Issue was created | a row that cannot be named is a refusal, not a dropped row |
+| the base of the iteration and the base of the review were two different commits, and the report called the first one "the change started at" | the report names the commit every iteration started at and the range that the review compared |
+| the review of an interrupted run was reused without naming the reviewer that wrote it — a run of another backend or of another model was the evidence of this one | the binding of the run is written down before the review starts: the head, the base, the hash of the Issue, the backend and the model |
+| the report of the workflow did not name the model of the reviewer | the report names the model |
+
+### The eighteenth round
+
+The eighteenth round answered the findings of the seventeenth round and of the
+audit that came with it. The code of the workflow changed in six places: the
+outcome of a stopped worker, the block of a workflow that another process
+stopped, the code of the exit of the command `stop`, the normalization of the
+outcome that the runtime writes, the strict reading of the lists of Orca and
+the binding of the review of an interrupted run.
+
+| What the round changed | The answer |
+|---|---|
+| a stopped worker was a failed worker | the outcome of a Task that was stopped is `stopped`, and the vocabulary of the runtime is normalized before it is compared: `cancelled`, `canceled`, `stopped` and `aborted` are a stop, `escalated` is a failure |
+| a concurrent `stop` blocked the workflow with a false reason and threw the internal message of an impossible transition | a workflow that is over is not blocked again, and a workflow that another process is stopping is not blocked by this one — the stop owns the outcome of the workflow, and the run adopts the state of the record on the disk |
+| the command `stop` exited with the code 0 when the workflow ended `blocked` | the code of the exit is the code of the state |
+| the list of the repositories and the list of the worktrees of Orca dropped what they could not read | an unknown form of the list and a row that cannot be named are refusals, not empty lists |
+| the review of an interrupted run was reused without naming the reviewer | the binding of the run (`binding.json`) is written down before the review starts: the head, the base, the hash of the Issue, the backend and the model — a run of another reviewer is not the evidence of this one |
+| the report of the workflow named neither the model nor the base of the review | the report names the model, the commit every iteration started at and the range that the review compared |
+
+Eleven tests of the workflow, three tests of the adapter and two tests of the
+command line were added with the fixes: a workflow that another process stopped
+is not blocked, a worker that was stopped did not fail, the outcome of the
+mailbox whatever the runtime writes, a message without a Dispatch is attributed
+only when the Run holds a single worker, the refusal to read a list of
+repositories of an unknown form, the refusal to read a repository without an id
+or a path, the refusal to read a worktree without an id or a path, the code of
+the exit of a blocked `stop`, the test that `workflow status` changes nothing,
+the review of an interrupted run of another reviewer and the report that names
+the model.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1284
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
+

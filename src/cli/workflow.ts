@@ -190,6 +190,7 @@ export function createWorkflowCommand(): Command {
           backend,
           cwd: process.cwd(),
           backendLabel: label,
+          backendName: translated.backendName,
           ...(options.model ? { model: options.model as string } : {}),
           ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
         });
@@ -284,6 +285,7 @@ export function createWorkflowCommand(): Command {
           backend,
           cwd: process.cwd(),
           backendLabel: label,
+          backendName: chosen.backend,
           ...(chosen.model ? { model: chosen.model } : {}),
           ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
         });
@@ -311,6 +313,10 @@ export function createWorkflowCommand(): Command {
         });
         const record = await stopWorkflow(id, ctx);
         printState(record);
+        // A stop that ends in a blocked workflow is not a clean exit: the
+        // agent that still works in the worktree could not be stopped, and
+        // the workflow needs a human.
+        process.exitCode = exitCodeOf(record.state);
       } catch (error) {
         console.error(
           chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`),

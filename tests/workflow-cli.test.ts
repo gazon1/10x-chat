@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, resumeBackendOf, startOptionsOf } from '../src/cli/workflow.js';
 import { hashRequirements } from '../src/pipeline/requirements.js';
-import { listWorkflows, loadWorkflow, saveWorkflow } from '../src/workflow/store.js';
+import { appendEvent, listWorkflows, loadWorkflow, saveWorkflow } from '../src/workflow/store.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
 import { runCli } from './e2e/helpers.js';
 
@@ -132,6 +132,65 @@ describe('the command of the workflow (CLI)', () => {
       if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
       else process.env.TEN_X_CHAT_HOME = original;
     }
+  });
+
+  it('exits with a failure when the stop leaves the workflow blocked', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const original = process.env.TEN_X_CHAT_HOME;
+    process.env.TEN_X_CHAT_HOME = home;
+    try {
+      // A workflow that is over does not move — and a stop of it is not a
+      // cancellation of it.
+      await saveWorkflow({
+        ...aRecord('issue-59-20260101000000-abcd1234'),
+        state: 'blocked',
+        blocked: 'the review did not pass',
+      });
+    } finally {
+      if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
+      else process.env.TEN_X_CHAT_HOME = original;
+    }
+
+    const res = await runCli(['workflow', 'stop', 'issue-59-20260101000000-abcd1234'], {
+      TEN_X_CHAT_HOME: home,
+    });
+
+    // A blocked workflow is not a clean exit: the same rule the start and the
+    // resume follow.
+    expect(res.code).toBe(1);
+    expect(res.stdout).toContain('issue-59-20260101000000-abcd1234: blocked');
+  });
+
+  it('never changes the state of a workflow when it is asked about it', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const original = process.env.TEN_X_CHAT_HOME;
+    process.env.TEN_X_CHAT_HOME = home;
+    try {
+      await saveWorkflow(aRecord('issue-59-20260101000000-abcd1234'));
+      await appendEvent('issue-59-20260101000000-abcd1234', {
+        at: '2026-01-01T00:00:00.000Z',
+        state: 'completed',
+        detail: 'the workflow was started',
+      });
+    } finally {
+      if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
+      else process.env.TEN_X_CHAT_HOME = original;
+    }
+    const dir = path.join(home, 'workflows', 'issue-59-20260101000000-abcd1234');
+    const record = path.join(dir, 'workflow.json');
+    const before = await readFile(record, 'utf-8');
+    const events = path.join(dir, 'events.jsonl');
+    const historyBefore = await readFile(events, 'utf-8');
+
+    const res = await runCli(['workflow', 'status', 'issue-59-20260101000000-abcd1234'], {
+      TEN_X_CHAT_HOME: home,
+    });
+
+    expect(res.code).toBe(0);
+    // The status of a workflow is a read: the record and the history of the
+    // workflow are the evidence of it, and they do not move.
+    expect(await readFile(record, 'utf-8')).toBe(before);
+    expect(await readFile(events, 'utf-8')).toBe(historyBefore);
   });
 
   it('reports that a workflow cannot be continued', async () => {
