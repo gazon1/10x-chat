@@ -478,3 +478,25 @@ of the reviewers, and each of them was checked against the source.
 The check set of that round: typecheck, lint, knip, test (63 files / **1180
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The seventh round
+
+The seventh round of the same pipeline ran completely — every step of it passed —
+and returned **REQUEST CHANGES** with five findings of the severity MAJOR and
+two MINOR ones. The verification settled five of them: four MAJOR and one MINOR.
+The two that stayed unsettled are the reading of the reviewers, and each of them
+was checked against the source.
+
+| Finding of the seventh round | The answer |
+|---|---|
+| every failure of the read of the record was treated as an absent record, so a broken record, a record behind a link and a record that the owner may not read were answered with a fresh write | a record that is not there and a record that cannot be read are two failures now: the first one is `WorkflowNotFoundError`, the second one is refused by every write — the evidence of the run is never replaced by a fresh one, and `saveWorkflow` refuses the links of the store before it writes |
+| the recovery of a lost answer of the start command adopted the worker without asking whether the workflow was on its way out — a stop in that window saw no worker and cancelled the workflow | the recovery of a lost answer asks the state of the record on the disk like the answer that came does: a worker of a lost answer in a workflow that is being stopped is stopped again |
+| the default base of the workflow named a local branch that the checkout may not have — a detached checkout with only `refs/remotes/origin/main` failed before Orca was asked | the base is resolved like the pipeline resolves it: when the local branch is absent, the ref of origin is used (`origin/main`), and a worktree is created from the commit it names |
+| the registration of the repository in Orca was matched by `owner/name` alone, so a registration of another host was accepted | the host of the remote is a part of the identity of the repository: a registration whose host is not the host of the checkout is refused, and the agent never works in a repository of another host |
+| a worktree whose branch could not be read was accepted, because an empty branch was not a difference | an empty branch is not the branch of the Issue: the worktree is refused, and the agent never works in a checkout whose branch cannot be proved |
+| the test of the command line resumed a record that had already ended, so the resume of an interrupted workflow was never driven through the command | the command is driven end to end for the resume too: a real worktree of the repository, the Orca and the `gh` of the test, the agent of the interrupted run adopted and no second agent started |
+| the recovery of a lost answer of the creation of the Run took the first Run of the listing that carried the objective | the objective is not a unique name: two Runs of Orca that carry it are an ambiguity that is refused, never guessed |
+
+The check set of that round: typecheck, lint, knip, test (63 files / **1187
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

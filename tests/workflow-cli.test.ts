@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { resumeBackendOf, startOptionsOf } from '../src/cli/workflow.js';
+import { hashRequirements } from '../src/pipeline/requirements.js';
 import { listWorkflows, loadWorkflow, saveWorkflow } from '../src/workflow/store.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
 import { runCli } from './e2e/helpers.js';
@@ -350,6 +351,138 @@ esac
       const stored = await loadWorkflow(id);
       expect(stored.worktree?.branch).toBe('10x-chat/issue-59');
       expect(stored.worktree?.path).toBe(worktree);
+      expect(stored.orca?.dispatchId).toBe('dispatch-1');
+    } finally {
+      if (original === undefined) delete process.env.TEN_X_CHAT_HOME;
+      else process.env.TEN_X_CHAT_HOME = original;
+    }
+  });
+
+  it('continues an interrupted workflow through the command line', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-cli-'));
+    const bin = path.join(home, 'bin');
+    const checkout = path.join(home, 'checkout');
+    const worktree = path.join(home, 'worktree');
+    const marker = path.join(home, 'worker-started');
+    await mkdir(bin, { recursive: true });
+    await mkdir(checkout, { recursive: true });
+
+    // The checkout of the repository and the worktree of the branch of the
+    // Issue: the workflow of an interrupted run continues in it.
+    await exec('git', ['init', '-b', 'main', checkout]);
+    await exec('git', ['-C', checkout, 'commit', '--allow-empty', '-m', 'the first commit'], {
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Test',
+        GIT_AUTHOR_EMAIL: 'test@example.com',
+        GIT_COMMITTER_NAME: 'Test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+      },
+    });
+    await exec('git', [
+      '-C',
+      checkout,
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/gazon1/10x-chat.git',
+    ]);
+    await exec('git', [
+      '-C',
+      checkout,
+      'worktree',
+      'add',
+      '-b',
+      '10x-chat/issue-59',
+      worktree,
+      'main',
+    ]);
+    const { stdout } = await exec('git', ['-C', worktree, 'rev-parse', 'HEAD']);
+    const sha = stdout.trim();
+
+    // The Orca of the test — the agent of the interrupted run is still there.
+    await writeFile(
+      path.join(bin, 'orca'),
+      `#!/bin/sh
+case "$1 $2" in
+"status "*) printf '%s\\n' '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"capabilities":["orchestration.contract.v1","worktree.create"]},"graph":{"state":"ready"}}}' ;;
+"repo list") printf '%s\\n' '{"ok":true,"result":{"repos":[{"id":"repo-1","path":"${checkout}","gitRemoteIdentity":{"canonicalKey":"github.com/gazon1/10x-chat"}}]}}' ;;
+"worktree list") printf '%s\\n' '{"ok":true,"result":{"worktrees":[]}}' ;;
+"orchestration worker-list") printf '%s\\n' '{"ok":true,"result":{"workers":[{"dispatchId":"dispatch-1","taskId":"task-1","state":"working"}]}}' ;;
+"orchestration worker-show") printf '%s\\n' '{"ok":true,"result":{"dispatchId":"dispatch-1","state":"working"}}' ;;
+"orchestration worker-start") printf '%s\\n' 'started' > "${marker}"; printf '%s\\n' '{"ok":true,"result":{"dispatchId":"dispatch-2","taskId":"task-2","state":"working"}}' ;;
+"orchestration check") printf '%s\\n' '{"ok":true,"result":{"messages":[]}}' ;;
+*) printf '%s\\n' '{"ok":true,"result":{}}' ;;
+esac
+`,
+      'utf-8',
+    );
+    await chmod(path.join(bin, 'orca'), 0o755);
+
+    // The `gh` CLI of the test — it answers with the Issue of the workflow.
+    const issueFile = path.join(home, 'issue.json');
+    await writeFile(
+      issueFile,
+      JSON.stringify({
+        number: 59,
+        url: 'https://github.com/gazon1/10x-chat/issues/59',
+        title: 'The issue of the workflow',
+        body: 'The body of the issue.',
+      }),
+      'utf-8',
+    );
+    await writeFile(
+      path.join(bin, 'gh'),
+      `#!/bin/sh
+case "$1 $2" in
+"auth status") exit 0;;
+"issue view") cat "${issueFile}";;
+esac
+`,
+      'utf-8',
+    );
+    await chmod(path.join(bin, 'gh'), 0o755);
+
+    // The record of the interrupted run: the agent works and the workflow
+    // waits for it.
+    const id = 'issue-59-20260101000000-abcd1234';
+    const original = process.env.TEN_X_CHAT_HOME;
+    process.env.TEN_X_CHAT_HOME = home;
+    try {
+      await saveWorkflow({
+        ...aRecord(id),
+        state: 'implementation-running',
+        backendName: 'chatgpt-use',
+        model: 'gpt-5',
+        issue: {
+          ...aRecord(id).issue,
+          hash: hashRequirements('The issue of the workflow', 'The body of the issue.'),
+        },
+        worktree: {
+          id: 'wt-1',
+          path: worktree,
+          branch: '10x-chat/issue-59',
+          baseRef: 'main',
+          baseSha: sha,
+        },
+        orca: { repoId: 'repo-1', runId: 'run-1', dispatchId: 'dispatch-1' },
+        iterations: [{ index: 1, startedAt: '2026-01-01T00:00:00.000Z', baseSha: sha }],
+      });
+
+      const res = await runCli(
+        ['workflow', 'resume', id, '--wait', '200'],
+        { TEN_X_CHAT_HOME: home, PATH: `${bin}:${process.env.PATH ?? ''}` },
+        undefined,
+        { cwd: checkout },
+      );
+
+      expect(res.code).toBe(0);
+      // The workflow waits for the agent that is still working.
+      expect(res.stdout).toContain(`${id}: implementation-running`);
+      // The agent of the interrupted run was adopted — no second one was started.
+      await expect(readFile(marker, 'utf-8')).rejects.toThrow();
+      const stored = await loadWorkflow(id);
+      expect(stored.state).toBe('implementation-running');
       expect(stored.orca?.dispatchId).toBe('dispatch-1');
     } finally {
       if (original === undefined) delete process.env.TEN_X_CHAT_HOME;

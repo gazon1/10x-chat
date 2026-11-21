@@ -9,8 +9,14 @@ import { getWorkflowDir, getWorkflowsDir } from '../paths.js';
 import { assertRepository, collectRequirements, runGh } from '../pipeline/requirements.js';
 import { runReviewPipeline } from '../pipeline/review.js';
 import type { IssueRequirements, ReviewRun } from '../pipeline/types.js';
-import { nodeWorkflowGit, type WorkflowGit } from './git.js';
-import { appendEvent, listWorkflows, loadWorkflow, saveWorkflow } from './store.js';
+import { canonicalHost, nodeWorkflowGit, remoteHost, type WorkflowGit } from './git.js';
+import {
+  appendEvent,
+  listWorkflows,
+  loadWorkflow,
+  saveWorkflow,
+  WorkflowNotFoundError,
+} from './store.js';
 import { assertTransition, isTerminal } from './transitions.js';
 import type {
   WorkflowFinding,
@@ -224,13 +230,38 @@ async function withStateLock<T>(id: string, action: () => Promise<T>): Promise<T
  * processes can hold the same state and still be two processes — the one that
  * writes last would lose the identifiers of the other one.
  */
+/**
+ * The record of a workflow on the disk.
+ *
+ * A record that is not there is an empty store; a record that cannot be read
+ * — a broken file, a link in the store, a permission that is gone — is a
+ * failure of its own. Only the first one may be treated as "no record yet":
+ * the second one must never be answered with a fresh write, because that
+ * write would replace the evidence of the run.
+ */
+async function storedRecord(id: string): Promise<WorkflowRecord | undefined> {
+  try {
+    return await loadWorkflow(id);
+  } catch (error) {
+    if (error instanceof WorkflowNotFoundError) return undefined;
+    throw error;
+  }
+}
+
 async function writeRecord(
   record: WorkflowRecord,
   ctx: WorkflowContext,
   next?: WorkflowState,
 ): Promise<void> {
   await withStateLock(record.id, async () => {
-    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    let stored: WorkflowRecord | undefined;
+    try {
+      stored = await storedRecord(record.id);
+    } catch (error) {
+      throw new WorkflowError(
+        `The workflow ${record.id} cannot be read — ${error instanceof Error ? error.message : String(error)}. The record is left as it is.`,
+      );
+    }
     if (stored) {
       if (stored.state !== record.state) {
         throw new WorkflowError(
@@ -284,7 +315,7 @@ function mergeRecords(stored: WorkflowRecord, mine: WorkflowRecord): WorkflowRec
  */
 async function block(record: WorkflowRecord, reason: string, ctx: WorkflowContext): Promise<void> {
   await withStateLock(record.id, async () => {
-    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    const stored = await storedRecord(record.id);
     const target = stored ? mergeRecords(stored, record) : record;
     assertTransition(target.state, 'blocked');
     target.state = 'blocked';
@@ -475,6 +506,10 @@ function requirementsOf(
 /**
  * The registration of Orca that belongs to the checkout of the workflow.
  *
+ * The host is a part of the identity of the repository: the same `owner/name`
+ * on another host is another repository, and a worktree of it is a change of
+ * somebody else's checkout.
+ *
  * The same repository may be registered twice — a clone and a mirror of it. The
  * first registration of the list is not the clone of the user, and a worktree
  * of the wrong clone is a change of somebody else's checkout. The registration
@@ -485,9 +520,25 @@ function resolveRepo(
   repos: { id: string; path: string; canonicalKey?: string }[],
   repository: string,
   checkoutRoot: string,
+  remoteUrl: string,
 ): { id: string; path: string; canonicalKey?: string } | undefined {
-  const matches = repos.filter((repo) => repo.canonicalKey?.endsWith(`/${repository}`));
-  if (matches.length === 0) return undefined;
+  const named = repos.filter((repo) => repo.canonicalKey?.endsWith(`/${repository}`));
+  if (named.length === 0) return undefined;
+  const expectedHost = remoteHost(remoteUrl);
+  const matches =
+    expectedHost === ''
+      ? named
+      : named.filter((repo) => canonicalHost(repo.canonicalKey ?? '') === expectedHost);
+  if (matches.length === 0) {
+    const hosts = [
+      ...new Set(
+        named.map((repo) => canonicalHost(repo.canonicalKey ?? '')).filter((host) => host !== ''),
+      ),
+    ];
+    throw new WorkflowError(
+      `The repository ${repository} is registered in Orca for another host (${hosts.join(', ') || 'a host that is not named'}) — the checkout of the user is on ${expectedHost}. The workflow never works in a repository of another host.`,
+    );
+  }
   if (matches.length === 1) return matches[0];
   const root = checkoutRoot === '' ? '' : path.resolve(checkoutRoot);
   const own = matches.find((repo) => {
@@ -835,7 +886,12 @@ async function createWorktree(record: WorkflowRecord, ctx: WorkflowContext): Pro
     }
   }
   const repos = await ctx.orca.repoList();
-  const repo = resolveRepo(repos, record.repository, await ctx.git.root(ctx.cwd));
+  const repo = resolveRepo(
+    repos,
+    record.repository,
+    await ctx.git.root(ctx.cwd),
+    await ctx.git.remoteUrl(ctx.cwd),
+  );
   if (!repo) {
     throw new WorkflowError(
       `The repository ${record.repository} is not registered in Orca — register it with 'orca repo add --path <path>'.`,
@@ -951,7 +1007,10 @@ async function refusalOfCreated(
     return `The worktree ${created.path} belongs to another repository — the workflow works in the repository of the checkout of the user.`;
   }
   const worktreeBranch = await ctx.git.branch(created.path);
-  if (worktreeBranch !== '' && !sameBranch(worktreeBranch, branch)) {
+  if (worktreeBranch === '') {
+    return `The branch of the worktree ${created.path} cannot be read — the workflow cannot prove that the agent works on the branch ${branch}.`;
+  }
+  if (!sameBranch(worktreeBranch, branch)) {
     return `The worktree ${created.path} works on the branch ${worktreeBranch} — the workflow of this Issue works on the branch ${branch}.`;
   }
   return undefined;
@@ -1004,8 +1063,17 @@ type WorkerOrigin = 'adopted' | 'started' | 'lost';
  */
 async function storedState(record: WorkflowRecord): Promise<WorkflowState | undefined> {
   return withStateLock(record.id, async () => {
-    const stored = await loadWorkflow(record.id).catch(() => undefined);
-    return stored?.state;
+    // A record that cannot be read is a record whose state is unknown: the
+    // caller has to know that, because an unknown state is no proof that the
+    // workflow is running.
+    try {
+      const stored = await storedRecord(record.id);
+      return stored?.state;
+    } catch (error) {
+      throw new WorkflowError(
+        `The workflow ${record.id} cannot be read — ${error instanceof Error ? error.message : String(error)}.`,
+      );
+    }
   });
 }
 
@@ -1068,6 +1136,15 @@ async function startOrAdoptWorker(
     const reason = error instanceof Error ? error.message : String(error);
     const lost = alive(await ctx.orca.workerList(runId).catch(() => []));
     if (!lost) throw error;
+    // The workflow may have been stopped while the agent was starting, and the
+    // lost answer hides the worker from the stop: the worker of a lost answer
+    // is stopped again, exactly like the worker of a received answer.
+    if (isStopping(await storedState(record))) {
+      const result = await stopWorker(ctx, lost.dispatchId);
+      throw new WorkflowError(
+        `The workflow was stopped while the agent was starting — the worker ${lost.dispatchId} was stopped again${result.stopped ? '' : `, but it could not be confirmed: ${result.failure ?? 'the state of the worker is unknown'}`}.`,
+      );
+    }
     return { worker: lost, origin: 'lost', reason };
   }
   // The workflow may have been stopped while the agent was starting. The
@@ -1099,9 +1176,16 @@ async function startWorker(record: WorkflowRecord, ctx: WorkflowContext): Promis
       // same. A second Run would be a second home of the mailbox of the
       // workflow, so the Runs are asked before anything else.
       const runs = await ctx.orca.runList().catch(() => []);
-      const found = runs.find((run) => run.objective === objective);
-      if (!found) throw error;
-      runId = found.id;
+      const found = runs.filter((run) => run.objective === objective);
+      if (found.length === 0) throw error;
+      if (found.length > 1) {
+        // The objective is not a unique name: two Runs of Orca carry it, and
+        // the workflow does not guess which one is the mailbox of this run.
+        throw new WorkflowError(
+          `The answer of the runCreate was lost and ${found.length} Runs of Orca carry the objective "${objective}" — the workflow does not guess which one is its mailbox. Stop the workflow and look at the Runs of Orca.`,
+        );
+      }
+      runId = found[0].id;
     }
     record.orca = { ...(record.orca ?? { repoId: '' }), runId };
     await persist(record, ctx);
@@ -1443,7 +1527,7 @@ export async function advanceWorkflow(
         // The workflow may have been stopped while the step ran. The stop
         // owns the outcome then: a workflow that is being stopped is not
         // blocked by a step that ran into the stop.
-        const stored = await loadWorkflow(record.id).catch(() => undefined);
+        const stored = await storedRecord(record.id).catch(() => undefined);
         if (stored && (stored.state === 'stopping' || isTerminal(stored.state))) {
           // The stop owns the outcome of the workflow — this run does not block
           // it and does not overwrite the record of the other process. It
@@ -1624,7 +1708,7 @@ async function stopWorker(
 async function markStopping(record: WorkflowRecord, ctx: WorkflowContext): Promise<boolean> {
   let marked = false;
   await withStateLock(record.id, async () => {
-    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    const stored = await storedRecord(record.id);
     const target = stored ? mergeRecords(stored, record) : record;
     if (isTerminal(target.state)) return;
     if (target.state !== 'stopping') {
@@ -1708,7 +1792,9 @@ export async function stopWorkflow(id: string, ctx: WorkflowContext): Promise<Wo
  */
 async function cancelOnDisk(record: WorkflowRecord, ctx: WorkflowContext): Promise<void> {
   await withStateLock(record.id, async () => {
-    const stored = await loadWorkflow(record.id).catch(() => undefined);
+    // A record that cannot be read is never replaced by the copy of this
+    // process: the cancellation of a broken record is a decision of a human.
+    const stored = await storedRecord(record.id);
     const target = stored ? mergeRecords(stored, record) : record;
     if (!isTerminal(target.state)) {
       assertTransition(target.state, 'cancelled');

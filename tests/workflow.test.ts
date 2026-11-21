@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeBackend } from '../src/backend/fake.js';
 import type {
@@ -22,6 +24,7 @@ import type {
   StepOutcome,
 } from '../src/pipeline/types.js';
 import type { WorkflowGit } from '../src/workflow/git.js';
+import { nodeWorkflowGit } from '../src/workflow/git.js';
 import {
   createWorkflowContext,
   resumeWorkflow,
@@ -33,6 +36,8 @@ import {
 import { listWorkflows, loadWorkflow, readEvents, saveWorkflow } from '../src/workflow/store.js';
 import { assertTransition, canTransition, isTerminal } from '../src/workflow/transitions.js';
 import type { WorkflowRecord } from '../src/workflow/types.js';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * The tests of the development workflow.
@@ -216,9 +221,17 @@ class FakeGit implements WorkflowGit {
   commonDirs: Record<string, string> = {};
   /** The branches of the paths — the map of the paths that are on a branch. */
   branches: Record<string, string> = {};
+  /** The branch of the worktree of the Issue — the branch the workflow wants. */
+  defaultBranch = '10x-chat/issue-59';
+  /** The URL of the origin remote of the checkout. */
+  remote = 'https://github.com/gazon1/10x-chat.git';
 
   async repository() {
     return this.repositoryName;
+  }
+
+  async remoteUrl() {
+    return this.remote;
   }
 
   async revParse() {
@@ -243,7 +256,7 @@ class FakeGit implements WorkflowGit {
   }
 
   async branch(cwd: string) {
-    return this.branches[cwd] ?? '';
+    return this.branches[cwd] ?? this.defaultBranch;
   }
 }
 
@@ -1041,6 +1054,34 @@ describe('the development workflow', () => {
     expect(orca.created).toHaveLength(0);
   });
 
+  it('takes the ref of origin when the checkout has no local branch', async () => {
+    // A checkout that fetched the remote only has `refs/remotes/origin/main`:
+    // the base of the worktree is the ref of origin, not a name that does not
+    // resolve.
+    const dir = await mkdtemp(path.join(os.tmpdir(), '10x-chat-workflow-git-'));
+    const run = async (args: string[]) =>
+      execFileAsync('git', args, {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Test',
+          GIT_AUTHOR_EMAIL: 'test@example.com',
+          GIT_COMMITTER_NAME: 'Test',
+          GIT_COMMITTER_EMAIL: 'test@example.com',
+        },
+      });
+    await run(['init', '-b', 'main']);
+    await run(['commit', '--allow-empty', '-m', 'the first commit']);
+    const { stdout } = await run(['rev-parse', 'HEAD']);
+    const sha = stdout.trim();
+    await run(['update-ref', 'refs/remotes/origin/main', sha]);
+    await run(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+    await run(['checkout', '--detach', sha]);
+    await run(['branch', '-D', 'main']);
+
+    expect(await nodeWorkflowGit.defaultBaseRef(dir)).toBe('origin/main');
+  });
+
   it('blocks when the worker settles without a structured outcome', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -1503,6 +1544,64 @@ describe('the development workflow', () => {
     expect(orca.stopped).toContain('dispatch-1');
   });
 
+  it('stops the agent of a lost answer when the workflow was stopped', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    const record = aRecord('issue-59-eeeeeeee', 'worktree-created');
+    record.orca = { repoId: 'repo-1', runId: 'run-1' };
+    await saveWorkflow(record);
+
+    // The answer of the start command is lost — the worker is there all the
+    // same, and the stop of the other process does not see it.
+    orca.workerStartError = new Error('the answer of the workerStart was lost');
+    orca.lostWorker = { dispatchId: 'dispatch-9', taskId: 'task-9', state: 'working' };
+    const file = path.join(getWorkflowDir(record.id), 'workflow.json');
+    const stopping = { ...record, state: 'stopping', revision: 1 };
+    let lists = 0;
+    orca.workerList = async () => {
+      lists += 1;
+      // The second listing is the one of the lost answer: the stop of the
+      // other process lands right there.
+      if (lists === 2) writeFileSync(file, `${JSON.stringify(stopping, null, 2)}\n`);
+      return orca.workers;
+    };
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(resumeWorkflow(record.id, ctx)).rejects.toThrow(/was stopped again/);
+
+    // The agent of the lost answer is stopped again — it does not work in a
+    // workflow that is on its way out.
+    expect(orca.started).toHaveLength(1);
+    expect(orca.stopped).toContain('dispatch-9');
+  });
+
+  it('does not replace a record that cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    orca.messages = [];
+    // The record of the run is broken while the agent starts: a record that
+    // cannot be read is not an empty store, and it is never overwritten.
+    orca.onWorkerStart = async () => {
+      const [id] = await listWorkflows();
+      await writeFile(
+        path.join(getWorkflowDir(id), 'workflow.json'),
+        '{ this is not a record',
+        'utf-8',
+      );
+    };
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/cannot be read/);
+
+    // The broken record is still there — the evidence of the run is not lost.
+    const [id] = await listWorkflows();
+    const broken = await readFile(path.join(getWorkflowDir(id), 'workflow.json'), 'utf-8');
+    expect(broken).toBe('{ this is not a record');
+  });
+
   it('refuses a worktree that belongs to another repository', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -1543,6 +1642,45 @@ describe('the development workflow', () => {
     expect(orca.started).toHaveLength(0);
   });
 
+  it('refuses a worktree whose branch cannot be read', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The branch of the worktree cannot be read — the workflow cannot prove
+    // that the agent works on the branch of the Issue.
+    git.branches['/wt/issue-59'] = '';
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/branch of the worktree .* cannot be read/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses the registration of the repository on another host', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The same owner/name on another host is another repository: the agent
+    // would work in a checkout that is not the repository of the Issue.
+    orca.repos = [
+      {
+        id: 'repo-9',
+        path: '/repo',
+        displayName: '10x-chat',
+        canonicalKey: 'git.example.com/gazon1/10x-chat',
+      },
+    ];
+    const ctx = contextOf(orca, git);
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/registered in Orca for another host/);
+
+    // No worktree of another repository is created.
+    expect(orca.created).toHaveLength(0);
+    expect(orca.started).toHaveLength(0);
+  });
+
   it('adopts the Run of a lost answer of the runCreate', async () => {
     const orca = new FakeOrca();
     const git = new FakeGit();
@@ -1578,6 +1716,31 @@ describe('the development workflow', () => {
     await expect(
       startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
     ).rejects.toThrow(/the answer of the runCreate was lost/);
+
+    expect(orca.started).toHaveLength(0);
+  });
+
+  it('refuses to guess which Run of the same objective is its own', async () => {
+    const orca = new FakeOrca();
+    const git = new FakeGit();
+    // The answer of the runCreate was lost and two Runs carry the objective:
+    // the workflow does not adopt the first one of the listing.
+    orca.runCreateError = new Error('the answer of the runCreate was lost');
+    orca.runListEntries = [
+      {
+        id: 'run-8',
+        objective: 'Issue #59 of gazon1/10x-chat: The issue of the workflow',
+      },
+      {
+        id: 'run-9',
+        objective: 'Issue #59 of gazon1/10x-chat: The issue of the workflow',
+      },
+    ];
+    const ctx = contextOf(orca, git, { waitTimeoutMs: 20 });
+
+    await expect(
+      startWorkflow({ issue: 59, cwd: '/repo', backend: createFakeBackend() }, ctx),
+    ).rejects.toThrow(/does not guess which one is its mailbox/);
 
     expect(orca.started).toHaveLength(0);
   });

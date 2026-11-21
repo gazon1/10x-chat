@@ -44,6 +44,21 @@ const STATES: WorkflowState[] = [
   'cancelled',
 ];
 
+/**
+ * The workflow is not there.
+ *
+ * A record that is not there and a record that cannot be read are two
+ * different failures: the first one is a workflow that has not started, the
+ * second one is a workflow whose evidence is broken. Only the first one may
+ * be treated as an empty store.
+ */
+export class WorkflowNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Workflow not found: ${id}`);
+    this.name = 'WorkflowNotFoundError';
+  }
+}
+
 /** The file of the record of a workflow. */
 function recordPath(id: string): string {
   return path.join(getWorkflowDir(id), 'workflow.json');
@@ -161,6 +176,10 @@ function isWorkflowRecord(value: unknown): value is WorkflowRecord {
 /** Write the record of a workflow. */
 export async function saveWorkflow(record: WorkflowRecord): Promise<void> {
   const dir = getWorkflowDir(record.id);
+  // The links of the store are refused before the write: `mkdir()` and
+  // `chmod()` follow a link, and a link in the store would take the record
+  // outside of it.
+  await refuseLinks(recordPath(record.id));
   await privateDir(getWorkflowsDir());
   await privateDir(dir);
   await writeAtomic(
@@ -189,7 +208,7 @@ export async function loadWorkflow(id: string): Promise<WorkflowRecord> {
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error(`Workflow not found: ${id}`);
+      throw new WorkflowNotFoundError(id);
     }
     throw new Error(
       `Cannot read the workflow ${id}: ${error instanceof Error ? error.message : String(error)}`,

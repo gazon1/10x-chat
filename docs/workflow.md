@@ -88,8 +88,10 @@ lost answer is reconciled.
 just created is checked before the agent may work in it: it must not be the
 checkout of the user, its git must be the git of the repository of the Issue
 (the common directory of the two is the proof — a worktree of another repository
-has another one), and it must work on the branch of the Issue. A worktree that
-does not pass the check is refused, and the agent never works in it.
+has another one), and it must work on the branch of the Issue. A worktree whose
+branch cannot be read at all is refused too: a branch that cannot be proved is
+not the branch of the Issue. A worktree that does not pass the check is refused,
+and the agent never works in it.
 
 **One workflow at a time per Issue.** A second `start` of the same Issue is
 refused while the first one runs: two workflows of one Issue would share the
@@ -100,6 +102,16 @@ be registered in Orca more than once — a clone and a mirror of it. The
 registration that is the checkout of the user wins; when there is none, the
 ambiguity is refused and never guessed: a worktree of the wrong clone is a
 change of somebody else's checkout.
+
+**The host of the remote is a part of the identity.** The same `owner/name` on
+another host is another repository: a registration of Orca whose host is not the
+host of the remote of the checkout is refused, and the agent never works in a
+repository of another host.
+
+**The base ref is the ref that resolves.** The default branch of `origin` is
+resolved, never assumed: when the checkout has no local branch of that name —
+a detached checkout that fetched the remote only — the ref of origin is used
+(`origin/main`), and a worktree is created from the commit it names.
 
 ## The commands
 
@@ -227,6 +239,7 @@ after it started.
 |---|---|
 | the record on the disk says `stopping` before the agent starts | no agent is started — the workflow is on its way out |
 | the record on the disk says `stopping` after the agent started | the worker that was just started is stopped again, and the run reports that the agent was stopped |
+| the answer of the start command was lost and the workflow is on its way out | the worker that the Run holds is stopped again too — a lost answer hides the worker from the stop, not from the workflow |
 | the record on the disk is terminal | the run stops without a write — the stop owns the outcome of the workflow |
 
 A workflow that is being stopped is not blocked by the step that ran into the
@@ -258,6 +271,13 @@ enforced before every read and not only after every write, and a link in the
 store is refused: `readFile()` follows a link, and a link in the store would
 take the read outside of it.
 
+**A record that cannot be read is never replaced.** A record that is not there
+and a record that is broken are two different failures: only the first one is
+an empty store. A broken record, a record behind a link and a record that the
+owner may not read are refused by every write — the evidence of the run is not
+overwritten by a fresh one, and the workflow reports that the record cannot be
+read instead of pretending that nothing happened.
+
 The requirements of the Issue are not stored twice: the snapshot of the
 [review pipeline](review-pipeline.md) is reused, and the `check-requirements`
 step of the review is the gate that says that the Issue did not drift.
@@ -277,8 +297,11 @@ step of the review is the gate that says that the Issue did not drift.
 | Another process moved the workflow | The run stops without a write — the state on the disk is the truth. |
 | Another process wrote the record | The run stops without a write — the revision of the record is the truth. `stop` merges with the record that is there instead. |
 | The answer of the start command was lost | The Run is asked: the worker that is already there is adopted — a second agent would work in the same worktree. |
-| The answer of the creation of the Run was lost | The Runs are asked: the Run of the objective of the workflow is adopted — a second Run would be a second home of the mailbox. |
-| The workflow was stopped while the agent was starting | The agent is not started, or the agent that was started is stopped again — a workflow that is cancelled never leaves an agent in the worktree. |
+| The answer of the creation of the Run was lost | The Runs are asked: the Run of the objective of the workflow is adopted — a second Run would be a second home of the mailbox. Two Runs of the same objective are an ambiguity that is refused, never guessed. |
+| The workflow was stopped while the agent was starting | The agent is not started, or the agent that was started is stopped again — a workflow that is cancelled never leaves an agent in the worktree. The same holds for the agent of a lost answer. |
+| The record of the workflow cannot be read | Every write is refused — a broken record is the evidence of the run, and it is not replaced by a fresh one. |
+| The branch of the created worktree cannot be read | The worktree is refused — the agent never works in a checkout whose branch cannot be proved. |
+| The repository is registered in Orca for another host | The registration is refused — the same `owner/name` on another host is another repository. |
 
 ## The seams
 
