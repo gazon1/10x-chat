@@ -886,3 +886,29 @@ never written, and when the report is empty.
 The check set of that round: typecheck, lint, knip, test (63 files /**1287
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twenty-first round
+
+The twenty-first round of the pipeline did **not** run to the end: the profile
+of ChatGPT is shared with another session of this machine, and the round met it
+twice — `review-architecture` and `review-tests` timed out because the page was
+replaced under the first turn, and `verify-findings` was refused with
+`--busy fail`. The round was recorded as incomplete. The role that did run —
+`review-correctness` — returned three findings, and all three were checked
+against the source and all three were real.
+
+| Finding of the twenty-first round | The answer |
+|---|---|
+| the brief of the corrections named the Issue but carried neither its body nor its acceptance criteria. A fresh agent reads that brief, so a correction could satisfy every finding of the review and violate a requirement the review did not repeat | the corrections carry the same fenced section of the Issue as the first task: the findings are not the whole requirement |
+| `waitForWorker` read the Issue requirements and the state of the worker without handling a failure of either, and the error handler of `advanceWorkflow` blocked the workflow without stopping the agent. A momentary failure of GitHub or Orca therefore left a **terminal** workflow whose agent kept changing the worktree, unsupervised | a failed read of the Issue gives the turn back and says why in the history — the agent still works and `resume` asks again. A worker that cannot be read is retried (`MAX_POLL_FAILURES`), and only then does the workflow give up — through the path that stops the agent first |
+| the title of the Issue was interpolated into the header of the brief as if it were text of the workflow, while the body was fenced as untrusted data | the title is as much a text of the Issue as the body is: both are inside the fence of the requirements, and the fence is longer than any backtick run of either |
+
+Four tests were added with the fixes, and the three that prove a defect fail
+without it: the corrections carry the requirements, the title stays inside the
+fence of the data, a workflow whose agent it cannot read gives the turn back
+instead of blocking, and an agent whose worker is never readable is stopped
+before the workflow blocks.
+
+The check set of that round: typecheck, lint, knip, test (63 files /**1291
+tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
