@@ -144,9 +144,11 @@ For `ADOPT`, `ADAPT` and `REFACTOR FIRST` ideas, run the approach gate of
 of them, including its refactoring question even when an external candidate looks suitable — and
 record its **Approach** block per idea.
 
-**The two vocabularies answer different questions.** Stage 3 decides *whether* an idea is worth work —
-its `ADOPT` / `ADAPT` / `DEFER` / `REJECT`. The gate decides *how* the work is done. They are not
-interchangeable, and the gate does not overwrite `applicability.md`:
+**The two vocabularies answer different questions.** Stage 3 decides *whether* an idea is worth work,
+with seven decisions — three actionable (`ADOPT`, `ADAPT`, `REFACTOR FIRST`) and four that close or
+postpone the idea (`REUSE EXISTING SOLUTION`, `NO CHANGE NEEDED`, `DEFER`, `REJECT`). The gate decides
+*how* that work is done. The two are not interchangeable: the gate writes the Approach block, and it
+corrects `applicability.md` only in the three cases below.
 
 - `IMPLEMENT DIRECTLY` contradicts nothing. It is the *how* of an actionable idea — the applicability
   decision, `ADOPT`, `ADAPT` or `REFACTOR FIRST`, stands, and the Approach block records that custom
