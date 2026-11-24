@@ -137,7 +137,7 @@ transports, configure their key the same way. The backend is chosen by
 
 A browser chat remembers the provider conversation of the current **git repository and branch**. The next `chat` run in the same repository and branch appends to that conversation instead of starting a new one — for every provider that exposes a stable conversation URL: Gemini, Claude, Grok, Perplexity and DeepSeek.
 
-**ChatGPT is the exception.** Its plain chat is served by the `chatgpt-use` backend, and that backend cannot continue a conversation: every `10x-chat chat --provider chatgpt` run is a new chat. A run that finds a stored ChatGPT conversation says so and drops it. For a multi-turn chat use another provider, or force the browser path of ChatGPT with one of the browser flags.
+**ChatGPT is the exception.** Its plain chat is served by the `chatgpt-use` backend, and that backend cannot continue a conversation: every `10x-chat chat --provider chatgpt` run is a new chat. A run that finds a stored ChatGPT conversation says so and starts a new one; the entry stays, because the browser path (`--headed`) still reopens it. For a multi-turn chat use another provider, or force the browser path of ChatGPT with one of the browser flags.
 
 ```bash
 cd ~/src/my-project          # branch: feature/login

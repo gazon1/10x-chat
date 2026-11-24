@@ -32,7 +32,8 @@ no browser type crosses the seam.
 - The backend cannot continue a conversation (`conversationReuse: false`). A
   request that names one is refused with `rejected` and the CLI is never
   started; a run that finds a conversation stored for the repository and branch
-  says so and drops the entry, instead of silently starting a new chat.
+  says so and leaves the entry alone — the browser path (`--headed`) still
+  reopens it — instead of silently starting a new chat.
 - The run is stored like any other session — the history of the runs shows it.
 - The failure of a backend has its own hint (`busy`, `unavailable`, `timeout`,
   `unknown_submission`, `rejected`, …), not the hint of a provider run.

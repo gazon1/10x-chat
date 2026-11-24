@@ -24,7 +24,8 @@ Two consequences are deliberate and not accidents:
 
 - **Conversation reuse is retired for the plain ChatGPT chat.** The CLI has no
   "continue this conversation" for `ask`, so every run starts a new chat. A run
-  that finds a stored conversation says so and drops the entry; a request that
+  that finds a stored conversation says so and keeps the entry for the browser
+  path, which still reopens it; a request that
   names a conversation is refused with `rejected` instead of quietly starting a
   new chat. The reuse of the other providers is untouched, and so is the
   context-window continuation of the browser path.
@@ -109,7 +110,8 @@ the providers of today cannot.
 
 - The plain **ChatGPT chat has no reuse**: the `chatgpt-use` backend cannot
   continue a conversation (`ask` opens a new one every time). A stored
-  conversation is named and dropped when a run finds one, and a request that
+  conversation is named when a run finds one — the entry stays, because the
+  browser path still reopens it — and a request that
   names a conversation is refused with `rejected`.
 - The **browser provider of chatgpt** — `image`, `research`, `login`,
   `history`, `chat --all` — still implements the three continuation actions:

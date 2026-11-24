@@ -188,7 +188,8 @@ cd ~/src/my-project          # branch: feature/login
   you want to follow up on needs a provider from the table above, or
   `10x-chat chat --provider chatgpt --headed/--headless` with the browser path.
   A run that finds a stored ChatGPT conversation says that it cannot continue it
-  and drops the entry (`docs/capability-matrix.md`).
+  and starts a new one; the entry stays in the cache, because the browser path
+  (`--headed`) still reopens that conversation.
 - The key is the **repository**, the checked-out branch and the provider. The
   repository is identified by its origin URL, so another worktree or another
   clone of the same repository finds the same chat; without a remote the git
