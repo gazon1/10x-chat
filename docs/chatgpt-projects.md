@@ -117,12 +117,15 @@ chat title either way.
 | Malformed id (`/g/not-a-project/project`)          | redirected to `/` |
 | Slug wrong (`/g/<id>-not-the-name/project`)        | project renders normally; slug is ignored |
 | Conversation id does not exist (`/c/0000…`)         | redirected to `/` |
-| Logged out / expired session                       | Cloudflare interstitial ("Just a moment…") first, then the login wall — already covered by the existing antibot and `unauthorized` handling |
+| Logged out / expired session                       | Cloudflare interstitial ("Just a moment…") first, then the login wall. The spike script itself handles only the challenge and reports a generic failure at the composer — it does **not** run the session check, so `antibot`/`unauthorized` classification is what a production command would add |
 
 The redirect to `/` is the trap: a run that navigates to a dead project and then
-submits a prompt **writes into the global chat list** instead of failing. A
-future implementation must verify the project page *before* typing, and refuse
-when the URL is not a project URL.
+submits a prompt **writes into the global chat list** instead of failing. The
+home page has a composer too, so "a composer is visible" proves nothing — the URL
+must be checked before typing. `spike/chatgpt-project/project-chat.ts` enforces
+this: it refuses to submit when the final URL does not carry the requested
+project id. (The first draft of that script checked only the composer and would
+have submitted into a global chat; both reviewers caught it.)
 
 ## Go/no-go
 

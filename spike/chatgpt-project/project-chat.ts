@@ -5,7 +5,11 @@
  * project page, sends a probe prompt, and then answers the only question that
  * matters — does the chat belong to the project?
  *
- *   bun run spike/chatgpt-project/project-chat.ts <project-id> [--headed]
+ *   bun run spike/chatgpt-project/project-chat.ts <project-id> [--headless]
+ *
+ * Headed by default — that is the session Issue #76 asks for, and a challenge
+ * that appears mid-run needs a window a human can reach. `--headless` is the
+ * opt-in for a machine without a display.
  *
  * The project id is the `g-p-<32 hex>` of any project URL. The script leaves
  * the probe conversation behind: it is the evidence, and deleting it is a
@@ -24,10 +28,10 @@ const SEND =
 
 const projectId = process.argv[2];
 if (!projectId || !/^g-p-[0-9a-f]{32}$/i.test(projectId)) {
-  console.error('usage: project-chat.ts g-p-<32 hex> [--headed]');
+  console.error('usage: project-chat.ts g-p-<32 hex> [--headless]');
   process.exit(2);
 }
-const headless = !process.argv.includes('--headed');
+const headless = process.argv.includes('--headless');
 
 // The full Playwright API, not the daemon facade: a spike reads screenshots
 // and `getByText`, which the facade does not proxy. The engine and the cookies
@@ -64,9 +68,15 @@ const waitForComposer = async (): Promise<boolean> => {
 try {
   await open(`https://chatgpt.com/g/${projectId}/project`);
   if (!(await waitForComposer())) {
-    // A dead project redirects to the home page and still shows a composer:
-    // typing there would write into the global chat list.
     throw new Error(`the project page did not open (now at ${page.url()})`);
+  }
+  // A dead project redirects to the home page and still shows a composer, so
+  // the URL — not the composer — is what proves the project opened: typing
+  // after that redirect would write into the global chat list.
+  if (!page.url().includes(`/g/${projectId}`)) {
+    throw new Error(
+      `refusing to submit: the project did not open, ChatGPT sent us to ${page.url()}`,
+    );
   }
   const heading = (await page.locator('main h1, [role="main"] h1').first().textContent()) ?? '';
   console.log(`project page: ${page.url()}\nheading: ${heading.trim()}`);
@@ -109,14 +119,16 @@ try {
   await page.waitForTimeout(8000);
   const resolved = page.url();
 
-  // Signal 2: the project page lists the chat itself.
+  // Signal 2: the project page lists the chat itself. The query is scoped to
+  // the project's own list: the sidebar carries global `/c/<id>` links too, and
+  // one of those must never count as a listing.
   await open(`https://chatgpt.com/g/${projectId}/project`);
   const listed = await page
     .waitForFunction(
       (id: string) =>
-        Array.from(document.querySelectorAll('a[href*="/c/"]')).some((a) =>
-          (a.getAttribute('href') ?? '').includes(id),
-        ),
+        Array.from(
+          document.querySelectorAll('main a[href*="/c/"], [role="main"] a[href*="/c/"]'),
+        ).some((a) => (a.getAttribute('href') ?? '').includes(id)),
       chatId,
       { timeout: 45_000 },
     )
