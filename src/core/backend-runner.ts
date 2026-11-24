@@ -15,15 +15,13 @@ import {
 import { plainChatBackend, providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
+import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
 import type { ChatOptions, ProviderName } from '../types.js';
 import { buildBundle } from './bundle.js';
-import {
-  clearStoredConversation,
-  getStoredConversation,
-  resolveConversationContext,
-} from './conversations.js';
+import { getStoredConversation, resolveConversationContext } from './conversations.js';
 import { resolveAttachPaths } from './files.js';
+import { chatModel } from './model.js';
 import type { ChatResult } from './orchestrator.js';
 
 /**
@@ -83,9 +81,11 @@ export async function runBackendChat(
     throw new Error(`The backend '${backend.name}' does not support model selection.`);
   }
   // An inherited default model must not be forced onto a backend that has no
-  // model selection — only an explicit --model is rejected above.
+  // model selection — only an explicit --model is rejected above. The order is
+  // the one of the browser path (`chatModel`), so the same command line asks
+  // for the same model whichever path answers it: flag → config → provider.
   const model = backend.capabilities.modelSelection
-    ? (options.model ?? config.defaultModel)
+    ? chatModel(options.model, config.defaultModel, getProvider(provider).config.defaultModel)
     : undefined;
 
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
@@ -94,7 +94,7 @@ export async function runBackendChat(
   // A stored conversation the backend cannot continue is named and dropped:
   // the run starts a new chat either way, but it says so instead of losing the
   // conversation silently. It runs for `--provider` and `--backend` alike.
-  await announceRetiredConversation(options, provider, backend);
+  await announceUncontinuableConversation(options, provider, backend);
   // The backend answers the run — the session records it, so the history
   // does not claim that a provider answered.
   const session = await createSession(provider, options.prompt, model, backend.name);
@@ -231,46 +231,38 @@ export async function runBackendChat(
 }
 
 /**
- * Forget a stored conversation the run cannot continue.
+ * Say that a stored conversation cannot be continued.
  *
  * A run without `--new-chat` asks for the conversation of this repository and
  * branch. The backend cannot continue one, so the run starts a new chat — the
- * loss is stated once instead of happening silently, and the stored entry is
- * dropped so the next run does not make the same promise again. `--new-chat`
- * drops the entry too, because the browser path does, but it explains nothing:
- * the user asked for it.
+ * loss is stated once instead of happening silently.
  *
- * The cache is a convenience: an unreadable or unwritable store never fails a
- * chat.
+ * The entry is **not** deleted: `conversations.json` belongs to the browser
+ * path, and the same provider still reopens it there (`chat --headed`). A run
+ * that cleaned up after itself would take that conversation away from the path
+ * that can actually continue it.
+ *
+ * The cache is a convenience: an unreadable store never fails a chat.
  */
-async function announceRetiredConversation(
+async function announceUncontinuableConversation(
   options: ChatOptions,
   providerName: ProviderName,
   backend: AiBackend,
 ): Promise<void> {
-  if (backend.capabilities.conversationReuse) return;
-  // Only the backend that serves the provider's plain chat retires its
-  // conversation. An opt-in backend (`--backend chrome-use-perplexity`) is a
-  // second path beside the browser, and the stored entry still belongs to the
-  // browser run — dropping it would take the conversation away from the path
-  // that can reopen it.
+  if (options.newChat || backend.capabilities.conversationReuse) return;
+  // Only the backend that serves the provider's plain chat looks here. An
+  // opt-in backend (`--backend chrome-use-perplexity`) is a second path beside
+  // the browser and says nothing about the conversation of it.
   if (plainChatBackend(providerName)?.name !== backend.name) return;
   const context = await resolveConversationContext();
-  // `--new-chat` replaces the stored conversation, as the browser path does —
-  // it just does not have to explain a retirement the user asked for. A run
-  // without the flag names the loss instead of dropping the entry silently.
-  if (options.newChat) {
-    await clearStoredConversation(context, providerName).catch(() => {});
-    return;
-  }
   const stored = await getStoredConversation(context, providerName).catch(() => undefined);
   if (!stored) return;
   console.log(
     chalk.dim(
-      `The backend '${backend.name}' cannot continue the chat ${stored.id} — starting a new one.`,
+      `The backend '${backend.name}' cannot continue the chat ${stored.id} — starting a new one. ` +
+        'The browser path (--headed) still reuses it.',
     ),
   );
-  await clearStoredConversation(context, providerName).catch(() => {});
 }
 
 /**

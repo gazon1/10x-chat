@@ -17,6 +17,7 @@ import {
   resetBackends,
 } from '../src/backend/index.js';
 import { runChat } from '../src/core/orchestrator.js';
+import { CHATGPT_CONFIG } from '../src/providers/chatgpt.js';
 import { getSession, listSessions, saveBundle, saveResponse } from '../src/session/index.js';
 
 vi.mock('../src/session/index.js', async (importOriginal) => {
@@ -565,6 +566,17 @@ describe('Chat through the backend contract', () => {
     const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
     const session = await getSession(result.sessionId);
     expect(session.meta.model).toBe('model-a');
+  });
+
+  it('falls back to the default model of the provider, as the browser path does', async () => {
+    // The same command line must ask for the same model whichever path answers
+    // it: flag -> config file -> the default of the provider.
+    const requests: BackendRequest[] = [];
+    await runChat(
+      { prompt: 'hello', provider: 'chatgpt' },
+      { backend: recordingBackend(requests) },
+    );
+    expect(requests[0].model).toBe(CHATGPT_CONFIG.defaultModel);
   });
 
   it('fails the session when the backend throws', async () => {

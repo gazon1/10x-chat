@@ -302,13 +302,14 @@ describe('the conversation a backend cannot continue', () => {
     });
 
     expect(output).toMatch(/cannot continue the chat abc/);
-    // The retired entry is gone: the next run does not promise it again.
+    // The entry survives: conversations.json belongs to the browser path, which
+    // still reopens this conversation with `--headed`.
     expect(
       await getStoredConversation(await resolveConversationContext(), 'chatgpt'),
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 
-  it('says nothing about a conversation when --new-chat was asked for, but drops it', async () => {
+  it('says nothing about a conversation when --new-chat was asked for', async () => {
     await storeConversation();
     registerBackend(stubBackend(await stubCli(COMPLETED)), 'chatgpt');
 
@@ -316,18 +317,18 @@ describe('the conversation a backend cannot continue', () => {
       runChat({ prompt: 'hello', provider: 'chatgpt', newChat: true }),
     );
 
-    // The user asked for a new chat: no retirement to explain — but the browser
-    // path clears the entry on `--new-chat`, so the backend path must too.
+    // The user asked for a new chat, so there is no loss to explain. The entry
+    // stays for the browser path, which is the only path that can act on it.
     expect(output).not.toMatch(/cannot continue/);
     expect(
       await getStoredConversation(await resolveConversationContext(), 'chatgpt'),
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 
   it('keeps the stored conversation of a provider whose browser path still reuses it', async () => {
     // An opt-in backend is a second path beside the browser: the perplexity
     // conversation belongs to the browser run, which can still reopen it. Only
-    // the backend that serves the provider's plain chat may retire it.
+    // the backend that serves the provider's plain chat even looks at it.
     const context = await resolveConversationContext();
     await saveStoredConversation(context, 'perplexity', {
       id: 'perplexity-chat',
