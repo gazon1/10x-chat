@@ -373,6 +373,30 @@ describe('Chat through the backend contract', () => {
     );
   });
 
+  it('keeps a rejected failure — a refused request is not an unusable answer', async () => {
+    // `rejected` is a kind of the contract: a runner that does not know it
+    // turns a real refusal into `invalid_output` and gives the wrong advice.
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({
+          ok: false,
+          failure: {
+            kind: 'rejected',
+            message: 'the backend cannot continue that conversation',
+            submission: 'not_submitted',
+          },
+        }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('rejected');
+    expect((error as BackendError).failure.submission).toBe('not_submitted');
+  });
+
   it('fails the run when the backend answers with a malformed failure', async () => {
     const base = createFakeBackend();
     const backend: AiBackend = {

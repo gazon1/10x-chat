@@ -394,15 +394,13 @@ function validFailure(failure: unknown): BackendFailure {
   return { kind, message, submission, ...partialText };
 }
 
-/** The kinds of a failure the contract defines. */
-const FAILURE_KINDS: readonly BackendFailureKind[] = [
-  'busy',
-  'unavailable',
-  'timeout',
-  'invalid_output',
-  'cancelled',
-  'unknown_submission',
-];
+/**
+ * The kinds of a failure the contract defines.
+ *
+ * Taken from the contract itself: a list copied by hand drifts the moment a
+ * kind is added, and the drift turns a real failure into `invalid_output`.
+ */
+const FAILURE_KINDS = Object.keys(SUBMISSIONS_OF_FAILURE) as readonly BackendFailureKind[];
 
 /** The submission state of a response — the state it claims, when it is one. */
 function submissionOf(submission: unknown): BackendSubmission {
