@@ -144,6 +144,16 @@ export async function runBackendChat(
 
   const startTime = Date.now();
   let outcome: BackendOutcome<BackendResponse>;
+  // An interrupt must reach the backend, or the advertised `cancellation`
+  // would only stop the local wait while the request keeps running. The
+  // listener is removed when the run ends for any reason.
+  const cancel = (): void => {
+    if (!backend.capabilities.cancellation) return;
+    // The run is over anyway: a cancel that cannot reach the backend must not
+    // turn an interrupt into a crash.
+    void backend.cancel(request.requestId).catch(() => undefined);
+  };
+  process.once('SIGINT', cancel);
   try {
     outcome = await backend.ask(request);
   } catch (error) {
@@ -161,6 +171,9 @@ export async function runBackendChat(
     // stay 'running' forever.
     await updateSession(session.id, { status: 'failed', durationMs: Date.now() - startTime });
     throw error;
+  } finally {
+    // The request is over: an interrupt now has nothing to cancel.
+    process.removeListener('SIGINT', cancel);
   }
   const durationMs = Date.now() - startTime;
 

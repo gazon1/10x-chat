@@ -566,6 +566,51 @@ describe('Chat through the backend contract', () => {
     expect(requests[0].model).toBe(CHATGPT_CONFIG.defaultModel);
   });
 
+  it('passes an interrupt to the backend it advertises cancellation for', async () => {
+    // `cancellation: true` is a promise: an interrupt must reach the backend,
+    // or Ctrl+C only stops the local wait while the request keeps running.
+    const base = createFakeBackend();
+    const cancelled: string[] = [];
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        // The interrupt arrives while the request is in flight.
+        process.emit('SIGINT');
+        await Promise.resolve();
+        return base.ask(request);
+      },
+      cancel: async (requestId) => {
+        cancelled.push(requestId);
+        return { ok: true, value: { cancelled: true } };
+      },
+    };
+
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+
+    // The interrupt reached the backend, with the id of this run.
+    expect(cancelled).toEqual([result.sessionId]);
+    // The listener does not outlive the run.
+    expect(process.listenerCount('SIGINT')).toBe(0);
+  });
+
+  it('does not cancel a backend that cannot cancel', async () => {
+    const base = createFakeBackend();
+    const cancel = vi.fn(async () => ({ ok: true, value: { cancelled: true } }));
+    const backend: AiBackend = {
+      ...base,
+      capabilities: { ...base.capabilities, cancellation: false },
+      ask: async (request) => {
+        process.emit('SIGINT');
+        await Promise.resolve();
+        return base.ask(request);
+      },
+      cancel,
+    };
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it('fails the session when the backend throws', async () => {
     const backend = createFakeBackend();
     const broken = {
