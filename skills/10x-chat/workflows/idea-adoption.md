@@ -130,9 +130,9 @@ Assign **exactly one** decision per idea:
 | `DEFER` | Potentially useful, not justified now. |
 | `REJECT` | Incompatible, unsafe, too costly or not useful. |
 
-`NO CHANGE NEEDED`, `DEFER` and `REJECT` produce no Issue drafts by default, and a source in which
-every idea lands there produces no drafts at all — that is a complete result, not a failure. Do not
-turn every idea of a source into an Issue.
+`REUSE EXISTING SOLUTION`, `NO CHANGE NEEDED`, `DEFER` and `REJECT` produce no Issue drafts by default,
+and a source in which every idea lands there produces no drafts at all — that is a complete result, not
+a failure. Do not turn every idea of a source into an Issue.
 
 Output `applicability.md`: the table of ideas with their decision, the evidence (paths, symbols,
 tests, dependency versions), the alternatives considered, and the unresolved questions.
@@ -300,8 +300,8 @@ a reported limitation, not an empty analysis and not permission to work from the
       reported.
 - [ ] Target repository understood via [project-context.md](project-context.md) — brief reused only
       after a freshness check, or a temporary summary prepared.
-- [ ] Exactly one decision per idea, with repository evidence; `NO CHANGE NEEDED` / `DEFER` /
-      `REJECT` produced no drafts.
+- [ ] Exactly one decision per idea, with repository evidence; `REUSE EXISTING SOLUTION` /
+      `NO CHANGE NEEDED` / `DEFER` / `REJECT` produced no drafts.
 - [ ] Approach gate of [helix-development.md](helix-development.md) run for every drafted idea —
       its order not restated here — and refactoring explicitly judged, not skipped for an external
       solution.
