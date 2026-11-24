@@ -148,12 +148,15 @@ record its **Approach** block per idea.
 its `ADOPT` / `ADAPT` / `DEFER` / `REJECT`. The gate decides *how* the work is done. They are not
 interchangeable, and the gate does not overwrite `applicability.md`:
 
-- `IMPLEMENT DIRECTLY` contradicts nothing. It is the *how* of an `ADOPT` or `ADAPT` idea: the
-  applicability decision stands and the Approach block records the custom implementation. An idea must
-  never lose its draft because the gate chose custom code.
-- `REUSE EXISTING SOLUTION`, `NO CHANGE NEEDED` and `REFACTOR FIRST` do contradict the earlier reading,
-  and then `applicability.md` is corrected: the first two replace `ADOPT` / `ADAPT` (the idea is closed,
-  or already covered), and `REFACTOR FIRST` replaces the feature work with the refactoring.
+- `IMPLEMENT DIRECTLY` contradicts nothing. It is the *how* of an actionable idea — the applicability
+  decision, `ADOPT`, `ADAPT` or `REFACTOR FIRST`, stands, and the Approach block records that custom
+  code is the implementation. An idea never loses its draft because the gate chose custom code.
+- `REUSE EXISTING SOLUTION` and `NO CHANGE NEEDED` contradict **any** actionable decision — `ADOPT`,
+  `ADAPT` or `REFACTOR FIRST` — because they say no work is needed at all. They replace it, and the
+  idea is closed.
+- `REFACTOR FIRST` contradicts a decision that planned the feature. It replaces the feature work with
+  the refactoring; against `ADOPT` and `ADAPT` it also replaces their decision, so the draft of stage 6
+  is the refactoring rather than the feature.
 
 Output: an **Approach** block per idea in `applicability.md` — decision, one-sentence approach, what
 was considered, what was rejected and why, preliminary refactoring, effect on scope and maintenance.
