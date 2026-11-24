@@ -140,12 +140,16 @@ tests, dependency versions), the alternatives considered, and the unresolved que
 ## 4. Select the approach
 
 For `ADOPT`, `ADAPT` and `REFACTOR FIRST` ideas, run the approach gate of
-[helix-development.md](helix-development.md) step 2 and record its **Approach** block per idea. The
-gate's order, its three questions (refactor first, reuse instead of implementing, the real cost of an
-external solution) and its decisions are the ones that apply — including its `REFACTOR FIRST`
-question, which is asked even when an external candidate looks suitable. The one addition of this
-playbook: an idea whose gate result is `NO CHANGE NEEDED` or `REUSE EXISTING SOLUTION` is corrected in
-`applicability.md` before any Issue is drafted, not silently planned as work.
+[helix-development.md](helix-development.md) step 2 — its order, its questions and its decisions, all
+of them, including its refactoring question even when an external candidate looks suitable — and
+record its **Approach** block per idea.
+
+**The gate can overrule stage 3.** `applicability.md` is written before the gate runs, so its decision
+is the earlier reading, and the gate decides with the reuse order in hand. Where the gate returns a
+different decision, `applicability.md` is corrected to the gate's, and the Issue of stage 6 carries
+`applicability.md`'s decision — the corrected one. In particular `NO CHANGE NEEDED`, `REUSE EXISTING
+SOLUTION` and `REFACTOR FIRST` all mean no feature work as planned: the first two close the idea, and
+`REFACTOR FIRST` drafts the refactoring as its own Issue rather than the feature the source proposed.
 
 Output: an **Approach** block per idea in `applicability.md` — decision, one-sentence approach, what
 was considered, what was rejected and why, preliminary refactoring, effect on scope and maintenance.
@@ -172,6 +176,10 @@ Show it to the user before drafting Issues.
 Write one Markdown file per Issue under `issues/` of the working directory. Split only where the
 pieces are independently implementable and verifiable, or where a real dependency boundary exists —
 no artificial fragmentation.
+
+Only an idea whose corrected decision of step 4 is `ADOPT`, `ADAPT` or `REFACTOR FIRST` gets a draft,
+and the draft proposes what that decision says: under `REFACTOR FIRST` the Issue is the refactoring,
+not the feature the source proposed, and the feature waits for a later run.
 
 ```markdown
 # <concise title>
