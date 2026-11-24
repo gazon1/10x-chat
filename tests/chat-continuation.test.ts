@@ -5,6 +5,9 @@
  * new chat with an automatic summary. The new chat has no permanent URL until
  * its first message is sent: a run that fails in between must leave the
  * previous conversation in place, so the next run can pick the work up.
+ *
+ * The provider is gemini: the plain chat of chatgpt is served by its backend,
+ * so the browser path of the orchestrator is no longer reached with it.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -61,13 +64,13 @@ describe('the continuation of an exhausted chat', () => {
 
   it('keeps the previous conversation when the run fails right after the new chat', async () => {
     const context = await resolveConversationContext();
-    await saveStoredConversation(context, 'chatgpt', {
+    await saveStoredConversation(context, 'gemini', {
       id: 'abc',
-      url: 'https://chatgpt.com/c/abc',
+      url: 'https://gemini.google.com/app/abc',
       updatedAt: '2026-01-01T00:00:00.000Z',
     });
 
-    let currentUrl = 'https://chatgpt.com/c/abc';
+    let currentUrl = 'https://gemini.google.com/app/abc';
     fake.page = {
       url: () => currentUrl,
       evaluate: async () => '',
@@ -75,13 +78,13 @@ describe('the continuation of an exhausted chat', () => {
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => true,
         // The new chat has a local id: no permanent URL until it is sent.
         continueInNewChat: async () => {
-          currentUrl = 'https://chatgpt.com/c/local-chatgpt%3A62043ce8';
+          currentUrl = 'https://gemini.google.com/app/local-gemini%3A62043ce8';
           return true;
         },
         submitPrompt: async () => {
@@ -91,9 +94,9 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow();
+    await expect(runChat({ prompt: 'hello', provider: 'gemini' })).rejects.toThrow();
 
-    expect((await getStoredConversation(context, 'chatgpt'))?.id).toBe('abc');
+    expect((await getStoredConversation(context, 'gemini'))?.id).toBe('abc');
   });
 
   it('continues the conversation when the context runs out during the answer', async () => {
@@ -103,13 +106,13 @@ describe('the continuation of an exhausted chat', () => {
     let attempts = 0;
     const submitPrompt = vi.fn(async () => {});
     fake.page = {
-      url: () => 'https://chatgpt.com/c/abc',
+      url: () => 'https://gemini.google.com/app/abc',
       evaluate: async () => '',
       title: async () => '',
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => banner,
@@ -130,7 +133,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'gemini' });
 
     expect(result.response).toBe('the answer');
     expect(submitPrompt).toHaveBeenCalledTimes(2);
@@ -143,13 +146,13 @@ describe('the continuation of an exhausted chat', () => {
     await writeFile(file, 'hello', 'utf8');
     const attachFiles = vi.fn(async () => {});
     fake.page = {
-      url: () => 'https://chatgpt.com/c/abc',
+      url: () => 'https://gemini.google.com/app/abc',
       evaluate: async () => '',
       title: async () => '',
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => true,
@@ -164,7 +167,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] });
+    await runChat({ prompt: 'hello', provider: 'gemini', attach: [file] });
 
     // Once for the old chat, once for the new one.
     expect(attachFiles).toHaveBeenCalledTimes(2);
@@ -176,13 +179,13 @@ describe('the continuation of an exhausted chat', () => {
     // does not fit into any context window.
     const continueInNewChat = vi.fn(async () => true);
     fake.page = {
-      url: () => 'https://chatgpt.com/c/abc',
+      url: () => 'https://gemini.google.com/app/abc',
       evaluate: async () => '',
       title: async () => '',
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => true,
@@ -195,7 +198,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow(
+    await expect(runChat({ prompt: 'hello', provider: 'gemini' })).rejects.toThrow(
       /already continued in a new one 3 time/,
     );
 
@@ -217,13 +220,13 @@ describe('the continuation of an exhausted chat', () => {
     });
     const submitPrompt = vi.fn(async () => {});
     fake.page = {
-      url: () => 'https://chatgpt.com/c/abc',
+      url: () => 'https://gemini.google.com/app/abc',
       evaluate: async () => '',
       title: async () => '',
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => true,
@@ -238,7 +241,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] })).rejects.toThrow(
+    await expect(runChat({ prompt: 'hello', provider: 'gemini', attach: [file] })).rejects.toThrow(
       /could not be attached/,
     );
 
@@ -263,7 +266,7 @@ describe('the retry of a prompt', () => {
 
   const fakePage = () =>
     ({
-      url: () => 'https://chatgpt.com/c/abc',
+      url: () => 'https://gemini.google.com/app/abc',
       evaluate: async () => '',
       title: async () => '',
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
@@ -277,7 +280,7 @@ describe('the retry of a prompt', () => {
     let captures = 0;
     fake.page = fakePage();
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => false,
@@ -293,7 +296,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'gemini' });
 
     expect(result.response).toBe('the whole answer');
     // One prompt, two captures of the same turn.
@@ -307,7 +310,7 @@ describe('the retry of a prompt', () => {
     const submitPrompt = vi.fn(async () => {});
     fake.page = fakePage();
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => false,
@@ -320,7 +323,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'gemini' });
 
     expect(result.response).toBe('the begin');
     expect(result.truncated).toBe(true);
@@ -333,7 +336,7 @@ describe('the retry of a prompt', () => {
     let captures = 0;
     fake.page = fakePage();
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => false,
@@ -348,7 +351,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'gemini' });
 
     expect(result.response).toBe('the answer');
     expect(submitPrompt).toHaveBeenCalledTimes(2);
@@ -360,7 +363,7 @@ describe('the retry of a prompt', () => {
     const submitPrompt = vi.fn(async () => {});
     fake.page = fakePage();
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         contextWindowFull: async () => false,
@@ -371,7 +374,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow(
+    await expect(runChat({ prompt: 'hello', provider: 'gemini' })).rejects.toThrow(
       /the provider reported an error/,
     );
 

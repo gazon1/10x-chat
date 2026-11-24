@@ -192,6 +192,8 @@ export function backendFailureHint(failure: BackendFailure): string {
       return 'The request was cancelled.';
     case 'unknown_submission':
       return 'The backend does not know whether the request ran — it must not be sent again. Look it up with: chatgpt-use status <request-id>';
+    case 'rejected':
+      return 'The backend refused the request before it ran — it cannot do what the run asked for.';
     case 'invalid_output':
       // An unusable answer is not always a request that may be sent again:
       // the request that reached the model must not be sent twice.

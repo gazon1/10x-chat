@@ -44,6 +44,8 @@ export type BackendSubmission = 'not_submitted' | 'submitted' | 'unknown';
  * - `invalid_output`: the answer arrived, but it is not usable.
  * - `cancelled`: the request was cancelled.
  * - `unknown_submission`: the backend does not know whether the request ran.
+ * - `rejected`: the backend cannot take this request at all — it was refused
+ *   before it ran, because it asks for something the backend does not have.
  */
 export type BackendFailureKind =
   | 'busy'
@@ -51,7 +53,8 @@ export type BackendFailureKind =
   | 'timeout'
   | 'invalid_output'
   | 'cancelled'
-  | 'unknown_submission';
+  | 'unknown_submission'
+  | 'rejected';
 
 /**
  * The submission states each failure kind allows.
@@ -70,6 +73,8 @@ export const SUBMISSIONS_OF_FAILURE: Record<BackendFailureKind, readonly Backend
   // state the backend claimed.
   invalid_output: ['submitted', 'not_submitted', 'unknown'],
   unknown_submission: ['unknown'],
+  // A request the backend refuses never reaches the model.
+  rejected: ['not_submitted'],
 };
 
 /** A failed request — never an empty successful answer. */

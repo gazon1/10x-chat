@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { AiBackend } from '../backend/contract.js';
+import { plainChatBackend } from '../backend/registry.js';
 import { browserError } from '../browser/diagnostics.js';
 import { launchBrowser } from '../browser/index.js';
 import { resolveHeadlessMode } from '../browser/mode.js';
@@ -93,6 +94,26 @@ export interface ChatDeps extends ApiChatDeps {
 }
 
 /**
+ * Does the run ask for the browser itself?
+ *
+ * The browser knobs decide the window of a provider, image output is not a
+ * capability of any backend today (`imageOutput: false`), and `--all` runs the
+ * providers side by side — three things a backend cannot serve. A run that
+ * asks for one of them keeps the browser path; nothing is silently dropped.
+ * A backend of the same provider is still reachable through `--backend`.
+ */
+function wantsBrowser(options: ChatOptions): boolean {
+  return Boolean(
+    options.headed ||
+      options.headless ||
+      options.profile ||
+      options.isolatedProfile ||
+      options.saveImages ||
+      (options.providers && options.providers.length > 0),
+  );
+}
+
+/**
  * Execute a chat interaction with a provider:
  * 1. Build the prompt bundle
  * 2. Launch the browser
@@ -117,6 +138,18 @@ export async function runChat(options: ChatOptions, deps: ChatDeps = {}): Promis
 
   const config = await loadConfig();
   const providerName = options.provider ?? config.defaultProvider;
+
+  // The plain chat of a provider has one implementation: its backend. A run
+  // that asks for the browser itself keeps the browser path — the backend
+  // owns its own window, so its flags and its parallel form (`--all`) do not
+  // apply to it. See docs/capability-matrix.md.
+  if (!wantsBrowser(options)) {
+    const backend = plainChatBackend(providerName);
+    if (backend) {
+      return runBackendChat(options, backend);
+    }
+  }
+
   const provider = getProvider(providerName);
   const timeoutMs = chatTimeoutMs(
     options.timeoutMs,
@@ -626,7 +659,9 @@ export async function runChatAll(options: ChatOptions): Promise<ChatAllResult[]>
 
   const tasks = targets.map(async (provider): Promise<ChatAllResult> => {
     try {
-      const result = await runChat({ ...options, provider });
+      // The parallel run is a browser run: every target keeps the browser
+      // path, also a provider whose plain chat is served by a backend.
+      const result = await runChat({ ...options, provider, providers: targets });
       return { provider, result };
     } catch (error) {
       return failedChatAllResult(provider, error);

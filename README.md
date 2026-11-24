@@ -133,16 +133,17 @@ transports, configure their key the same way. The backend is chosen by
 - `--isolated-profile` gives every provider its own profile (`~/.10x-chat/profiles/<provider>`), `--profile <name>` a named one.
 - `migrate` merges the old per-provider profiles into the shared one.
 - Every run writes its own session (`meta.json`, `bundle.md`, `response.md`) into `~/.10x-chat/sessions/<uuid>/`; `status` lists them, `session <id>` shows one.
-
 ## Conversation reuse
 
-A browser chat remembers the provider conversation of the current **git repository and branch**. The next `chat` run in the same repository and branch appends to that conversation instead of starting a new one — for every provider that exposes a stable conversation URL (ChatGPT, Gemini, Claude, Grok, Perplexity, DeepSeek).
+A browser chat remembers the provider conversation of the current **git repository and branch**. The next `chat` run in the same repository and branch appends to that conversation instead of starting a new one — for every provider that exposes a stable conversation URL: Gemini, Claude, Grok, Perplexity and DeepSeek.
+
+**ChatGPT is the exception.** Its plain chat is served by the `chatgpt-use` backend, and that backend cannot continue a conversation: every `10x-chat chat --provider chatgpt` run is a new chat. A run that finds a stored ChatGPT conversation says so and drops it. For a multi-turn chat use another provider, or force the browser path of ChatGPT with one of the browser flags.
 
 ```bash
 cd ~/src/my-project          # branch: feature/login
-10x-chat chat -p "Implement the login form" --provider chatgpt
-10x-chat chat -p "Now add validation"       --provider chatgpt   # same chat
-10x-chat chat -p "Start over"               --provider chatgpt --new-chat
+10x-chat chat -p "Implement the login form" --provider gemini
+10x-chat chat -p "Now add validation"       --provider gemini   # same chat
+10x-chat chat -p "Start over"               --provider gemini --new-chat
 ```
 
 The cache lives in `~/.10x-chat/conversations.json`:
@@ -217,12 +218,19 @@ answers it instead of a browser. The ChatGPT backend drives the
 ChatGPT: no browser is started by 10x-chat, and the login lives in the
 browser of `chatgpt-use`.
 
+**It serves the plain ChatGPT chat by default** — `chat --provider chatgpt`
+needs no `--backend`:
+
 ```bash
-10x-chat chat -p "Explain this" --backend chatgpt-use
+10x-chat chat -p "Explain this"                          # the ChatGPT backend
+10x-chat chat -p "Explain this" --backend chatgpt-use    # the same run, named
 ```
 
-A backend is not a provider and not a transport: `--all`, `--transport`,
-`--new-chat` and the browser flags are refused with it.
+A backend is not a provider and not a transport: `--all`, `--transport` and
+the browser flags are refused with it. `--new-chat` is accepted, since a
+backend run starts a new chat either way. The browser provider of ChatGPT is
+still the only path for `image`, `research`, `login`, `history` and `--all` —
+and for a `chat` run that passes one of the browser flags.
 
 ## Commands
 
@@ -262,12 +270,12 @@ Send a prompt to an AI provider via browser automation.
 | `-a, --attach <paths...>` | Images/files to upload as attachments |
 | `--copy` | Copy bundle to clipboard instead of sending |
 | `--dry-run` | Preview the bundle without sending |
-| `--headed` | Show browser window during chat |
-| `--headless` | Force headless, also for the providers that normally run headed |
+| `--headed` | Show browser window during chat (for ChatGPT: the browser path instead of the backend) |
+| `--headless` | Force headless, also for the providers that normally run headed (for ChatGPT: the browser path instead of the backend) |
 | `--timeout <ms>` | Response timeout in milliseconds (default: the provider's — 1800000 for ChatGPT) |
 | `--transport <name>` | `browser` (default) or `api` (requires `--provider` with API support) — see [docs/transports.md](docs/transports.md) |
 | `--backend <name>` | Backend instead of the browser: `chatgpt-use` (the `chatgpt-use` CLI) — see [docs/chatgpt-use-backend.md](docs/chatgpt-use-backend.md) |
-| `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch |
+| `--new-chat` | Start a new conversation instead of reusing the one stored for this repo/branch (no effect on the ChatGPT backend, which always starts a new chat) |
 | `--save-images <dir>` | Save the generated images to a directory |
 | `--profile <name>` | Use a named browser profile |
 | `--isolated-profile` | Use the per-provider browser profile |

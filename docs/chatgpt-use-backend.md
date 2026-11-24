@@ -12,18 +12,30 @@ no browser type crosses the seam.
 ## From the CLI
 
 ```bash
-10x-chat chat -p "Explain this" --backend chatgpt-use
+10x-chat chat -p "Explain this"                # the plain ChatGPT chat: this backend
+10x-chat chat -p "Explain this" --backend chatgpt-use   # the same run, named
 ```
 
-- The backend is not a provider and not a transport: `--all`, `--transport`,
-  `--new-chat` and the browser flags (`--headed`, `--headless`, `--profile`,
-  `--isolated-profile`) are refused with it, not ignored.
+- **This backend is the plain chat of ChatGPT.** `chat --provider chatgpt` needs
+  no `--backend`: it reaches the backend through the registry
+  (`plainChatBackend` in [src/backend/registry.ts](../src/backend/registry.ts)).
+  The browser provider of ChatGPT stays for `image`, `research`, `login`,
+  `history`, `--all`, and for a `chat` run that asks for the browser.
+- The backend is not a provider and not a transport: `--all`, `--transport`
+  and the browser flags (`--headed`, `--headless`, `--profile`,
+  `--isolated-profile`) are refused with it, not ignored. `--new-chat` is
+  accepted: the run never hands a conversation to the backend, so a new chat
+  is what happens either way.
 - The backend drives ChatGPT: the provider of the run is `chatgpt`, and
   another one is refused.
 - The backend saves no image: `--save-images` is refused with it, not ignored.
+- The backend cannot continue a conversation (`conversationReuse: false`). A
+  request that names one is refused with `rejected` and the CLI is never
+  started; a run that finds a conversation stored for the repository and branch
+  says so and drops the entry, instead of silently starting a new chat.
 - The run is stored like any other session — the history of the runs shows it.
-- The failure of a backend has its own hint (`busy`, `unavailable`,
-  `timeout`, `unknown_submission`, …), not the hint of a provider run.
+- The failure of a backend has its own hint (`busy`, `unavailable`, `timeout`,
+  `unknown_submission`, `rejected`, …), not the hint of a provider run.
 - The hint of an unusable answer depends on the state of the request: a
   request that may have reached ChatGPT is never sent again — the receipt of
   the CLI says what happened to it (`chatgpt-use status <request-id>`).
@@ -76,6 +88,10 @@ request and the answer of another request are all `invalid_output`.
 | `submit_unknown`, or a state that is unknown | `unknown_submission`        | `unknown`         |
 | everything else                            | `invalid_output`              | as reported       |
 
+One failure does not come from the CLI at all: a request that names a
+conversation (`conversationId`) is `rejected` — `not_submitted`, and the CLI is
+never started — because `ask` cannot continue one.
+
 A state that the CLI reports as unknown is **never** a retry: the request may
 have reached ChatGPT, so it must be looked up (`status`) or resumed
 (`resume`) — never sent again.
@@ -126,6 +142,8 @@ One ChatGPT window serves one request.
 | Conversation reuse    | no   | `ask` has no "continue this conversation"                |
 | Model selection       | yes  | the level of the composer                               |
 | Image output          | no   | the plain `ask` mode returns text                       |
+
+The matrix of every provider is [docs/capability-matrix.md](capability-matrix.md).
 
 The `review` mode of the CLI and its agent loop are not used: the review
 pipeline belongs to 10x-chat.

@@ -566,11 +566,19 @@ describe('Chat through the backend contract', () => {
   it('rejects the options a backend run cannot honour', async () => {
     const backend = createFakeBackend();
     await expect(
-      runChat({ prompt: 'hello', provider: 'chatgpt', newChat: true }, { backend }),
-    ).rejects.toThrow('does not manage conversations');
-    await expect(
       runChat({ prompt: 'hello', provider: 'chatgpt', transport: 'api' }, { backend }),
     ).rejects.toThrow('is not a transport');
+  });
+
+  it('treats --new-chat as what a backend run always does', async () => {
+    // The run hands no conversation to the backend, so a new chat is the
+    // outcome with or without the flag — it must not fail the run.
+    const backend = createFakeBackend();
+    const result = await runChat(
+      { prompt: 'hello', provider: 'chatgpt', newChat: true },
+      { backend },
+    );
+    expect(result.response).toContain('Fake answer for: hello');
   });
 
   it('rejects a capability the backend does not have', async () => {

@@ -16,8 +16,13 @@ import { providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
-import type { ChatOptions } from '../types.js';
+import type { ChatOptions, ProviderName } from '../types.js';
 import { buildBundle } from './bundle.js';
+import {
+  clearStoredConversation,
+  getStoredConversation,
+  resolveConversationContext,
+} from './conversations.js';
 import { resolveAttachPaths } from './files.js';
 import type { ChatResult } from './orchestrator.js';
 
@@ -27,9 +32,10 @@ import type { ChatResult } from './orchestrator.js';
  * This is the application side of the seam: no page, no selector, no session
  * of a browser — only the request and the answer of the backend.
  *
- * The conversation of a backend run is not reused yet: the contract carries
- * the conversation id, the reuse itself comes with the migration of the
- * providers.
+ * The conversation of a run is bound to the backend: a backend that cannot
+ * continue one refuses the request (`rejected`) instead of quietly starting a
+ * new chat, and a backend that never reuses makes `--new-chat` a statement of
+ * what already happens rather than a refusal.
  */
 export async function runBackendChat(
   options: ChatOptions,
@@ -61,13 +67,9 @@ export async function runBackendChat(
         'the browser flags (--headed, --headless, --profile, --isolated-profile) do not apply.',
     );
   }
-  // A backend manages no conversation and is no transport: the options that
-  // ask for one are refused, not ignored.
-  if (options.newChat) {
-    throw new Error(
-      `The backend '${backend.name}' does not manage conversations — the option 'newChat' does not apply.`,
-    );
-  }
+  // A backend is no transport: the option that asks for one is refused, not
+  // ignored. `newChat` is not refused — the run hands no conversation to the
+  // backend, so a new chat is what happens whether the flag is there or not.
   if (options.transport) {
     throw new Error(
       `The backend '${backend.name}' is not a transport — the option 'transport' does not apply.`,
@@ -89,6 +91,10 @@ export async function runBackendChat(
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
+  // A stored conversation the backend cannot continue is named and dropped:
+  // the run starts a new chat either way, but it says so instead of losing the
+  // conversation silently. It runs for `--provider` and `--backend` alike.
+  await announceRetiredConversation(options, provider, backend);
   // The backend answers the run — the session records it, so the history
   // does not claim that a provider answered.
   const session = await createSession(provider, options.prompt, model, backend.name);
@@ -222,6 +228,34 @@ export async function runBackendChat(
     ...(response.conversationId ? { conversationId: response.conversationId } : {}),
     ...(response.images && response.images.length > 0 ? { images: response.images } : {}),
   };
+}
+
+/**
+ * Say that a stored conversation cannot be continued, and forget it.
+ *
+ * A run without `--new-chat` asks for the conversation of this repository and
+ * branch. The backend cannot continue one, so the run starts a new chat — the
+ * loss is stated once instead of happening silently, and the stored entry is
+ * dropped so the next run does not make the same promise again.
+ *
+ * The cache is a convenience: an unreadable or unwritable store never fails a
+ * chat.
+ */
+async function announceRetiredConversation(
+  options: ChatOptions,
+  providerName: ProviderName,
+  backend: AiBackend,
+): Promise<void> {
+  if (options.newChat || backend.capabilities.conversationReuse) return;
+  const context = await resolveConversationContext();
+  const stored = await getStoredConversation(context, providerName).catch(() => undefined);
+  if (!stored) return;
+  console.log(
+    chalk.dim(
+      `The backend '${backend.name}' cannot continue the chat ${stored.id} — starting a new one.`,
+    ),
+  );
+  await clearStoredConversation(context, providerName).catch(() => {});
 }
 
 /**

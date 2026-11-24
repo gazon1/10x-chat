@@ -6,6 +6,9 @@
  * run opens that conversation instead of starting over. The test runs two
  * chats after another: the second one must open the conversation of the
  * first one.
+ *
+ * The provider is gemini: the plain chat of chatgpt is served by its backend
+ * and no longer reaches this path (`docs/capability-matrix.md`).
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -64,7 +67,7 @@ describe('the reuse of the conversation', () => {
   it('opens the conversation of the previous run', async () => {
     // The chat gets its permanent URL when the first message is sent: before
     // that it has a local id that cannot be reopened.
-    let currentUrl = 'https://chatgpt.com/';
+    let currentUrl = 'https://gemini.google.com/app';
     fake.page = {
       url: () => currentUrl,
       evaluate: async () => '',
@@ -72,11 +75,11 @@ describe('the reuse of the conversation', () => {
       locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as never;
     fake.provider = {
-      config: { url: 'https://chatgpt.com/', displayName: 'ChatGPT' } as ProviderConfig,
+      config: { url: 'https://gemini.google.com/app', displayName: 'Gemini' } as ProviderConfig,
       actions: {
         isLoggedIn: async () => true,
         submitPrompt: async () => {
-          currentUrl = 'https://chatgpt.com/c/abc';
+          currentUrl = 'https://gemini.google.com/app/abc';
         },
         captureResponse: async () => ({
           text: 'the answer',
@@ -89,14 +92,14 @@ describe('the reuse of the conversation', () => {
     const context = await resolveConversationContext();
 
     // The first run starts a new chat.
-    await runChat({ prompt: 'hello', provider: 'chatgpt' });
-    expect(fake.launched[0]).toBe('https://chatgpt.com/');
+    await runChat({ prompt: 'hello', provider: 'gemini' });
+    expect(fake.launched[0]).toBe('https://gemini.google.com/app');
 
     // The conversation of the run is stored.
-    expect((await getStoredConversation(context, 'chatgpt'))?.id).toBe('abc');
+    expect((await getStoredConversation(context, 'gemini'))?.id).toBe('abc');
 
     // The second run opens that conversation instead of the landing page.
-    await runChat({ prompt: 'again', provider: 'chatgpt' });
-    expect(fake.launched[1]).toBe('https://chatgpt.com/c/abc');
+    await runChat({ prompt: 'again', provider: 'gemini' });
+    expect(fake.launched[1]).toBe('https://gemini.google.com/app/abc');
   });
 });

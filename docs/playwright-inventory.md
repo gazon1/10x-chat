@@ -12,7 +12,7 @@ truth.
 
 | Provider   | Backend of today                      | Decision | Reason |
 | ---------- | ------------------------------------- | -------- | ------ |
-| chatgpt    | `chatgpt-use` ([docs/chatgpt-use-backend.md](chatgpt-use-backend.md)) | **retain the browser path as well** — the backend is opt-in (`chat --backend chatgpt-use`) | The browser provider is still the default of `chat`, `image`, `research`, `history` and `login`. The decision to retire it needs the migration of the CLI workflows of issue [#51](https://github.com/gazon1/10x-chat/issues/51) |
+| chatgpt    | `chatgpt-use` ([docs/chatgpt-use-backend.md](chatgpt-use-backend.md)) | **the backend serves the plain chat; the browser is retained for the rest** | `chat --provider chatgpt` runs through the backend (`plainChatBackend` in `src/backend/registry.ts`). The browser provider is still the only path for `image`, `research`, `login`, `history`, `chat --all` and a `chat` run that asks for the browser (`--headed`, `--headless`, `--profile`, `--isolated-profile`, `--save-images`). The cost is the conversation reuse of the plain chat: the CLI cannot continue one, so [docs/capability-matrix.md](capability-matrix.md) records `conversationReuse: no` and the run says so. Retiring the browser provider needs the migration of the remaining workflows ([#51](https://github.com/gazon1/10x-chat/issues/51)) |
 | perplexity | `chrome-use-perplexity` (POC) ([docs/chrome-use-perplexity-poc.md](chrome-use-perplexity-poc.md)) | **retain the browser path** | The decision record of the POC: "retain existing Playwright path; do not migrate further providers to chrome-use yet" |
 | gemini     | none                                   | **retain** | No backend, no parity test, no approved migration ([#51](https://github.com/gazon1/10x-chat/issues/51)) |
 | claude     | none                                   | **retain** | same |
@@ -53,7 +53,7 @@ Every module of `src/browser/` has a consumer that a supported feature needs.
 
 | Command             | Browser | Providers |
 | ------------------- | ------- | --------- |
-| `chat`              | yes (default; `--transport api` and `--backend` avoid it) | chatgpt, gemini, claude, grok, perplexity, deepseek |
+| `chat`              | for every provider but chatgpt; chatgpt uses it with `--headed/--headless/--profile/--isolated-profile/--save-images` or `--all` | chatgpt, gemini, claude, grok, perplexity, deepseek |
 | `delegate`          | yes     | every provider |
 | `history`           | yes     | chatgpt, gemini, claude, grok, perplexity |
 | `login`             | yes (persistent context) | every provider |
