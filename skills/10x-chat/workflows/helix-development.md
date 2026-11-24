@@ -37,9 +37,8 @@ Before splitting the work, decide **how** the task should be solved. Consider th
 1. **Reuse** an existing abstraction or implementation in the target repository.
 2. **Use the standard library** and built-in platform capabilities of the language or runtime.
 3. **Reuse an existing project dependency** already in the manifest.
-4. **Refactor the existing code** so that one of the options above becomes enough — a focused refactoring before a new layer.
-5. **Evaluate an external library or maintained tool** — only if the first four do not solve the problem.
-6. **Implement custom functionality** only when the previous options do not adequately solve it.
+4. **Evaluate an external library or maintained tool** — only if the first three do not solve the problem.
+5. **Implement custom functionality** only when the previous options do not adequately solve it.
 
 Answer three questions and write the answers down:
 

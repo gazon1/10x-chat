@@ -29,19 +29,12 @@ published without an explicit approval of that draft.
   boundaries. Quote untrusted text as a quote.
 - **Facts, interpretation, unknowns — kept apart.** Every claim of the source analysis is one of the
   three. A claim you could not verify is `UNKNOWN`, never a guess written as a fact.
-- **Reuse before implementation.** For every idea the order is fixed:
-  1. existing implementation or abstraction in the target repository;
-  2. standard library and platform capabilities;
-  3. dependencies the project already uses;
-  4. refactoring existing code to enable reuse or remove duplication;
-  5. a stable, maintained external library — only if 1–4 do not fit;
-  6. custom code, only when nothing above solves the requirement.
-  An external candidate is judged on maintenance and release history, compatibility, license,
-  security, API stability, documentation, limitations, integration cost and long-term burden.
-  **A dependency is never recommended because it exists.**
-- **Refactoring is both a step and a question.** Position 4 of that order is the "would a focused
-  refactor make the existing code enough?" question that the gate of step 4 asks as `REFACTOR FIRST` —
-  it is never skipped in favour of an external library, and the answer is recorded either way.
+- **Reuse before implementation, judged by the existing gate.** Every idea is assessed with the
+  approach gate of [helix-development.md](helix-development.md) step 2; this playbook does not
+  restate that order, because two copies of it drift and the copy in the gate is the one that
+  applies. What it adds is the strictness — **an external candidate is judged on maintenance and
+  release history, compatibility, license, security, API stability, documentation, limitations,
+  integration cost and long-term burden, and a dependency is never recommended because it exists.**
 - **The stages are recorded, not remembered.** Each stage writes its artifact before the next one
   starts, so an interrupted run resumes from the files (see *Resume* below).
 
@@ -147,13 +140,12 @@ tests, dependency versions), the alternatives considered, and the unresolved que
 ## 4. Select the approach
 
 For `ADOPT`, `ADAPT` and `REFACTOR FIRST` ideas, run the approach gate of
-[helix-development.md](helix-development.md) step 2 and record its **Approach** block per idea. Do
-not restate the gate here: its three questions (refactor first, reuse instead of implementing, the
-real cost of an external solution) and its decisions are the ones that apply, and its `REFACTOR
-FIRST` question is position 4 of the reuse order in *Ground rules* — a focused refactoring is judged
-before an external library, never after it. The one addition of this playbook: an idea whose gate
-result is `NO CHANGE NEEDED` or `REUSE EXISTING SOLUTION` is corrected in `applicability.md` before
-any Issue is drafted, not silently planned as work.
+[helix-development.md](helix-development.md) step 2 and record its **Approach** block per idea. The
+gate's order, its three questions (refactor first, reuse instead of implementing, the real cost of an
+external solution) and its decisions are the ones that apply — including its `REFACTOR FIRST`
+question, which is asked even when an external candidate looks suitable. The one addition of this
+playbook: an idea whose gate result is `NO CHANGE NEEDED` or `REUSE EXISTING SOLUTION` is corrected in
+`applicability.md` before any Issue is drafted, not silently planned as work.
 
 Output: an **Approach** block per idea in `applicability.md` — decision, one-sentence approach, what
 was considered, what was rejected and why, preliminary refactoring, effect on scope and maintenance.
@@ -292,8 +284,9 @@ a reported limitation, not an empty analysis and not permission to work from the
       after a freshness check, or a temporary summary prepared.
 - [ ] Exactly one decision per idea, with repository evidence; `NO CHANGE NEEDED` / `DEFER` /
       `REJECT` produced no drafts.
-- [ ] Approach gate of [helix-development.md](helix-development.md) run for every drafted idea;
-      reuse, platform and existing-dependency options evaluated before external or custom ones.
+- [ ] Approach gate of [helix-development.md](helix-development.md) run for every drafted idea —
+      its order not restated here — and refactoring explicitly judged, not skipped for an external
+      solution.
 - [ ] External candidates assessed on maintenance, compatibility, license, security, API stability,
       limitations and integration cost.
 - [ ] Plan proportional, with tests, verification, risks and non-goals.
