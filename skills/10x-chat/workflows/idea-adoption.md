@@ -96,6 +96,10 @@ Show it to the user and wait for corrections before stage 2.
 
 Input: the target repository and the numbered ideas of stage 1.
 
+Resolve the target's `owner/name` once and record it in every artifact. The artifacts may live outside
+the target checkout, and `gh` resolves the repository from the working directory, not from the
+artifacts — so every `gh` command below names it with `--repo <owner>/<name>`.
+
 Follow [project-context.md](project-context.md) and do not build a second context system:
 
 - **A brief exists** → reuse it only after checking that its sources still exist and have not drifted;
@@ -144,12 +148,12 @@ tests, dependency versions), the alternatives considered, and the unresolved que
 
 For `ADOPT`, `ADAPT` and `REFACTOR FIRST` ideas, run the approach gate of
 [helix-development.md](helix-development.md) step 2 and record its **Approach** block per idea. Do
-not restate the gate here: its order (existing abstraction → standard library → existing dependency
-→ evaluated external solution → custom), its three questions (refactor first, reuse instead of
-implementing, the real cost of an external solution) and its decisions are the ones that apply. The
-one addition of this playbook: an idea whose gate result is `NO CHANGE NEEDED` or `REUSE EXISTING
-SOLUTION` is corrected in `applicability.md` before any Issue is drafted, not silently planned as
-work.
+not restate the gate here: its three questions (refactor first, reuse instead of implementing, the
+real cost of an external solution) and its decisions are the ones that apply, and its `REFACTOR
+FIRST` question is position 4 of the reuse order in *Ground rules* — a focused refactoring is judged
+before an external library, never after it. The one addition of this playbook: an idea whose gate
+result is `NO CHANGE NEEDED` or `REUSE EXISTING SOLUTION` is corrected in `applicability.md` before
+any Issue is drafted, not silently planned as work.
 
 Output: an **Approach** block per idea in `applicability.md` — decision, one-sentence approach, what
 was considered, what was rejected and why, preliminary refactoring, effect on scope and maintenance.
@@ -214,7 +218,7 @@ no artificial fragmentation.
 hits:
 
 ```bash
-gh issue list --search "<keywords>" --state all --limit 30 --json number,title,state,url
+gh issue list --repo <owner>/<name> --search "<keywords>" --state all --limit 30 --json number,title,state,url
 ```
 
 Report the overlaps — the same capability under another name, a closed Issue that already did it, an
@@ -229,13 +233,13 @@ all, some or none; revise and re-present on feedback.
 **Nothing is published before the explicit approval of that draft.** Then, per approved draft:
 
 ```bash
-gh issue create --title "<title>" --body-file issues/<draft>.md        # prints the URL
-gh issue view <number> --json number,url,state                          # confirm what was created
+gh issue create --repo <owner>/<name> --title "<title>" --body-file issues/<draft>.md   # prints the URL
+gh issue view --repo <owner>/<name> <number> --json number,url,state                    # confirm what was created
 ```
 
 - Use `gh issue create` — no Octokit, no other GitHub client.
 - Labels, milestones and relationships only when the target repository has them and their meaning is
-  verified there (`gh label list`, the milestone list). An unknown label fails the creation.
+  verified there (`gh label list --repo <owner>/<name>`, the milestone list). An unknown label fails the creation.
 - Verify each result and report the canonical Issue URL.
 - **If publication fails part-way, report exactly which Issues exist and which do not** — with the
   error. Never report a partial run as done, and never retry a failed creation blindly: the failure
