@@ -243,12 +243,16 @@ gh issue view --repo <owner>/<name> <number> --json number,url,state            
 - Verify each result and report the canonical Issue URL.
 - **If publication fails part-way, report exactly which Issues exist and which do not** — with the
   error. Never report a partial run as done, and never retry a failed creation blindly: the failure
-  may have created the Issue anyway, so look for it first (`gh issue list --search`).
+  may have created the Issue anyway, so look for it first
+  (`gh issue list --repo <owner>/<name> --search "<keywords>" --state all`).
 
 ## Artifacts and working directory
 
 One working directory per source, chosen by the user and kept out of the target repository unless
-they say otherwise — the default is `./idea-adoption/<source-slug>/` in the caller's directory:
+they say otherwise. The default `./idea-adoption/<source-slug>/` is relative to the caller's directory,
+so when that directory *is* the target checkout the artifacts would land inside it: put the directory
+outside the checkout instead, or ask the user where it goes. Never create it inside the target
+repository without that decision — the artifacts are task outputs, not a change to be committed.
 
 ```text
 source-analysis.md
