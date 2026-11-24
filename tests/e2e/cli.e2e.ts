@@ -187,6 +187,7 @@ describe('cli flows', () => {
         'SKILL.md',
         'workflows/pr-review.md',
         'workflows/helix-development.md',
+        'workflows/idea-adoption.md',
         'workflows/report-format.md',
       ]) {
         expect(existsSync(path.join(skillDir, file))).toBe(true);
@@ -199,6 +200,7 @@ describe('cli flows', () => {
         'SKILL.md',
         'workflows/pr-review.md',
         'workflows/helix-development.md',
+        'workflows/idea-adoption.md',
         'workflows/report-format.md',
       ]) {
         const filePath = path.join(skillDir, file);
