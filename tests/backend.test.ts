@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SUBMISSIONS_OF_FAILURE } from '../src/backend/contract.js';
 import {
   type AiBackend,
   BackendError,
@@ -146,14 +147,9 @@ describe('Fake backend', () => {
   });
 
   it('keeps the submission state of every failure in the status', async () => {
-    const kinds: BackendFailureKind[] = [
-      'busy',
-      'unavailable',
-      'timeout',
-      'invalid_output',
-      'cancelled',
-      'unknown_submission',
-    ];
+    // Every kind the contract defines: a new one is covered without editing
+    // the test, and a kind the fake backend cannot produce fails here.
+    const kinds = Object.keys(SUBMISSIONS_OF_FAILURE) as BackendFailureKind[];
     for (const kind of kinds) {
       const backend = createFakeBackend([{ prompt: 'boom', failure: kind }]);
       const outcome = await backend.ask({ requestId: 'req-1', prompt: 'boom' });
@@ -269,22 +265,13 @@ describe('Fake backend', () => {
   });
 
   it('maps every failure kind and never answers with an empty success', async () => {
-    const kinds: BackendFailureKind[] = [
-      'busy',
-      'unavailable',
-      'timeout',
-      'invalid_output',
-      'cancelled',
-      'unknown_submission',
-    ];
-    const expectedSubmission: Record<BackendFailureKind, string> = {
-      busy: 'not_submitted',
-      unavailable: 'not_submitted',
-      timeout: 'submitted',
-      invalid_output: 'submitted',
-      cancelled: 'submitted',
-      unknown_submission: 'unknown',
-    };
+    // Every kind the contract defines: a new one is covered without editing
+    // the test, and a kind the fake backend cannot produce fails here.
+    const kinds = Object.keys(SUBMISSIONS_OF_FAILURE) as BackendFailureKind[];
+    // The state a kind reports is the first one of the contract.
+    const expectedSubmission = Object.fromEntries(
+      kinds.map((kind) => [kind, SUBMISSIONS_OF_FAILURE[kind][0]]),
+    ) as Record<BackendFailureKind, string>;
 
     for (const kind of kinds) {
       const backend = createFakeBackend([{ prompt: 'boom', failure: kind, partial: 'half' }]);
