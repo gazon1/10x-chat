@@ -101,7 +101,8 @@ Ready-made workflows live next to this file. They are provider-neutral and langu
 | PR review | [workflows/pr-review.md](workflows/pr-review.md) | The user asks for a review of a PR, a branch, a patch or a diff. |
 | Helix-style development | [workflows/helix-development.md](workflows/helix-development.md) | The user asks for a change to be built and gated by checkpoints. |
 | Project context brief | [workflows/project-context.md](workflows/project-context.md) | Reviewers or checkpoints need a reusable, evidence-backed understanding of the repository's architecture, constraints, decisions and verification conventions. Optional: if no brief exists, prepare a temporary context summary from the repository's own docs and source. |
-| Shared report format | [workflows/report-format.md](workflows/report-format.md) | Both playbooks end in this report shape. |
+| Idea adoption | [workflows/idea-adoption.md](workflows/idea-adoption.md) | The user brings an external source — an article, a proposal, another project's design — and asks what is worth building here and what the Issues should say. Decides per idea (adopt, adapt, refactor first, reuse, no change, defer, reject), plans the smallest change, drafts the Issues and publishes only the approved ones. |
+| Shared report format | [workflows/report-format.md](workflows/report-format.md) | The review and development playbooks end in this report shape. |
 
 **The split of the work:** the coding agent inspects and changes the target repository and runs its checks. 10x-chat supplies the independent reviewers and the protocol that turns their answers into a verdict. 10x-chat is a reviewer interface, not a build executor.
 
@@ -112,6 +113,8 @@ Ready-made workflows live next to this file. They are provider-neutral and langu
 **Project context is separate from review conversations.** When a brief helps, follow [workflows/project-context.md](workflows/project-context.md): give every fresh reviewer the same relevant context (with claims marked `CONFIRMED`, `INFERRED`, `UNKNOWN`, or unverified/stale and sourced where possible), but keep their first-pass findings and conversation history independent. Reuse and freshness checks happen before relying on an existing brief; never rewrite project docs or the brief automatically.
 
 Load the playbook file before starting one of these tasks — it carries the reviewer roles, the finding schema, the evidence rules and the report template.
+
+**Which one:** an external source and the question "what of this should we build, and in what Issues?" is the [idea adoption playbook](workflows/idea-adoption.md) — it ends before any code, with approved Issue drafts. Building an approved Issue is [helix-development.md](workflows/helix-development.md); judging a change is [workflows/pr-review.md](workflows/pr-review.md); `research` and `knowledge` only feed a stage here when a source is long or out of reach, and are never required.
 
 ## Workflow recipes
 
