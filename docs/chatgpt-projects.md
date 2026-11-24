@@ -6,11 +6,12 @@ conversation inside an existing, user-created ChatGPT Project**, and which
 observable proves the membership.
 
 **Verdict: go for the browser UI path; qualified no for the backend as it behaves
-today.** Creating a conversation inside an existing project works and the
-membership is verifiable — the UI flow was exercised and the redirect signal
-proves it. But `chatgpt-use`, the obvious shortcut, reaches for private endpoints
-(both to create a project and, as a fallback, to file a chat), which Issue #76
-excludes; that needs a maintainer's decision rather than a silent adoption.
+today.** Creating a conversation inside an existing project works, and membership
+is verifiable the way the issue asks: the conversation is in the project's own list
+after a reload, and opening its bare id resolves into the project. But
+`chatgpt-use`, the obvious shortcut, reaches for private endpoints (both to create
+a project and, as a fallback, to file a chat), which Issue #76 excludes; that needs
+a maintainer's decision rather than a silent adoption.
 
 Measured on 2026-11-24 against chatgpt.com with a logged-in Free account.
 
@@ -92,8 +93,8 @@ error. Checking the name against `projects.json` first is the cheap guard.
 ## The browser UI flow (as executed)
 
 Issue #76 asked for the UI path to be exercised, so the steps are kept here even
-though the backend is the recommended path. This is what was actually done, by
-hand and by a Playwright script, in a logged-in session:
+though the backend is the path the rest of the tool already uses. This is what
+was actually done, by hand and by a Playwright script, in a logged-in session:
 
 1. Open the project: `https://chatgpt.com/g/<project-id>/project`.
    The app rewrites it to `/g/<project-id>-<project-slug>/project`. The slug is
@@ -120,18 +121,29 @@ the project. Use the project page, not that button.
 
 ## The membership signal
 
-Open the bare conversation id and read where the app sends you. A chat that
-belongs to a project is **rewritten** to the project URL; a global chat stays at
-`/c/<id>`:
+Issue #76 warns that a URL shape alone is not proof, and requires confirming the
+conversation after a reload. So membership rests on **two observations of the same
+conversation**, with the list as primary and the redirect as corroboration.
+
+**Primary — the project's own list, after a reload.** Open the project page fresh
+and find the conversation in its Chats list. This is the durable fact: the chat
+persisted as a member, and it is what the issue asks for.
+
+**Secondary — where the app sends a bare id.** Open `/c/<conversation-id>` and
+read the final URL. A chat that belongs to a project is **rewritten** to the
+project URL; a global chat stays at `/c/<id>`:
 
 | Conversation | Opening `/c/<id>` resolves to |
 |---|---|
 | filed under `chatgpt-use` | `/g/g-p-6afee1f89d048191922c5b25247b5a95-chatgpt-use/c/<id>` |
 | a plain chat | `/c/<id>`, unchanged |
 
-This is the app's own answer, not a URL we constructed, and it is the signal that
-held up for conversations created by **both** paths — the UI flow above and the
-backend below. Two weaker ones were rejected:
+The redirect is the app's own answer rather than a URL we constructed, which is
+why it is kept — but on its own it is a URL shape, exactly what the issue says not
+to trust. It corroborates the list; it does not replace it. Both were observed for
+the same conversations in this investigation.
+
+Two signals were rejected outright:
 
 - **The sidebar's project row.** Querying "the project row" returns the first
   project of the sidebar whether or not the chat belongs to it, so a naive check
@@ -139,6 +151,11 @@ backend below. Two weaker ones were rejected:
   exactly that and produced a false positive; the row is only meaningful when the
   app marks it current *and* the chat is drawn inside it.
 - **The chat header.** It carries the chat title only.
+
+The list is also the place where scope matters: the project page's own list is the
+evidence and the sidebar's global `/c/<id>` links are not — on the measured page 61
+anchors were in the document and only the 50 inside the list were project members.
+A check that scans every anchor reports a sidebar link as a listing.
 
 The same rule matters if the listing is ever automated: the project page's own
 list is the evidence and the sidebar's global `/c/<id>` links are not — on the
@@ -183,6 +200,14 @@ the reason the go below is qualified rather than unconditional.
 Neither behaviour is a defect of the note; both are properties of the backend that
 a caller has to know before adopting it.
 
+**This investigation triggered the first one.** Probing the unknown-name and
+id-as-name cases created two real projects in the measured account
+(`no-such-project-xyz` and one named after the id string). That is a side effect
+of the experiment, not of any proposed implementation, and it is honest to record:
+the Issue excludes automatic Project creation, and the only way to learn that the
+CLI does it was to observe it. The two projects are empty and left in place —
+deleting them is a mutation outside the issue's scope as well.
+
 ## What the browser path cost
 
 An earlier draft of this investigation drove the project page with Playwright:
@@ -211,9 +236,11 @@ findings outlive the script:
 **Go for the browser UI path; a qualified no for the backend as it behaves today.**
 
 - **Browser UI path — go.** The flow in *The browser UI flow* above was executed
-  in a logged-in session, creates the conversation inside the project, and the
-  membership is proven by the redirect signal. It uses only the UI a human uses,
-  so it satisfies the issue's constraint on undocumented endpoints.
+  in a logged-in session and creates the conversation inside the project; the
+  membership was confirmed the way the issue requires — the conversation appears
+  in the project's own list after a reload, with the redirect as corroboration. It
+  uses only the UI a human uses, so it satisfies the issue's constraint on
+  undocumented endpoints.
 - **Backend path — not yet.** `chatgpt-use` does create the conversation inside
   the project and is the least work, but it creates projects through
   `POST /backend-api/projects` and can fall back to
