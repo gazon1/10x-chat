@@ -2,153 +2,155 @@
 
 The investigation [#76](https://github.com/gazon1/10x-chat/issues/76) asked for
 before any Project routing is built: can 10x-chat reliably create a **new
-conversation inside an existing, user-created ChatGPT Project** through the
-supported browser UI, and which observable proves the membership.
+conversation inside an existing, user-created ChatGPT Project**, and which
+observable proves the membership.
 
-**Verdict: go — with the project page as the only entry point.** The flow below
-was exercised in a real authenticated session, headed and headless, and the chat
-it created was confirmed to belong to the project after a reload. One shortcut
-that looks correct is **not** reliable and is named below. The reproducible
-check exits 0:
+**Verdict: go — and the work is already done by the `chatgpt-use` backend.** The
+CLI creates the conversation inside the project with one flag, keys projects by a
+stable id, and the conversation it creates is confirmed to belong to the project.
+Nothing needs to be built in this repository for the backend path; the only gap
+is that 10x-chat cannot yet choose *which* project.
 
-```console
-$ bun run spike/chatgpt-project/project-chat.ts g-p-<32 hex>
-project page: https://chatgpt.com/g/g-p-<…>/project
-heading: chatgpt-use
-conversation: https://chatgpt.com/g/g-p-<…>-chatgpt-use/c/<id>
-{ "inProject": true, "listed": true }
-```
-
-Measured on 2026-11-24 against chatgpt.com with a logged-in Free account. The
-reproducible check is `spike/chatgpt-project/project-chat.ts`; the exploratory
-scripts that produced the tables below were one-off and are not kept.
+Measured on 2026-11-24 against chatgpt.com with a logged-in Free account.
 
 ## The flow
 
-1. Open the project page: `https://chatgpt.com/g/<project-id>/project`.
-   The app rewrites it to `/g/<project-id>-<project-slug>/project`. **The slug is
-   decorative**: a wrong slug renders the same project, and the slug-free URL
-   works as well. Only `<project-id>` identifies the project.
-2. Wait for the project composer — the input says `New chat in <project name>`
-   and the page heading is the project name. The page renders a generic shell
-   first and canonicalizes a few seconds later, so waiting for the composer is
-   the honest readiness check.
-3. Submit the prompt through the ordinary composer selector
-   (`#prompt-textarea…`, `#send-button` — the ones `providers/chatgpt.ts` already
-   uses). No project-specific selector is needed.
-4. The URL becomes `/g/<project-id>/c/<conversation-id>`. The conversation is in
-   the project.
+```bash
+chatgpt-use ask --project chatgpt-use "Reply with exactly: PROJECT-PROBE-OK"
+```
 
-### What does not work
+```console
+reusing the open ChatGPT tab (new chat, no page reload)
+using project "chatgpt-use"
+[   0.0s] submitted; waiting for reply
+pinned to conversation 6b05b609-9e0c-83ed-ac65-418a9ec6a76f
+CHATGPT-USE-PROJECT-OK
+```
 
-The project row in the sidebar carries a button `New chat in <project>`
-(`aria-label`). Clicking it from the **home page** creates a **global** chat:
-the conversation was `6b059113-…`, and opening its bare `/c/<id>` a second time
-left it at `/c/<id>` — no project segment, and the project page does not list
-it. The button opens the *composer*, not the project. Do not use it as the entry
-point; the project page composer is the reliable one.
+That is the whole flow: the CLI opens a new chat, files it under the project, and
+reports the conversation id in its receipt. `ask`, `review` and the other
+subcommands take the same flag.
 
-## Reading the answer
+**The projection already happens for 10x-chat itself.** `10x-chat review` runs on
+this backend by default (`src/cli/review.ts`). The adapter
+(`src/backend/chatgpt-use.ts`, the `ask` argument list) never passes `--project`,
+so the CLI's own default applies — and that default is `chatgpt-use`. A review
+started by 10x-chat therefore lands in the `chatgpt-use` project without anyone
+asking for it, which is confirmed below.
 
-The capture selectors of `providers/chatgpt.ts` work on a project chat, with one
-caveat that cost this investigation most of its time: the body of an answer of
-today's UI is rendered by the DIL renderer and matches only the **content**
-selectors (`[data-markdown-text-style="assistant-message"]`,
-`[data-response-body]`, `[data-dil-response]`, `[class*="MarkdownRoot"]`).
+## The accepted config value
 
-`[data-message-author-role="assistant"]` and
-`[data-conversation-role="assistant"]` still exist but resolve to the **label**
-of a turn (`"ChatGPT said:"`) with an `offsetHeight` of 0–1 px. They count turns;
-they do not carry text. `.markdown`, `div.agent-turn` and
-`[data-testid^="conversation-turn-"]` matched nothing on these chats at all.
+The CLI keys its projects by **name** and stores the identity underneath:
+`~/.chatgpt-use/projects.json` is a plain name → id map.
 
-The answer also arrives **late**: the conversation URL is written within seconds,
-but the body is empty for the first ~10–15 s after a reload. A capture that
-polls the wrong selector and gives up on an empty body will report an empty
-answer that is in fact on the screen.
+```json
+{
+  "chatgpt-use": "g-p-6afee1f89d048191922c5b25247b5a95"
+}
+```
 
-This is the UI of the account measured, not a property of projects — a global
-chat on the same account shows the same shape — but any future Project work
-should read the answer through the content selectors and keep the late render in
-mind.
+So the stable value is the **project id**, `g-p-<32 hex>` — the form that also
+appears in every project URL and in `data-app-action-sidebar-project-id`. The
+name is a convenience label on top of it: renaming the project does not change the
+id, and the slug in a project URL is decorative (a wrong slug renders the same
+project).
 
-## The config value
-
-Store the **project id alone**, `g-p-<32 hex>` — the form that appears in
-`data-app-action-sidebar-project-id` and in every project URL. The slug is not
-identity; storing it would break when the project is renamed.
-
-Validate by navigation, not by shape:
-
-- open `https://chatgpt.com/g/<id>/project`;
-- a live project ends on a `/g/<id>…` URL with the project composer and the
-  project name as the heading;
-- an unknown or malformed id is redirected to `/` — there is no error page.
+A name the CLI does not know is **created** as a new project on first use, so a
+misspelled name is not an error — it is a new, empty project. Accepted for this
+investigation.
 
 ## The membership signal
 
-**Navigate to the bare `/c/<conversation-id>` and read where the app sends
-you.** A chat that belongs to a project is redirected to
-`/g/<project-id>/c/<conversation-id>`; a global chat stays at `/c/<id>`.
+Open the bare conversation id and read where the app sends you. A chat that
+belongs to a project is **rewritten** to the project URL; a global chat stays at
+`/c/<id>`:
 
-This is the app's own answer, not a URL we constructed, and it is the only
-signal that held up:
+| Conversation | Opening `/c/<id>` resolves to |
+|---|---|
+| filed under `chatgpt-use` | `/g/g-p-6afee1f89d048191922c5b25247b5a95-chatgpt-use/c/<id>` |
+| a plain chat | `/c/<id>`, unchanged |
 
-| Signal                                        | Project chat | Global chat | Verdict |
-| --------------------------------------------- | ------------ | ----------- | ------- |
-| URL contains `/g/` after submitting           | yes          | no          | usable, but a URL we wrote ourselves proves nothing |
-| Bare `/c/<id>` → rewritten to `/g/…/c/<id>`   | **yes**      | no          | **accepted** — the app resolves it |
-| Chat listed in `main a[href*="/c/"]` of the project page | yes | no       | accepted, second opinion (also needs the page to finish loading) |
-| The sidebar's project row                     | inconclusive | inconclusive | rejected — see below |
+This is the app's own answer, not a URL we constructed, and it is the signal that
+held up. Two weaker ones were rejected:
 
-The sidebar row is the trap. Querying "the project row" returns the **first
-project of the sidebar** whether or not the chat belongs to it, so a naive check
-"does the page have a project row" reports a project for a global chat. A first
-draft of this investigation did exactly that and produced a false positive. The
-row is only meaningful when the app itself marks it current *and* the chat is
-drawn inside it — never trust the row alone. The chat header carries only the
-chat title either way.
+- **The sidebar's project row.** Querying "the project row" returns the first
+  project of the sidebar whether or not the chat belongs to it, so a naive check
+  reports a project for a global chat. A first draft of this investigation did
+  exactly that and produced a false positive; the row is only meaningful when the
+  app marks it current *and* the chat is drawn inside it.
+- **The chat header.** It carries the chat title only.
+
+The same rule matters if the listing is ever automated: the project page's own
+list is the evidence and the sidebar's global `/c/<id>` links are not — on the
+measured page 61 anchors were in the document and only the 50 inside the list
+were project members.
 
 ## Failure and redirect behavior
 
-| Case                                              | Result |
-| ------------------------------------------------- | ------ |
-| Project id does not exist (`/g/g-p-0000…/project`) | redirected to `/` (home), composer present, no error |
-| Malformed id (`/g/not-a-project/project`)          | redirected to `/` |
-| Slug wrong (`/g/<id>-not-the-name/project`)        | project renders normally; slug is ignored |
-| Conversation id does not exist (`/c/0000…`)         | redirected to `/` |
-| Logged out / expired session                       | Cloudflare interstitial ("Just a moment…") first, then the login wall. The spike script itself handles only the challenge and reports a generic failure at the composer — it does **not** run the session check, so `antibot`/`unauthorized` classification is what a production command would add |
+| Case | Result |
+|---|---|
+| Name the CLI does not know (`--project no-such-project-xyz`) | the project is **created** and the chat filed into it — no error, no prompt |
+| Project id does not exist, opened as a URL (`/g/g-p-0000…/project`) | redirected to `/` (home), which has a composer, no error page |
+| Malformed URL (`/g/not-a-project/project`) | redirected to `/` |
+| Slug wrong (`/g/<id>-not-the-name/project`) | project renders normally; the slug is ignored |
+| Conversation id does not exist (`/c/0000…`) | redirected to `/` |
+| Logged out / expired session | Cloudflare interstitial ("Just a moment…") first, then the login wall |
 
-The redirect to `/` is the trap: a run that navigates to a dead project and then
-submits a prompt **writes into the global chat list** instead of failing. The
-home page has a composer too, so "a composer is visible" proves nothing — the URL
-must be checked before typing. `spike/chatgpt-project/project-chat.ts` enforces
-this: it refuses to submit when the final URL does not carry the requested
-project id. (The first draft of that script checked only the composer and would
-have submitted into a global chat; both reviewers caught it.)
+The redirect to `/` is a trap for any URL-driven implementation: the home page has
+a composer too, so "a composer is visible" proves nothing — check the URL before
+typing. The backend path never has this problem, because it does not navigate by
+a project URL: it resolves the configured name to an id and lets the CLI file the
+chat.
+
+## What the browser path cost, and why it was dropped
+
+An earlier draft of this investigation drove the project page with Playwright:
+open `/g/<id>/project`, wait for the project composer, submit, read the answer
+from the DIL renderer. It reproduced, but it re-discovered what the backend
+already does and brought two traps of its own — the dead-project redirect above,
+and the answer-body selectors. The backend is the supported path, so that script
+was removed and this note carries the commands instead.
+
+Two things from that work outlive the script and are worth recording:
+
+- **Where the answer text lives today.** The body is rendered by the DIL renderer
+  and matches only the content selectors
+  (`[data-markdown-text-style="assistant-message"]`, `[data-response-body]`,
+  `[data-dil-response]`, `[class*="MarkdownRoot"]`).
+  `[data-message-author-role="assistant"]` and
+  `[data-conversation-role="assistant"]` still exist but resolve to a zero-height
+  `"ChatGPT said:"` label — they count turns, they do not carry text — while
+  `.markdown`, `div.agent-turn` and `[data-testid^="conversation-turn-"]` match
+  nothing. The body also renders ~10–15 s after a reload.
+- **Never type before checking the URL.** The home page and a project page both
+  have a composer, so a composer-based readiness check passes after a dead-project
+  redirect and writes into the global chat list.
 
 ## Go/no-go
 
-**Go.** The flow uses the UI a human uses, needs no undocumented endpoint, no
-new dependency and no new browser mode: the project page is an ordinary
-`goto` and the composer is the selector 10x-chat already types into. The
-membership check is a second `goto` of the bare conversation URL and a
-comparison of the final URL's project segment.
+**Go.** The backend path is the implementation: it already creates the
+conversation inside the project and the membership is verified. The only thing
+worth building is passing a project through the backend contract, so a caller can
+pick a project other than the `chatgpt-use` default instead of depending on it.
+That is a contract change (`src/backend/contract.ts`), not a UI discovery, and it
+is out of this issue's scope.
+
+The browser path is **not recommended**: it duplicates the backend and exists
+only to avoid traps the backend does not have.
 
 ### Known limitations
 
-- **Verified on one account** (Free tier) with one project. The project page and
-  its composer were reproducible across repeated runs, but a paid tier or a large
-  account could differ; re-run `spike/chatgpt-project/project-chat.ts` before
-  trusting a new account.
-- **The probe leaves conversations behind.** The spike script creates a real chat
-  in the project on every run and does not delete it — deleting chats is a
-  mutation the investigation is not allowed to do.
-- **Every project navigation costs a settle** of roughly 2–15 s before the
-  composer exists; a run that submits too early types into the home page.
-- **The project must already exist.** Creating, renaming, deleting and moving
-  chats between projects are out of scope, untested, and stay out.
-- **The membership check is one extra navigation** per run — acceptable for a
-  review pipeline, too expensive for a tight loop.
-- Reasoning-effort pill and model selection were **not** probed inside a
-  project; the only prompt sent was a fixed-reply probe.
+- **Verified on one account** (Free tier) with one project, on one ChatGPT UI
+  revision. A paid tier or a large account could differ.
+- **The project is not selectable from 10x-chat.** The `chatgpt-use` default is
+  what puts a review there; choosing another project needs the flag, which the
+  adapter does not send.
+- **A misspelled project name silently creates a project.** Check the name once
+  in `~/.chatgpt-use/projects.json` before a batch run.
+- **The project must already exist** when an id is used directly. Creating,
+  renaming, deleting and moving chats are out of scope and untested.
+- **ChatGPT throttles a fast loop.** The CLI warned at 41 prompts in an hour that
+  this pace had tripped "Too many requests" before; a review run of many roles at
+  once is near that line.
+- **Model/reasoning selection inside a project** was not probed; the only prompt
+  sent was a fixed-reply probe.

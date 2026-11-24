@@ -14,8 +14,5 @@ e2e-test.mjs
 # Camoufox spike artifacts
 spike/camoufox/.data/
 
-# ChatGPT Projects spike artifacts (screenshots and page dumps)
-spike/chatgpt-project/out/
-
 # Local run artifacts (diagnostics logs, throw-away probes)
 build/
