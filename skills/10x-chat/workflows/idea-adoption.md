@@ -33,12 +33,15 @@ published without an explicit approval of that draft.
   1. existing implementation or abstraction in the target repository;
   2. standard library and platform capabilities;
   3. dependencies the project already uses;
-  4. a stable, maintained external library — only if 1–3 do not fit;
-  5. refactoring existing code to enable reuse or remove duplication;
+  4. refactoring existing code to enable reuse or remove duplication;
+  5. a stable, maintained external library — only if 1–4 do not fit;
   6. custom code, only when nothing above solves the requirement.
   An external candidate is judged on maintenance and release history, compatibility, license,
   security, API stability, documentation, limitations, integration cost and long-term burden.
   **A dependency is never recommended because it exists.**
+- **Refactoring is both a step and a question.** Position 4 of that order is the "would a focused
+  refactor make the existing code enough?" question that the gate of step 4 asks as `REFACTOR FIRST` —
+  it is never skipped in favour of an external library, and the answer is recorded either way.
 - **The stages are recorded, not remembered.** Each stage writes its artifact before the next one
   starts, so an interrupted run resumes from the files (see *Resume* below).
 
@@ -262,7 +265,9 @@ On resume, read the directory before anything else:
 1. List the artifacts and read their status; the last completed stage is the last one with a finished
    artifact.
 2. If the target revision moved since the artifacts were written (`git log <recorded-sha>..HEAD`,
-   `git diff --stat`), revalidate the repository evidence those stages used, and mark what changed.
+   `git diff HEAD --stat`, `git status --short`), revalidate the repository evidence those stages
+   used, and mark what changed. `git diff HEAD` and `git status` matter as much as the log: a staged
+   or uncommitted change is invisible to `git diff --stat`, and it can still contradict a decision.
    A decision whose evidence disappeared is reopened, not kept.
 3. Continue from the first incomplete stage. Do not repeat a completed stage and do not discard a
    decision the user already reviewed — ask before changing one.
