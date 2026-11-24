@@ -157,11 +157,6 @@ evidence and the sidebar's global `/c/<id>` links are not — on the measured pa
 anchors were in the document and only the 50 inside the list were project members.
 A check that scans every anchor reports a sidebar link as a listing.
 
-The same rule matters if the listing is ever automated: the project page's own
-list is the evidence and the sidebar's global `/c/<id>` links are not — on the
-measured page 61 anchors were in the document and only the 50 inside the list
-were project members.
-
 ## Failure and redirect behavior
 
 | Case | Result |
@@ -264,8 +259,10 @@ findings outlive the script:
 - **An unknown name silently creates a project** through a private endpoint, and
   passing an id creates a project named after it. Always pass a name that is
   already in `~/.chatgpt-use/projects.json`.
-- **The project must already exist.** Creating, renaming, deleting and moving
-  chats are out of scope and untested.
+- **The project must already exist.** Renaming, deleting and moving chats were not
+  tested and stay out of scope. Creating a project through the UI was not tested
+  either — but creating one *through the CLI* was, twice, as a side effect of the
+  unknown-name probes documented above.
 - **ChatGPT throttles a fast loop.** The CLI warned at 41 prompts in an hour that
   this pace had tripped "Too many requests" before; a review run of many roles at
   once is near that line.
