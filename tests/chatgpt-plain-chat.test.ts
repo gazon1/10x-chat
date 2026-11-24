@@ -308,7 +308,7 @@ describe('the conversation a backend cannot continue', () => {
     ).toBeUndefined();
   });
 
-  it('says nothing about a conversation when --new-chat was asked for', async () => {
+  it('says nothing about a conversation when --new-chat was asked for, but drops it', async () => {
     await storeConversation();
     registerBackend(stubBackend(await stubCli(COMPLETED)), 'chatgpt');
 
@@ -316,7 +316,12 @@ describe('the conversation a backend cannot continue', () => {
       runChat({ prompt: 'hello', provider: 'chatgpt', newChat: true }),
     );
 
+    // The user asked for a new chat: no retirement to explain — but the browser
+    // path clears the entry on `--new-chat`, so the backend path must too.
     expect(output).not.toMatch(/cannot continue/);
+    expect(
+      await getStoredConversation(await resolveConversationContext(), 'chatgpt'),
+    ).toBeUndefined();
   });
 
   it('keeps the stored conversation of a provider whose browser path still reuses it', async () => {

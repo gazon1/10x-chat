@@ -231,12 +231,14 @@ export async function runBackendChat(
 }
 
 /**
- * Say that a stored conversation cannot be continued, and forget it.
+ * Forget a stored conversation the run cannot continue.
  *
  * A run without `--new-chat` asks for the conversation of this repository and
  * branch. The backend cannot continue one, so the run starts a new chat — the
  * loss is stated once instead of happening silently, and the stored entry is
- * dropped so the next run does not make the same promise again.
+ * dropped so the next run does not make the same promise again. `--new-chat`
+ * drops the entry too, because the browser path does, but it explains nothing:
+ * the user asked for it.
  *
  * The cache is a convenience: an unreadable or unwritable store never fails a
  * chat.
@@ -246,7 +248,7 @@ async function announceRetiredConversation(
   providerName: ProviderName,
   backend: AiBackend,
 ): Promise<void> {
-  if (options.newChat || backend.capabilities.conversationReuse) return;
+  if (backend.capabilities.conversationReuse) return;
   // Only the backend that serves the provider's plain chat retires its
   // conversation. An opt-in backend (`--backend chrome-use-perplexity`) is a
   // second path beside the browser, and the stored entry still belongs to the
@@ -254,6 +256,13 @@ async function announceRetiredConversation(
   // that can reopen it.
   if (plainChatBackend(providerName)?.name !== backend.name) return;
   const context = await resolveConversationContext();
+  // `--new-chat` replaces the stored conversation, as the browser path does —
+  // it just does not have to explain a retirement the user asked for. A run
+  // without the flag names the loss instead of dropping the entry silently.
+  if (options.newChat) {
+    await clearStoredConversation(context, providerName).catch(() => {});
+    return;
+  }
   const stored = await getStoredConversation(context, providerName).catch(() => undefined);
   if (!stored) return;
   console.log(
