@@ -310,6 +310,27 @@ describe('the conversation a backend cannot continue', () => {
     expect(output).not.toMatch(/cannot continue/);
   });
 
+  it('keeps the stored conversation of a provider whose browser path still reuses it', async () => {
+    // An opt-in backend is a second path beside the browser: the perplexity
+    // conversation belongs to the browser run, which can still reopen it. Only
+    // the backend that serves the provider's plain chat may retire it.
+    const context = await resolveConversationContext();
+    await saveStoredConversation(context, 'perplexity', {
+      id: 'perplexity-chat',
+      url: 'https://www.perplexity.ai/search/perplexity-chat',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    registerBackend(stubBackend(await stubCli(COMPLETED)), 'perplexity');
+    const optIn = stubBackend(await stubCli(COMPLETED));
+
+    const output = await printed(() =>
+      runChat({ prompt: 'hello', provider: 'perplexity' }, { backend: optIn }),
+    );
+
+    expect(output).not.toMatch(/cannot continue/);
+    expect(await getStoredConversation(context, 'perplexity')).toBeDefined();
+  });
+
   it('states the same loss through --backend as through --provider', async () => {
     // The two ways into the backend must be observably the same: the message
     // is not a property of the routing, it is a property of the backend run.

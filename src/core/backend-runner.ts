@@ -12,7 +12,7 @@ import {
   type BackendSubmission,
   SUBMISSIONS_OF_FAILURE,
 } from '../backend/contract.js';
-import { providerOfBackend } from '../backend/registry.js';
+import { plainChatBackend, providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
@@ -247,6 +247,12 @@ async function announceRetiredConversation(
   backend: AiBackend,
 ): Promise<void> {
   if (options.newChat || backend.capabilities.conversationReuse) return;
+  // Only the backend that serves the provider's plain chat retires its
+  // conversation. An opt-in backend (`--backend chrome-use-perplexity`) is a
+  // second path beside the browser, and the stored entry still belongs to the
+  // browser run — dropping it would take the conversation away from the path
+  // that can reopen it.
+  if (plainChatBackend(providerName)?.name !== backend.name) return;
   const context = await resolveConversationContext();
   const stored = await getStoredConversation(context, providerName).catch(() => undefined);
   if (!stored) return;
