@@ -144,12 +144,16 @@ For `ADOPT`, `ADAPT` and `REFACTOR FIRST` ideas, run the approach gate of
 of them, including its refactoring question even when an external candidate looks suitable — and
 record its **Approach** block per idea.
 
-**The gate can overrule stage 3.** `applicability.md` is written before the gate runs, so its decision
-is the earlier reading, and the gate decides with the reuse order in hand. Where the gate returns a
-different decision, `applicability.md` is corrected to the gate's, and the Issue of stage 6 carries
-`applicability.md`'s decision — the corrected one. In particular `NO CHANGE NEEDED`, `REUSE EXISTING
-SOLUTION` and `REFACTOR FIRST` all mean no feature work as planned: the first two close the idea, and
-`REFACTOR FIRST` drafts the refactoring as its own Issue rather than the feature the source proposed.
+**The two vocabularies answer different questions.** Stage 3 decides *whether* an idea is worth work —
+its `ADOPT` / `ADAPT` / `DEFER` / `REJECT`. The gate decides *how* the work is done. They are not
+interchangeable, and the gate does not overwrite `applicability.md`:
+
+- `IMPLEMENT DIRECTLY` contradicts nothing. It is the *how* of an `ADOPT` or `ADAPT` idea: the
+  applicability decision stands and the Approach block records the custom implementation. An idea must
+  never lose its draft because the gate chose custom code.
+- `REUSE EXISTING SOLUTION`, `NO CHANGE NEEDED` and `REFACTOR FIRST` do contradict the earlier reading,
+  and then `applicability.md` is corrected: the first two replace `ADOPT` / `ADAPT` (the idea is closed,
+  or already covered), and `REFACTOR FIRST` replaces the feature work with the refactoring.
 
 Output: an **Approach** block per idea in `applicability.md` — decision, one-sentence approach, what
 was considered, what was rejected and why, preliminary refactoring, effect on scope and maintenance.
@@ -177,9 +181,10 @@ Write one Markdown file per Issue under `issues/` of the working directory. Spli
 pieces are independently implementable and verifiable, or where a real dependency boundary exists —
 no artificial fragmentation.
 
-Only an idea whose corrected decision of step 4 is `ADOPT`, `ADAPT` or `REFACTOR FIRST` gets a draft,
-and the draft proposes what that decision says: under `REFACTOR FIRST` the Issue is the refactoring,
-not the feature the source proposed, and the feature waits for a later run.
+Only an idea whose applicability decision — corrected by step 4 where the gate contradicted it — is
+`ADOPT`, `ADAPT` or `REFACTOR FIRST` gets a draft, and the draft proposes what that decision says:
+`ADOPT` and `ADAPT` carry the gate's approach (custom code included), and under `REFACTOR FIRST` the
+Issue is the refactoring, not the feature the source proposed — that feature waits for a later run.
 
 ```markdown
 # <concise title>
