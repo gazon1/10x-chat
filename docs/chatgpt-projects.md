@@ -167,7 +167,7 @@ A check that scans every anchor reports a sidebar link as a listing.
 | Malformed URL (`/g/not-a-project/project`) | redirected to `/` |
 | Slug wrong (`/g/<id>-not-the-name/project`) | project renders normally; the slug is ignored |
 | Conversation id does not exist (`/c/0000…`) | redirected to `/` |
-| Logged out / expired session | Cloudflare interstitial ("Just a moment…") first, then the login wall |
+| Logged out / expired session | observed once in a cookie-less context: Cloudflare interstitial ("Just a moment…") first. The login wall behind it was **not** reached or measured — the trap stopped the check |
 
 The redirect to `/` is a trap for any URL-driven implementation: the home page has
 a composer too, so "a composer is visible" proves nothing — check the URL before
@@ -198,10 +198,10 @@ a caller has to know before adopting it.
 **This investigation triggered the first one.** Probing the unknown-name and
 id-as-name cases created two real projects in the measured account
 (`no-such-project-xyz` and one named after the id string). That is a side effect
-of the experiment, not of any proposed implementation, and it is honest to record:
-the Issue excludes automatic Project creation, and the only way to learn that the
-CLI does it was to observe it. The two projects are empty and left in place —
-deleting them is a mutation outside the issue's scope as well.
+of the experiment, not of any proposed implementation — and it is a scope
+violation of this issue, recorded rather than glossed over: the only way to learn
+that the CLI does it was to observe it. The two projects are empty and left in
+place; deleting them is a mutation outside the issue's scope as well.
 
 ## What the browser path cost
 
