@@ -29,7 +29,7 @@ import {
   resolveConversationContext,
   saveStoredConversation,
 } from '../src/core/conversations.js';
-import { runChat } from '../src/core/orchestrator.js';
+import { runChat, wantsBrowser } from '../src/core/orchestrator.js';
 import { getSession } from '../src/session/index.js';
 
 /** A `chatgpt-use` that writes a canned stdout — the scene of a test. */
@@ -110,6 +110,15 @@ describe('the plain chat of ChatGPT has one path', () => {
     expect(plainChatBackend('gemini')).toBeUndefined();
     expect(plainChatBackend('claude')).toBeUndefined();
     expect(plainChatBackend('deepseek')).toBeUndefined();
+  });
+
+  it('keeps the browser when the run names the browser transport', () => {
+    // `--transport browser` is the caller's choice of a transport: the backend
+    // must not answer a run that named the browser, nor refuse it as if the
+    // option did not apply.
+    expect(wantsBrowser({ prompt: 'hello', transport: 'browser' })).toBe(true);
+    // A run that names no transport keeps the backend.
+    expect(wantsBrowser({ prompt: 'hello' })).toBe(false);
   });
 
   it('reaches the backend without --backend', async () => {

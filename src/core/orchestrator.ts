@@ -96,19 +96,23 @@ export interface ChatDeps extends ApiChatDeps {
 /**
  * Does the run ask for the browser itself?
  *
- * The browser knobs decide the window of a provider, image output is not a
- * capability of any backend today (`imageOutput: false`), and `--all` runs the
- * providers side by side — three things a backend cannot serve. A run that
- * asks for one of them keeps the browser path; nothing is silently dropped.
- * A backend of the same provider is still reachable through `--backend`.
+ * The browser knobs decide the window of a provider, an explicit transport is
+ * the caller's choice of a transport, image output is not a capability of any
+ * backend today (`imageOutput: false`), and `--all` runs the providers side by
+ * side — things a backend cannot serve. A run that asks for one of them keeps
+ * the browser path; nothing is silently dropped or silently replaced. A
+ * backend of the same provider is still reachable through `--backend`.
  */
-function wantsBrowser(options: ChatOptions): boolean {
+export function wantsBrowser(options: ChatOptions): boolean {
   return Boolean(
     options.headed ||
       options.headless ||
       options.profile ||
       options.isolatedProfile ||
       options.saveImages ||
+      // `--transport browser` names the transport: a run that named the
+      // browser must not be answered by a backend.
+      options.transport === 'browser' ||
       (options.providers && options.providers.length > 0),
   );
 }
