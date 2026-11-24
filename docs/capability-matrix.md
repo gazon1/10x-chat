@@ -18,7 +18,7 @@ browser provider: one implementation, one set of failure states. The browser
 provider of ChatGPT stays for the commands that need a page (`image`,
 `research`, `login`, `history`) and for a `chat` run that asks for the browser
 itself (`--headed`, `--headless`, `--profile`, `--isolated-profile`,
-`--save-images`) or for `--all`.
+`--save-images`, `--transport browser`) or for `--all`.
 
 Two consequences are deliberate and not accidents:
 
