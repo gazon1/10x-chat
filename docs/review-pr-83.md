@@ -8,7 +8,7 @@
 
 ## Verdict
 
-**APPROVE.** Both reviewers of the final head report no `BLOCKING` and no `MAJOR` finding, and every check passes. The nine defects this review found across earlier rounds are all fixed and each is pinned by a test that fails on the previous code. The one behaviour the change deliberately removes — conversation reuse for the plain ChatGPT chat — is the decision the user took explicitly, is enforced in code (`rejected` on a named conversation, the stored entry preserved for the browser path) and is recorded in the docs.
+**APPROVE.** Both reviewers of the final head report no `BLOCKING` and no `MAJOR` finding, and every check passes. The eleven defects this review found across earlier rounds are all fixed, and six of them are pinned by a test that fails on the previous code. The one behaviour the change deliberately removes — conversation reuse for the plain ChatGPT chat — is the decision the user took explicitly, is enforced in code (`rejected` on a named conversation, the stored entry preserved for the browser path) and is recorded in the docs.
 
 ## Checks
 
