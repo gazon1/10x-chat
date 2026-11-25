@@ -697,10 +697,9 @@ export async function verifyChatgptProjectMembership(
 
     // The project page paints a generic shell before the Chats list settles.
     await browser.page.waitForTimeout(2_000);
-    const inList = await projectChatsListContains(browser.page, conversationId);
-    if (inList) return undefined;
 
-    // One reload: the list may lag behind the creation.
+    // One reload: the primary membership signal is the project Chats list after
+    // reload (docs/chatgpt-projects.md). The initial check alone is not enough.
     await browser.page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
     await browser.page.waitForTimeout(2_000);
     const inListAfterReload = await projectChatsListContains(browser.page, conversationId);
@@ -739,11 +738,18 @@ export function conversationHrefMatches(
   conversationId: string,
   origin: string,
 ): boolean {
+  const needle = `/c/${conversationId}`;
+  const hasBoundary = (path: string, index: number): boolean => {
+    const next = path[index + needle.length];
+    return next === undefined || next === '/' || next === '?' || next === '#';
+  };
   try {
     const url = new URL(href, origin);
-    return url.pathname.includes(`/c/${conversationId}`);
+    const index = url.pathname.indexOf(needle);
+    return index >= 0 && hasBoundary(url.pathname, index);
   } catch {
-    return href.includes(`/c/${conversationId}`);
+    const index = href.indexOf(needle);
+    return index >= 0 && hasBoundary(href, index);
   }
 }
 
@@ -778,12 +784,19 @@ export function isProjectChatsListAnchor(
  * reference module-scope helpers.
  */
 export function projectChatsListDomPredicate(conversationId: string): boolean {
+  const needle = `/c/${conversationId}`;
   const hrefMatches = (href: string): boolean => {
+    const hasBoundary = (path: string, index: number): boolean => {
+      const next = path[index + needle.length];
+      return next === undefined || next === '/' || next === '?' || next === '#';
+    };
     try {
       const url = new URL(href, window.location.origin);
-      return url.pathname.includes(`/c/${conversationId}`);
+      const index = url.pathname.indexOf(needle);
+      return index >= 0 && hasBoundary(url.pathname, index);
     } catch {
-      return href.includes(`/c/${conversationId}`);
+      const index = href.indexOf(needle);
+      return index >= 0 && hasBoundary(href, index);
     }
   };
   const roots = Array.from(document.querySelectorAll('main, [role="main"]')) as HTMLElement[];

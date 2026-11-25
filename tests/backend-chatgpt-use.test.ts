@@ -806,6 +806,54 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(conversationHrefMatches(`https://chatgpt.com/g/g-p-1/c/${cid}`, cid, origin)).toBe(true);
   });
 
+  it('does not treat a conversation id prefix as the same conversation', () => {
+    const origin = 'https://chatgpt.com';
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-123-extra', 'conv-123', origin),
+    ).toBe(false);
+    expect(conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-10', 'conv-1', origin)).toBe(
+      false,
+    );
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-1?x=1', 'conv-1', origin),
+    ).toBe(true);
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-1#tail', 'conv-1', origin),
+    ).toBe(true);
+    expect(
+      isProjectChatsListAnchor(
+        { href: '/g/g-p-1/c/conv-123-extra', insideGlobalNav: false },
+        'conv-123',
+        origin,
+      ),
+    ).toBe(false);
+
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    try {
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]')
+            return [
+              {
+                querySelectorAll: () => [
+                  {
+                    href: 'https://chatgpt.com/g/g-p-1/c/conv-10',
+                    closest: () => null,
+                  },
+                ],
+              },
+            ];
+          if (selector === 'a[href*="/c/"]') return [];
+          return [];
+        },
+      };
+      expect(projectChatsListDomPredicate('conv-1')).toBe(false);
+    } finally {
+      if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
+      else (globalThis as { document?: unknown }).document = originalDocument;
+    }
+  });
+
   it('checks project Chats list anchors in main content before global navigation', () => {
     const cid = 'conv-1';
     const originalDocument = (globalThis as { document?: unknown }).document;
@@ -937,9 +985,15 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     } as never);
 
     try {
+      // 1) Present before reload and after reload: primary post-reload signal passes.
       installDocument({
         mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
       });
+      onReload = () => {
+        installDocument({
+          mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+        });
+      };
       const backend1 = createChatgptUseBackend({
         runner: fakeRunner([
           {
@@ -960,11 +1014,42 @@ describe('the ChatGPT backend of chatgpt-use', () => {
         backend1.ask({ ...request, chatgptProject: 'chatgpt-use' }),
       ).resolves.toMatchObject({ ok: true });
       expect(gotoCount).toBe(1);
+      expect(reloadCount).toBe(1);
+
+      // 1b) Visible before reload but absent after reload: fail, do not trust pre-reload DOM.
+      installDocument({
+        mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+      });
+      onReload = () => {
+        installDocument({ mainAnchors: [], docAnchors: [] });
+      };
+      reloadCount = 0;
+      const backend1b = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const preReloadOnly = await backend1b.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(preReloadOnly.ok).toBe(false);
+      if (!preReloadOnly.ok) expect(preReloadOnly.failure.kind).toBe('invalid_output');
+      expect(reloadCount).toBe(1);
 
       installDocument({
         mainAnchors: [],
         docAnchors: [{ href: 'https://chatgpt.com/c/conv-1', nav: true }],
       });
+      onReload = () => {};
       reloadCount = 0;
       const backend2 = createChatgptUseBackend({
         runner: fakeRunner([
