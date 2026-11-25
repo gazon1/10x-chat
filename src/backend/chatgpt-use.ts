@@ -585,7 +585,7 @@ export async function readChatgptUseProjects(
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`Cannot read ChatGPT Projects map ${filePath}: expected an object`);
   }
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const [name, id] of Object.entries(parsed as Record<string, unknown>)) {
     if (typeof id === 'string' && id.trim()) out[name] = id;
   }
@@ -621,7 +621,7 @@ export async function resolveChatgptProject(
       },
     };
   }
-  const id = projects[trimmed];
+  const id = Object.hasOwn(projects, trimmed) ? projects[trimmed] : undefined;
   if (!id) {
     const known = Object.keys(projects)
       .filter((key) => /^g-p-/.test(projects[key] ?? ''))
@@ -647,12 +647,18 @@ export async function resolveChatgptProject(
  * The primary membership signal: the conversation is in the project's own Chats
  * list after a reload. A bare `/c/<id>` redirect is corroboration only and is
  * not enough on its own (docs/chatgpt-projects.md).
+ *
+ * This verifier opens the project page in a 10x-chat browser session. The
+ * chatgpt-use CLI that created the conversation runs in its own browser, so
+ * both profiles must be logged into the same ChatGPT account for this check to
+ * observe the project list.
  */
 export async function verifyChatgptProjectMembership(
   conversationId: string,
   project: ResolvedChatgptProject,
 ): Promise<BackendFailure | undefined> {
   const { launchBrowser } = await import('../browser/index.js');
+  const { getProvider } = await import('../providers/index.js');
   const projectUrl = `https://chatgpt.com/g/${project.id}/project`;
   let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
   try {
@@ -664,6 +670,31 @@ export async function verifyChatgptProjectMembership(
     await browser.page
       .goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
       .catch(() => {});
+
+    const provider = getProvider('chatgpt');
+    let loggedIn = false;
+    try {
+      loggedIn = await provider.actions.isLoggedIn(browser.page);
+    } catch (error) {
+      return {
+        kind: 'unavailable',
+        message:
+          `Could not verify ChatGPT Project "${project.name}" (${project.id}) membership for conversation ${conversationId}: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          'Membership verification reads the project page through the 10x-chat browser profile; run `10x-chat login chatgpt` for that profile and ensure it uses the same ChatGPT account as chatgpt-use.',
+        submission: 'submitted',
+      };
+    }
+    if (!loggedIn) {
+      return {
+        kind: 'unavailable',
+        message:
+          `Cannot verify ChatGPT Project "${project.name}" (${project.id}) membership: the 10x-chat browser profile is not logged into ChatGPT. ` +
+          'Run `10x-chat login chatgpt` and ensure it uses the same ChatGPT account as chatgpt-use, then retry.',
+        submission: 'submitted',
+      };
+    }
+
     // The project page paints a generic shell before the Chats list settles.
     await browser.page.waitForTimeout(2_000);
     const inList = await projectChatsListContains(browser.page, conversationId);
@@ -679,7 +710,8 @@ export async function verifyChatgptProjectMembership(
       kind: 'invalid_output',
       message:
         `The conversation ${conversationId} was not found in the Chats list of ChatGPT Project "${project.name}" ` +
-        `(${project.id}) after reload. The project destination could not be verified; the conversation may be outside the project.`,
+        `(${project.id}) after reload. The project destination could not be verified; the conversation may be outside the project. ` +
+        'Membership verification reads the project page through the 10x-chat browser profile, so that profile must be logged into the same ChatGPT account as chatgpt-use.',
       submission: 'submitted',
     };
   } catch (error) {
@@ -687,12 +719,85 @@ export async function verifyChatgptProjectMembership(
       kind: 'unavailable',
       message:
         `Could not verify that conversation ${conversationId} landed in ChatGPT Project "${project.name}" (${project.id}): ` +
-        `${error instanceof Error ? error.message : String(error)}`,
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        'Membership verification reads the project page through the 10x-chat browser profile, so that profile must be logged into the same ChatGPT account as chatgpt-use.',
       submission: 'submitted',
     };
   } finally {
     await browser?.close().catch(() => {});
   }
+}
+
+/**
+ * True when `href` is a conversation URL for `conversationId`.
+ *
+ * The project page carries `/c/<id>` anchors in its Chats list and in global
+ * navigation. This helper is the shared href matcher used by the DOM predicate.
+ */
+export function conversationHrefMatches(
+  href: string,
+  conversationId: string,
+  origin: string,
+): boolean {
+  try {
+    const url = new URL(href, origin);
+    return url.pathname.includes(`/c/${conversationId}`);
+  } catch {
+    return href.includes(`/c/${conversationId}`);
+  }
+}
+
+/**
+ * DOM predicate for project Chats list membership.
+ *
+ * The project's own Chats list is the primary signal. Global navigation anchors
+ * (sidebar/nav/aside) can also link to conversations and must be ignored
+ * (docs/chatgpt-projects.md: 61 anchors in document, 50 in the project list).
+ *
+ * Kept as a pure function so it can be unit-tested without a browser. The real
+ * verifier calls it inside `page.evaluate`.
+ */
+export function isProjectChatsListAnchor(
+  anchor: { href: string; insideGlobalNav: boolean },
+  conversationId: string,
+  origin: string,
+): boolean {
+  if (anchor.insideGlobalNav) return false;
+  return conversationHrefMatches(anchor.href, conversationId, origin);
+}
+
+/**
+ * The in-browser predicate used by the default verifier.
+ *
+ * The project's own Chats list is the primary signal
+ * (docs/chatgpt-projects.md). Global navigation/sidebar anchors are not evidence.
+ * We scope to main content and exclude nav/sidebar/aside/header so a conversation
+ * link elsewhere on the page cannot satisfy membership by accident.
+ *
+ * Self-contained: `page.evaluate` serializes this function, so it must not
+ * reference module-scope helpers.
+ */
+export function projectChatsListDomPredicate(conversationId: string): boolean {
+  const hrefMatches = (href: string): boolean => {
+    try {
+      const url = new URL(href, window.location.origin);
+      return url.pathname.includes(`/c/${conversationId}`);
+    } catch {
+      return href.includes(`/c/${conversationId}`);
+    }
+  };
+  const roots = Array.from(document.querySelectorAll('main, [role="main"]')) as HTMLElement[];
+  const anchors =
+    roots.length > 0
+      ? roots.flatMap(
+          (root) => Array.from(root.querySelectorAll('a[href*="/c/"]')) as HTMLAnchorElement[],
+        )
+      : (Array.from(document.querySelectorAll('a[href*="/c/"]')) as HTMLAnchorElement[]);
+  return anchors.some((a) => {
+    if (a.closest('nav, [data-testid*="sidebar"], aside, header, [role="navigation"]'))
+      return false;
+    return hrefMatches(a.href);
+  });
 }
 
 /**
@@ -706,19 +811,7 @@ async function projectChatsListContains(
   page: Awaited<ReturnType<typeof import('../browser/index.js').launchBrowser>>['page'],
   conversationId: string,
 ): Promise<boolean> {
-  return page.evaluate((cid) => {
-    const anchors = Array.from(document.querySelectorAll('a[href*="/c/"]')) as HTMLAnchorElement[];
-    return anchors.some((a) => {
-      // Sidebar/global navigation is not the project's Chats list.
-      if (a.closest('nav, [data-testid*="sidebar"], aside')) return false;
-      try {
-        const url = new URL(a.href, window.location.origin);
-        return url.pathname.includes(`/c/${cid}`);
-      } catch {
-        return a.href.includes(`/c/${cid}`);
-      }
-    });
-  }, conversationId);
+  return page.evaluate(projectChatsListDomPredicate, conversationId);
 }
 
 async function verifyProjectMembership(

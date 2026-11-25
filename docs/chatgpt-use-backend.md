@@ -59,6 +59,10 @@ identity.
   [docs/chatgpt-projects.md](chatgpt-projects.md). A bare `/c/<id>` redirect is
   corroboration only. If the conversation is not in that list, the run fails; it
   is not reported as a success.
+- Membership is verified through the 10x-chat browser profile. The `chatgpt-use`
+  CLI runs in its own browser, so that 10x-chat profile must be logged into the
+  same ChatGPT account. `10x-chat login chatgpt` is the normal way to establish
+  it.
 - The setting is ChatGPT-only. A backend that cannot file a conversation into a
   project rejects the request; nothing is silently created outside the project.
 - With nothing configured, behaviour is unchanged. An unconfigured `review` still
