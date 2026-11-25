@@ -57,6 +57,13 @@ export async function runBackendChat(
   if (options.attach && options.attach.length > 0 && !backend.capabilities.attachments) {
     throw new Error(`The backend '${backend.name}' does not support attachments.`);
   }
+  // The directory is always created (it is the session's `images/`), so a
+  // caller that asked for images of a backend that produces none would be
+  // told nothing. Checked here, not only in the CLI: the programmatic entry
+  // point is a caller too.
+  if (options.saveImages && !backend.capabilities.imageOutput) {
+    throw new Error(`The backend '${backend.name}' does not support image output.`);
+  }
   // The browser flags would be ignored by a backend run — a flag that does
   // nothing is a lie about what the run does.
   if (options.headed || options.headless || options.profile || options.isolatedProfile) {

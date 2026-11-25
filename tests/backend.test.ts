@@ -313,6 +313,12 @@ describe('Chat through the backend contract', () => {
   let tempHome = '';
 
   /** A fake backend that records the requests it receives. */
+  /** A backend that also produces images — the fake produces none. */
+  const imageBackend = (backend: AiBackend): AiBackend => ({
+    ...backend,
+    capabilities: { ...backend.capabilities, imageOutput: true },
+  });
+
   const recordingBackend = (requests: BackendRequest[]): AiBackend => {
     const base = createFakeBackend();
     return {
@@ -649,6 +655,15 @@ describe('Chat through the backend contract', () => {
     expect(result.response).toContain('Fake answer for: hello');
   });
 
+  it('rejects --save-images for a backend that produces none, also in code', async () => {
+    // The CLI checks this too, but the programmatic entry point is a caller as
+    // well: it must not have the request silently ignored.
+    const backend = createFakeBackend();
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt', saveImages: '/tmp/x' }, { backend }),
+    ).rejects.toThrow('does not support image output');
+  });
+
   it('rejects a capability the backend does not have', async () => {
     const backend = createFakeBackend();
     const limited = { ...backend, capabilities: { ...backend.capabilities, attachments: false } };
@@ -721,7 +736,8 @@ describe('Chat through the backend contract', () => {
 
   it('gives a backend the directory of the images it has to save', async () => {
     const requests: BackendRequest[] = [];
-    const backend = recordingBackend(requests);
+    // A backend that saves images: the others refuse --save-images.
+    const backend = imageBackend(recordingBackend(requests));
     const wanted = path.join(tempHome, 'images');
     await runChat({ prompt: 'hello', provider: 'chatgpt', saveImages: wanted }, { backend });
     expect(requests[0].saveDir).toBe(wanted);
@@ -758,7 +774,7 @@ describe('Chat through the backend contract', () => {
   it('fails the session when the image directory cannot be created', async () => {
     const blocker = path.join(tempHome, 'blocker');
     await writeFile(blocker, 'not a directory');
-    const backend = createFakeBackend();
+    const backend = imageBackend(createFakeBackend());
     await expect(
       runChat(
         { prompt: 'hello', provider: 'chatgpt', saveImages: path.join(blocker, 'images') },
