@@ -62,7 +62,7 @@ The fork is published under the scoped name `@gazon1/10x-chat`, because the unsc
 10x-chat chat --provider chatgpt --new-chat \
   -p "Review https://github.com/owner/repo/pull/42 (base <sha>, head <sha>). Report only real problems."
 
-# Fresh conversation (default reuses the one stored per repo+branch+provider)
+# Fresh conversation (providers other than chatgpt reuse the one stored per repo+branch+provider)
 10x-chat chat --provider claude --new-chat -p "..."
 
 # Ask every chat provider in parallel
@@ -170,7 +170,7 @@ Then ask for the review — the brief carries the PR coordinates, or the compare
 - **The read-only review and the publication are separate procedures.** A request to *review* is not a request to *publish*: a request that only asks for a review commits and pushes nothing. Ask the user first — *"The change is not on `origin` yet — may I commit and push it?"* — and run the publication block only after the answer.
 - **A pull request is opened only with the user's word — and it is optional.** If the user wants one, ask: *"The branch `<branch>` has no pull request — may I open one?"* Only after the answer comes `gh pr create --base "$BASE_REF" --head <branch> --title "<title>" --body "<what changed>"`. Without that answer nothing is created — and the review still runs on the branch.
 - **Never commit what you did not read.** Adding everything at once (the all-files flag of `git add`) sweeps in a leftover file, a local config, a `.env` with credentials. Read `git status --short`, add the paths of the change by name, and read the staged diff before the commit.
-- Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict.
+- Use `--new-chat` for every independent review; otherwise the same conversation continues and the model remembers the previous verdict. With `--provider chatgpt` the flag is harmless but unnecessary: the ChatGPT backend starts a new chat on every run and cannot continue one (`docs/capability-matrix.md`).
 - `claude` and `perplexity` are the strongest reviewers but run headed. `gemini` is the cheapest reliable headless option.
 - `chat --all` sends the *same* prompt to every chat provider. It is a cross-model second opinion on one question — it does **not** give one prompt per reviewer role. Role-specific reviews need one `--provider` run each.
 - The reviewer sees what is pushed to `origin`, so the branch must be pushed before asking — when the user asked for the publication. Nothing is attached to the prompt — the reviewer reads the repository itself.
@@ -215,7 +215,7 @@ The reviewer opens the failing file on GitHub itself — paste only the failing 
 
 | Provider | Chat | Image | Research | Default mode | Notes |
 |---|---|---|---|---|---|
-| chatgpt | yes | DALL-E | yes | headless | Cloudflare-protected; strongest general model |
+| chatgpt | yes (`chatgpt-use` backend) | DALL-E | yes | the CLI's own window | Cloudflare-protected; strongest general model. `chat` drives the backend, so no conversation is reused and `--headed/--headless` switch to the browser path |
 | gemini | yes | Imagen | yes | headless | Modes: Fast, Thinking (default), Deep Think, Pro via `--model` |
 | claude | yes | no | no | **headed** | Best for code review |
 | grok | yes | yes | no | headless | UI changes often; use `--headed` if flaky |

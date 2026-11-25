@@ -85,7 +85,6 @@ describe('the --backend option of chat (CLI)', () => {
     const cases: [string[], RegExp][] = [
       [['--transport', 'api'], /backend and --transport/i],
       [['--headed'], /browser flags/i],
-      [['--new-chat'], /--backend and --new-chat/i],
       [['--all'], /--all and --backend/i],
       [['--provider', 'gemini'], /drives chatgpt/i],
       [['--dry-run'], /--dry-run or --copy/i],
@@ -98,7 +97,7 @@ describe('the --backend option of chat (CLI)', () => {
       expect(res.code).toBe(1);
       expect(res.output).toMatch(pattern);
     }
-    // Seven starts of the CLI in a row: the default timeout of a test is
+    // Six starts of the CLI in a row: the default timeout of a test is
     // too tight on a loaded machine.
   }, 30_000);
 

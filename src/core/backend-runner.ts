@@ -12,13 +12,16 @@ import {
   type BackendSubmission,
   SUBMISSIONS_OF_FAILURE,
 } from '../backend/contract.js';
-import { providerOfBackend } from '../backend/registry.js';
+import { plainChatBackend, providerOfBackend } from '../backend/registry.js';
 import { loadConfig } from '../config.js';
 import { getSessionDir } from '../paths.js';
+import { getProvider } from '../providers/index.js';
 import { createSession, saveBundle, saveResponse, updateSession } from '../session/index.js';
-import type { ChatOptions } from '../types.js';
+import type { ChatOptions, ProviderName } from '../types.js';
 import { buildBundle } from './bundle.js';
+import { getStoredConversation, resolveConversationContext } from './conversations.js';
 import { resolveAttachPaths } from './files.js';
+import { chatModel } from './model.js';
 import type { ChatResult } from './orchestrator.js';
 
 /**
@@ -27,9 +30,10 @@ import type { ChatResult } from './orchestrator.js';
  * This is the application side of the seam: no page, no selector, no session
  * of a browser — only the request and the answer of the backend.
  *
- * The conversation of a backend run is not reused yet: the contract carries
- * the conversation id, the reuse itself comes with the migration of the
- * providers.
+ * The conversation of a run is bound to the backend: a backend that cannot
+ * continue one refuses the request (`rejected`) instead of quietly starting a
+ * new chat, and a backend that never reuses makes `--new-chat` a statement of
+ * what already happens rather than a refusal.
  */
 export async function runBackendChat(
   options: ChatOptions,
@@ -53,6 +57,13 @@ export async function runBackendChat(
   if (options.attach && options.attach.length > 0 && !backend.capabilities.attachments) {
     throw new Error(`The backend '${backend.name}' does not support attachments.`);
   }
+  // The directory is always created (it is the session's `images/`), so a
+  // caller that asked for images of a backend that produces none would be
+  // told nothing. Checked here, not only in the CLI: the programmatic entry
+  // point is a caller too.
+  if (options.saveImages && !backend.capabilities.imageOutput) {
+    throw new Error(`The backend '${backend.name}' does not support image output.`);
+  }
   // The browser flags would be ignored by a backend run — a flag that does
   // nothing is a lie about what the run does.
   if (options.headed || options.headless || options.profile || options.isolatedProfile) {
@@ -61,13 +72,9 @@ export async function runBackendChat(
         'the browser flags (--headed, --headless, --profile, --isolated-profile) do not apply.',
     );
   }
-  // A backend manages no conversation and is no transport: the options that
-  // ask for one are refused, not ignored.
-  if (options.newChat) {
-    throw new Error(
-      `The backend '${backend.name}' does not manage conversations — the option 'newChat' does not apply.`,
-    );
-  }
+  // A backend is no transport: the option that asks for one is refused, not
+  // ignored. `newChat` is not refused — the run hands no conversation to the
+  // backend, so a new chat is what happens whether the flag is there or not.
   if (options.transport) {
     throw new Error(
       `The backend '${backend.name}' is not a transport — the option 'transport' does not apply.`,
@@ -81,14 +88,20 @@ export async function runBackendChat(
     throw new Error(`The backend '${backend.name}' does not support model selection.`);
   }
   // An inherited default model must not be forced onto a backend that has no
-  // model selection — only an explicit --model is rejected above.
+  // model selection — only an explicit --model is rejected above. The order is
+  // the one of the browser path (`chatModel`), so the same command line asks
+  // for the same model whichever path answers it: flag → config → provider.
   const model = backend.capabilities.modelSelection
-    ? (options.model ?? config.defaultModel)
+    ? chatModel(options.model, config.defaultModel, getProvider(provider).config.defaultModel)
     : undefined;
 
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
 
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
+  // A stored conversation the backend cannot continue is named and dropped:
+  // the run starts a new chat either way, but it says so instead of losing the
+  // conversation silently. It runs for `--provider` and `--backend` alike.
+  await announceUncontinuableConversation(options, provider, backend);
   // The backend answers the run — the session records it, so the history
   // does not claim that a provider answered.
   const session = await createSession(provider, options.prompt, model, backend.name);
@@ -138,6 +151,16 @@ export async function runBackendChat(
 
   const startTime = Date.now();
   let outcome: BackendOutcome<BackendResponse>;
+  // An interrupt must reach the backend, or the advertised `cancellation`
+  // would only stop the local wait while the request keeps running. The
+  // listener is removed when the run ends for any reason.
+  const cancel = (): void => {
+    if (!backend.capabilities.cancellation) return;
+    // The run is over anyway: a cancel that cannot reach the backend must not
+    // turn an interrupt into a crash.
+    void backend.cancel(request.requestId).catch(() => undefined);
+  };
+  process.once('SIGINT', cancel);
   try {
     outcome = await backend.ask(request);
   } catch (error) {
@@ -155,6 +178,9 @@ export async function runBackendChat(
     // stay 'running' forever.
     await updateSession(session.id, { status: 'failed', durationMs: Date.now() - startTime });
     throw error;
+  } finally {
+    // The request is over: an interrupt now has nothing to cancel.
+    process.removeListener('SIGINT', cancel);
   }
   const durationMs = Date.now() - startTime;
 
@@ -222,6 +248,41 @@ export async function runBackendChat(
     ...(response.conversationId ? { conversationId: response.conversationId } : {}),
     ...(response.images && response.images.length > 0 ? { images: response.images } : {}),
   };
+}
+
+/**
+ * Say that a stored conversation cannot be continued.
+ *
+ * A run without `--new-chat` asks for the conversation of this repository and
+ * branch. The backend cannot continue one, so the run starts a new chat — the
+ * loss is stated once instead of happening silently.
+ *
+ * The entry is **not** deleted: `conversations.json` belongs to the browser
+ * path, and the same provider still reopens it there (`chat --headed`). A run
+ * that cleaned up after itself would take that conversation away from the path
+ * that can actually continue it.
+ *
+ * The cache is a convenience: an unreadable store never fails a chat.
+ */
+async function announceUncontinuableConversation(
+  options: ChatOptions,
+  providerName: ProviderName,
+  backend: AiBackend,
+): Promise<void> {
+  if (options.newChat || backend.capabilities.conversationReuse) return;
+  // Only the backend that serves the provider's plain chat looks here. An
+  // opt-in backend (`--backend chrome-use-perplexity`) is a second path beside
+  // the browser and says nothing about the conversation of it.
+  if (plainChatBackend(providerName)?.name !== backend.name) return;
+  const context = await resolveConversationContext();
+  const stored = await getStoredConversation(context, providerName).catch(() => undefined);
+  if (!stored) return;
+  console.log(
+    chalk.dim(
+      `The backend '${backend.name}' cannot continue the chat ${stored.id} — starting a new one. ` +
+        'The browser path (--headed) still reuses it.',
+    ),
+  );
 }
 
 /**
@@ -354,15 +415,13 @@ function validFailure(failure: unknown): BackendFailure {
   return { kind, message, submission, ...partialText };
 }
 
-/** The kinds of a failure the contract defines. */
-const FAILURE_KINDS: readonly BackendFailureKind[] = [
-  'busy',
-  'unavailable',
-  'timeout',
-  'invalid_output',
-  'cancelled',
-  'unknown_submission',
-];
+/**
+ * The kinds of a failure the contract defines.
+ *
+ * Taken from the contract itself: a list copied by hand drifts the moment a
+ * kind is added, and the drift turns a real failure into `invalid_output`.
+ */
+const FAILURE_KINDS = Object.keys(SUBMISSIONS_OF_FAILURE) as readonly BackendFailureKind[];
 
 /** The submission state of a response — the state it claims, when it is one. */
 function submissionOf(submission: unknown): BackendSubmission {

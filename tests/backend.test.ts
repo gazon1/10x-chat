@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SUBMISSIONS_OF_FAILURE } from '../src/backend/contract.js';
 import {
   type AiBackend,
   BackendError,
@@ -17,6 +18,7 @@ import {
   resetBackends,
 } from '../src/backend/index.js';
 import { runChat } from '../src/core/orchestrator.js';
+import { CHATGPT_CONFIG } from '../src/providers/chatgpt.js';
 import { getSession, listSessions, saveBundle, saveResponse } from '../src/session/index.js';
 
 vi.mock('../src/session/index.js', async (importOriginal) => {
@@ -145,14 +147,9 @@ describe('Fake backend', () => {
   });
 
   it('keeps the submission state of every failure in the status', async () => {
-    const kinds: BackendFailureKind[] = [
-      'busy',
-      'unavailable',
-      'timeout',
-      'invalid_output',
-      'cancelled',
-      'unknown_submission',
-    ];
+    // Every kind the contract defines: a new one is covered without editing
+    // the test, and a kind the fake backend cannot produce fails here.
+    const kinds = Object.keys(SUBMISSIONS_OF_FAILURE) as BackendFailureKind[];
     for (const kind of kinds) {
       const backend = createFakeBackend([{ prompt: 'boom', failure: kind }]);
       const outcome = await backend.ask({ requestId: 'req-1', prompt: 'boom' });
@@ -268,22 +265,13 @@ describe('Fake backend', () => {
   });
 
   it('maps every failure kind and never answers with an empty success', async () => {
-    const kinds: BackendFailureKind[] = [
-      'busy',
-      'unavailable',
-      'timeout',
-      'invalid_output',
-      'cancelled',
-      'unknown_submission',
-    ];
-    const expectedSubmission: Record<BackendFailureKind, string> = {
-      busy: 'not_submitted',
-      unavailable: 'not_submitted',
-      timeout: 'submitted',
-      invalid_output: 'submitted',
-      cancelled: 'submitted',
-      unknown_submission: 'unknown',
-    };
+    // Every kind the contract defines: a new one is covered without editing
+    // the test, and a kind the fake backend cannot produce fails here.
+    const kinds = Object.keys(SUBMISSIONS_OF_FAILURE) as BackendFailureKind[];
+    // The state a kind reports is the first one of the contract.
+    const expectedSubmission = Object.fromEntries(
+      kinds.map((kind) => [kind, SUBMISSIONS_OF_FAILURE[kind][0]]),
+    ) as Record<BackendFailureKind, string>;
 
     for (const kind of kinds) {
       const backend = createFakeBackend([{ prompt: 'boom', failure: kind, partial: 'half' }]);
@@ -325,6 +313,12 @@ describe('Chat through the backend contract', () => {
   let tempHome = '';
 
   /** A fake backend that records the requests it receives. */
+  /** A backend that also produces images — the fake produces none. */
+  const imageBackend = (backend: AiBackend): AiBackend => ({
+    ...backend,
+    capabilities: { ...backend.capabilities, imageOutput: true },
+  });
+
   const recordingBackend = (requests: BackendRequest[]): AiBackend => {
     const base = createFakeBackend();
     return {
@@ -371,6 +365,30 @@ describe('Chat through the backend contract', () => {
     await expect(runChat({ prompt: 'boom', provider: 'chatgpt' }, { backend })).rejects.toThrow(
       BackendError,
     );
+  });
+
+  it('keeps a rejected failure — a refused request is not an unusable answer', async () => {
+    // `rejected` is a kind of the contract: a runner that does not know it
+    // turns a real refusal into `invalid_output` and gives the wrong advice.
+    const base = createFakeBackend();
+    const backend: AiBackend = {
+      ...base,
+      ask: async () =>
+        ({
+          ok: false,
+          failure: {
+            kind: 'rejected',
+            message: 'the backend cannot continue that conversation',
+            submission: 'not_submitted',
+          },
+        }) as unknown as Awaited<ReturnType<AiBackend['ask']>>,
+    };
+    const error = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(BackendError);
+    expect(backendFailureKind(error)).toBe('rejected');
+    expect((error as BackendError).failure.submission).toBe('not_submitted');
   });
 
   it('fails the run when the backend answers with a malformed failure', async () => {
@@ -543,6 +561,62 @@ describe('Chat through the backend contract', () => {
     expect(session.meta.model).toBe('model-a');
   });
 
+  it('falls back to the default model of the provider, as the browser path does', async () => {
+    // The same command line must ask for the same model whichever path answers
+    // it: flag -> config file -> the default of the provider.
+    const requests: BackendRequest[] = [];
+    await runChat(
+      { prompt: 'hello', provider: 'chatgpt' },
+      { backend: recordingBackend(requests) },
+    );
+    expect(requests[0].model).toBe(CHATGPT_CONFIG.defaultModel);
+  });
+
+  it('passes an interrupt to the backend it advertises cancellation for', async () => {
+    // `cancellation: true` is a promise: an interrupt must reach the backend,
+    // or Ctrl+C only stops the local wait while the request keeps running.
+    const base = createFakeBackend();
+    const cancelled: string[] = [];
+    const backend: AiBackend = {
+      ...base,
+      ask: async (request) => {
+        // The interrupt arrives while the request is in flight.
+        process.emit('SIGINT');
+        await Promise.resolve();
+        return base.ask(request);
+      },
+      cancel: async (requestId) => {
+        cancelled.push(requestId);
+        return { ok: true, value: { cancelled: true } };
+      },
+    };
+
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+
+    // The interrupt reached the backend, with the id of this run.
+    expect(cancelled).toEqual([result.sessionId]);
+    // The listener does not outlive the run.
+    expect(process.listenerCount('SIGINT')).toBe(0);
+  });
+
+  it('does not cancel a backend that cannot cancel', async () => {
+    const base = createFakeBackend();
+    const cancel = vi.fn(async () => ({ ok: true, value: { cancelled: true } }));
+    const backend: AiBackend = {
+      ...base,
+      capabilities: { ...base.capabilities, cancellation: false },
+      ask: async (request) => {
+        process.emit('SIGINT');
+        await Promise.resolve();
+        return base.ask(request);
+      },
+      cancel,
+    };
+
+    await runChat({ prompt: 'hello', provider: 'chatgpt' }, { backend });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it('fails the session when the backend throws', async () => {
     const backend = createFakeBackend();
     const broken = {
@@ -566,11 +640,28 @@ describe('Chat through the backend contract', () => {
   it('rejects the options a backend run cannot honour', async () => {
     const backend = createFakeBackend();
     await expect(
-      runChat({ prompt: 'hello', provider: 'chatgpt', newChat: true }, { backend }),
-    ).rejects.toThrow('does not manage conversations');
-    await expect(
       runChat({ prompt: 'hello', provider: 'chatgpt', transport: 'api' }, { backend }),
     ).rejects.toThrow('is not a transport');
+  });
+
+  it('treats --new-chat as what a backend run always does', async () => {
+    // The run hands no conversation to the backend, so a new chat is the
+    // outcome with or without the flag — it must not fail the run.
+    const backend = createFakeBackend();
+    const result = await runChat(
+      { prompt: 'hello', provider: 'chatgpt', newChat: true },
+      { backend },
+    );
+    expect(result.response).toContain('Fake answer for: hello');
+  });
+
+  it('rejects --save-images for a backend that produces none, also in code', async () => {
+    // The CLI checks this too, but the programmatic entry point is a caller as
+    // well: it must not have the request silently ignored.
+    const backend = createFakeBackend();
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt', saveImages: '/tmp/x' }, { backend }),
+    ).rejects.toThrow('does not support image output');
   });
 
   it('rejects a capability the backend does not have', async () => {
@@ -645,7 +736,8 @@ describe('Chat through the backend contract', () => {
 
   it('gives a backend the directory of the images it has to save', async () => {
     const requests: BackendRequest[] = [];
-    const backend = recordingBackend(requests);
+    // A backend that saves images: the others refuse --save-images.
+    const backend = imageBackend(recordingBackend(requests));
     const wanted = path.join(tempHome, 'images');
     await runChat({ prompt: 'hello', provider: 'chatgpt', saveImages: wanted }, { backend });
     expect(requests[0].saveDir).toBe(wanted);
@@ -682,7 +774,7 @@ describe('Chat through the backend contract', () => {
   it('fails the session when the image directory cannot be created', async () => {
     const blocker = path.join(tempHome, 'blocker');
     await writeFile(blocker, 'not a directory');
-    const backend = createFakeBackend();
+    const backend = imageBackend(createFakeBackend());
     await expect(
       runChat(
         { prompt: 'hello', provider: 'chatgpt', saveImages: path.join(blocker, 'images') },

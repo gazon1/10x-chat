@@ -11,11 +11,34 @@ The decision per provider — migrate to a backend or retain the browser — and
 inventory of the browser consumers are in
 [docs/playwright-inventory.md](playwright-inventory.md).
 
+## The migration of the plain chat
+
+`chat --provider chatgpt` is served by the `chatgpt-use` backend, not by the
+browser provider: one implementation, one set of failure states. The browser
+provider of ChatGPT stays for the commands that need a page (`image`,
+`research`, `login`, `history`) and for a `chat` run that asks for the browser
+itself (`--headed`, `--headless`, `--profile`, `--isolated-profile`,
+`--save-images`, `--transport browser`) or for `--all`.
+
+Two consequences are deliberate and not accidents:
+
+- **Conversation reuse is retired for the plain ChatGPT chat.** The CLI has no
+  "continue this conversation" for `ask`, so every run starts a new chat. A run
+  that finds a stored conversation says so and keeps the entry for the browser
+  path, which still reopens it; a request that
+  names a conversation is refused with `rejected` instead of quietly starting a
+  new chat. The reuse of the other providers is untouched, and so is the
+  context-window continuation of the browser path.
+- **Cancellation is gained.** The backend promises `cancellation: true`
+  (`chatgpt-use cancel`), which the matrix records as `no` for every browser
+  provider.
+
 ## The matrix
 
 | Provider            | Auth                                     | Model selection                     | Attachments                  | Streaming / completion                                | Cancellation | Conversation reuse                                  | Image output                     |
 | ------------------- | ---------------------------------------- | ----------------------------------- | ---------------------------- | ----------------------------------------------------- | ------------ | --------------------------------------------------- | ------------------------------- |
-| **chatgpt**         | Google/email session, bot-protected      | Picker (Instant…o3, default `Pro`)  | Yes (deferred to the submit)  | Own poll loop, chunks via `onChunk`, `truncated` flag | No           | Yes — new chat, context window, continue with summary | Yes — generated images of the answer |
+| **chatgpt** (`chat`, via the backend) | Google/email session of the CLI, bot-protected | The level of the composer (Instant…Pro) | Yes (`--file`, `--image`) | Whole answer, no stream (`streaming: false`)  | **Yes** (`chatgpt-use cancel`) | **No** — every `ask` is a new chat                                  | No — the plain `ask` returns text |
+| **chatgpt** (browser: `image`, `research`, `login`, `history`, `chat --all`) | Google/email session, bot-protected      | Picker (Instant…o3, default `Pro`)  | Yes (deferred to the submit)  | Own poll loop, chunks via `onChunk`, `truncated` flag | No           | Yes — new chat, context window, continue with summary | Yes — generated images of the answer |
 | **gemini**          | Google session (cookies, account menu)   | Modes (Fast, Thinking, Pro, Deep Think, Deep Research) | Yes (upload menu, needs a signed-in account) | `pollUntilStable`, chunks, Deep Think wait, `truncated` | No           | No — no new chat, no context window, no continuation  | Yes — generated images of the answer |
 | **claude**          | Anthropic session, headed only           | Picker (Opus/Sonnet/Haiku/Thinking)  | Yes                          | `pollUntilStable`, chunks, thinking block stripped    | No           | No                                                    | No                              |
 | **grok**            | X session                               | Picker (Auto/Fast/Expert/Heavy)     | Yes                          | `pollUntilStable`, chunks, failure text detected     | No           | No — the id comes from the URL                        | Yes — generated images of the answer |
@@ -72,18 +95,28 @@ inventory of the browser consumers are in
 
 ### Cancellation
 
-**No provider can cancel a running request.** The stop button of chatgpt and
-the stop/cancel button of gemini are read as "the answer is still coming", but
-they are never clicked. The API transport has no abort signal either.
+The **`chatgpt-use` backend can cancel a running request** (`chatgpt-use
+cancel`), and the contract of the backend carries it.
 
-A backend that promises `cancellation: true` must implement it itself — the
-providers of today cannot.
+**No browser provider can cancel a running request.** The stop button of
+chatgpt and the stop/cancel button of gemini are read as "the answer is still
+coming", but they are never clicked. The API transport has no abort signal
+either.
+
+A browser backend that promises `cancellation: true` must implement it itself —
+the providers of today cannot.
 
 ### Conversation reuse
 
-- Only **chatgpt** implements the three actions of the contract: `newChat`,
-  `contextWindowFull` and `continueInNewChat` (the new chat starts with a
-  summary of the old one).
+- The plain **ChatGPT chat has no reuse**: the `chatgpt-use` backend cannot
+  continue a conversation (`ask` opens a new one every time). A stored
+  conversation is named when a run finds one — the entry stays, because the
+  browser path still reopens it — and a request that
+  names a conversation is refused with `rejected`.
+- The **browser provider of chatgpt** — `image`, `research`, `login`,
+  `history`, `chat --all` — still implements the three continuation actions:
+  `newChat`, `contextWindowFull` and `continueInNewChat` (the new chat starts
+  with a summary of the old one).
 - The other providers keep the conversation in the URL: grok `/c/<id>`,
   perplexity `/search/<id>` or `/thread/<id>`, deepseek `/a/chat/<id>`.
 - gemini has no conversation actions at all.
@@ -97,19 +130,24 @@ providers of today cannot.
 
 ## The mapping to the backend contract
 
-| Capability of the contract | chatgpt | gemini | claude | grok | perplexity | deepseek | deepseek (api) |
-| -------------------------- | ------- | ------ | ------ | ---- | ---------- | -------- | -------------- |
-| `attachments`              | yes     | yes    | yes    | yes  | no         | no       | no             |
-| `streaming`                | yes     | yes    | yes    | yes  | yes        | yes      | no             |
-| `cancellation`             | no      | no     | no     | no   | no         | no       | no             |
-| `conversationReuse`        | yes     | no     | no     | no   | no         | no       | no             |
-| `modelSelection`           | yes     | yes    | yes    | yes  | no         | yes      | yes            |
-| `imageOutput`              | yes     | yes    | no     | yes  | no         | no       | no             |
+The row of ChatGPT is the backend that serves its plain chat
+(`CHATGPT_USE_CAPABILITIES` in `src/backend/chatgpt-use.ts`); the browser
+capabilities of the same provider — image output, streaming, the continuation
+of an exhausted chat — belong to the commands that still use the browser and
+are not promised by the backend.
 
-The contract of the application does not know these providers yet — they still
-run through the browser path of `src/core/orchestrator.ts`. The matrix says
-what a browser backend of each provider may promise when the providers are
-migrated to the contract.
+| Capability of the contract | chatgpt (`chat`) | chatgpt (browser) | gemini | claude | grok | perplexity | deepseek | deepseek (api) |
+| -------------------------- | ---------------- | ----------------- | ------ | ------ | ---- | ---------- | -------- | -------------- |
+| `attachments`              | yes     | yes    | yes    | yes  | yes  | no         | no       | no             |
+| `streaming`                | no      | yes    | yes    | yes  | yes  | yes        | yes      | no             |
+| `cancellation`             | **yes** | no     | no     | no   | no   | no         | no       | no             |
+| `conversationReuse`        | no      | yes    | no     | no   | no   | no         | no       | no             |
+| `modelSelection`           | yes     | yes    | yes    | yes  | yes  | no         | yes      | yes            |
+| `imageOutput`              | no      | yes    | yes    | no   | yes  | no         | no       | no             |
+
+Only the plain ChatGPT chat runs through a backend today. The other providers
+still run through the browser path of `src/core/orchestrator.ts`; their columns
+say what a browser backend of each may promise when they are migrated.
 
 A backend that promises `streaming: true` writes every piece of the answer
 into the `onChunk` of the request — the same convention the browser providers

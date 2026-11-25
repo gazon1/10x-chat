@@ -120,6 +120,11 @@ any provider:
 10x-chat chat -p 'Review this' --provider claude --headless
 ```
 
+> The plain ChatGPT chat does not use this browser at all: `chat --provider
+> chatgpt` drives the `chatgpt-use` CLI, which owns its own window. Passing
+> `--headless`, `--headed`, `--profile` or `--isolated-profile` asks for the
+> browser path explicitly (`docs/capability-matrix.md`).
+
 A Cloudflare challenge cannot be solved in a headless window. If the provider
 shows one, run once with a visible browser (or `10x-chat login <provider>`) to
 refresh the clearance cookie; the next headless run reuses it.
@@ -158,24 +163,33 @@ time:
 A browser chat stores the provider conversation of the current git repository
 and branch in `~/.10x-chat/conversations.json`. The next `chat` run in the same
 repository and branch opens that conversation and appends the prompt. This
-works for every provider that exposes a stable conversation URL:
+works for every provider that exposes a stable conversation URL **except
+ChatGPT**, whose plain chat is served by the `chatgpt-use` backend and cannot
+continue a conversation:
 
-| Provider | Conversation URL |
-|---|---|
-| ChatGPT | `https://chatgpt.com/c/…` |
-| Gemini | `https://gemini.google.com/app/…` |
-| Claude | `https://claude.ai/chat/…` |
-| Grok | `https://grok.com/c/…` or `https://grok.com/chat/…` |
-| Perplexity | `https://www.perplexity.ai/search/…` or `/thread/…` |
-| DeepSeek | `https://chat.deepseek.com/a/chat/…` |
+| Provider | Conversation URL | Reused by `chat` |
+|---|---|---|
+| ChatGPT | `https://chatgpt.com/c/…` | **no** — the backend starts a new chat every run |
+| Gemini | `https://gemini.google.com/app/…` | yes |
+| Claude | `https://claude.ai/chat/…` | yes |
+| Grok | `https://grok.com/c/…` or `https://grok.com/chat/…` | yes |
+| Perplexity | `https://www.perplexity.ai/search/…` or `/thread/…` | yes |
+| DeepSeek | `https://chat.deepseek.com/a/chat/…` | yes |
 
 ```bash
 cd ~/src/my-project          # branch: feature/login
-10x-chat chat -p 'Implement the login form' --provider chatgpt
-10x-chat chat -p 'Now add validation'       --provider chatgpt   # same chat
-10x-chat chat -p 'Start over'               --provider chatgpt --new-chat
+10x-chat chat -p 'Implement the login form' --provider gemini
+10x-chat chat -p 'Now add validation'       --provider gemini   # same chat
+10x-chat chat -p 'Start over'               --provider gemini --new-chat
 ```
 
+- **ChatGPT is the exception.** Every `10x-chat chat --provider chatgpt` run is
+  a new conversation: the `chatgpt-use` CLI has no "continue this chat". A chat
+  you want to follow up on needs a provider from the table above, or
+  `10x-chat chat --provider chatgpt --headed/--headless` with the browser path.
+  A run that finds a stored ChatGPT conversation says that it cannot continue it
+  and starts a new one; the entry stays in the cache, because the browser path
+  (`--headed`) still reopens that conversation.
 - The key is the **repository**, the checked-out branch and the provider. The
   repository is identified by its origin URL, so another worktree or another
   clone of the same repository finds the same chat; without a remote the git
@@ -187,7 +201,8 @@ cd ~/src/my-project          # branch: feature/login
   to the landing page / a new chat) is dropped automatically and the run starts
   a new one. A redirect to a login page is left to the login check — the
   conversation is kept for after `10x-chat login`.
-- `--new-chat` forces a fresh conversation and replaces the stored entry.
+- `--new-chat` forces a fresh conversation and replaces the stored entry. For
+  ChatGPT it changes nothing: a backend run always starts a new chat.
 - **An exhausted context window does not end the work.** When the provider reports
   that the context window of the conversation is full (ChatGPT shows a banner
   with a "Continue in a new chat" button), the run continues in a **new chat with
@@ -196,7 +211,8 @@ cd ~/src/my-project          # branch: feature/login
   the branch, so the next run appends to it, until its own context window runs
   out too. The check happens before the prompt and again before every retry, so
   a context that runs out while the answer is being generated also lands in the
-  new chat.
+  new chat. This is a property of the **browser path**: the `chatgpt-use`
+  backend of the plain ChatGPT chat has no such continuation.
 - `chat --all` keeps one conversation per provider for the same repository and
   branch (browser transport only).
 - The API transport has no conversation (`--transport api` is a single HTTP

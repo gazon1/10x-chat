@@ -98,14 +98,6 @@ export function createChatCommand(): Command {
           );
           process.exit(1);
         }
-        if (options.newChat === true) {
-          console.error(
-            chalk.red(
-              'Cannot use --backend and --new-chat together: a backend does not manage conversations.',
-            ),
-          );
-          process.exit(1);
-        }
         if (options.headed || options.headless || options.profile || options.isolatedProfile) {
           console.error(
             chalk.red(

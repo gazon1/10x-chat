@@ -33,6 +33,7 @@ export { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './pro
 export {
   getBackend,
   listBackends,
+  plainChatBackend,
   providerOfBackend,
   registerBackend,
   resetBackends,

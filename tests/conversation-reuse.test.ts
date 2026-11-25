@@ -6,6 +6,10 @@
  * run opens that conversation instead of starting over. The test runs two
  * chats after another: the second one must open the conversation of the
  * first one.
+ *
+ * The runs name `headed` because the plain chat of ChatGPT is served by its
+ * backend now: the reuse of this test belongs to the browser path, which a
+ * browser flag keeps (`wantsBrowser` in `src/core/orchestrator.ts`).
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -89,14 +93,14 @@ describe('the reuse of the conversation', () => {
     const context = await resolveConversationContext();
 
     // The first run starts a new chat.
-    await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    await runChat({ prompt: 'hello', provider: 'chatgpt', headed: true });
     expect(fake.launched[0]).toBe('https://chatgpt.com/');
 
     // The conversation of the run is stored.
     expect((await getStoredConversation(context, 'chatgpt'))?.id).toBe('abc');
 
     // The second run opens that conversation instead of the landing page.
-    await runChat({ prompt: 'again', provider: 'chatgpt' });
+    await runChat({ prompt: 'again', provider: 'chatgpt', headed: true });
     expect(fake.launched[1]).toBe('https://chatgpt.com/c/abc');
   });
 });

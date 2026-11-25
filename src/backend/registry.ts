@@ -38,6 +38,33 @@ export function providerOfBackend(name: string): ProviderName | undefined {
   return providers.get(name);
 }
 
+/**
+ * The providers whose plain chat is served by their backend.
+ *
+ * One implementation, not two: `chat --provider <name>` reaches this provider
+ * through the backend of the registry, and the browser provider serves only
+ * the commands that still need a page (`image`, `research`, `login`,
+ * `history`) and `chat --all`. See `docs/capability-matrix.md`.
+ *
+ * Every other backend stays opt-in through `--backend`: the perplexity one is
+ * a POC that the inventory records as not migrated.
+ */
+const PLAIN_CHAT_BACKENDS: Partial<Record<ProviderName, string>> = {
+  chatgpt: 'chatgpt-use',
+};
+
+/**
+ * The backend that serves the plain chat of a provider, or undefined when the
+ * browser path still serves it.
+ *
+ * The name is looked up in the registry: a provider whose backend is not
+ * registered is a provider without one, never a crash of the run.
+ */
+export function plainChatBackend(provider: ProviderName): AiBackend | undefined {
+  const name = PLAIN_CHAT_BACKENDS[provider];
+  return name ? backends.get(name) : undefined;
+}
+
 /** Get a backend by name, throws if not found. */
 export function getBackend(name: string): AiBackend {
   const backend = backends.get(name);

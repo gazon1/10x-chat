@@ -5,6 +5,10 @@
  * new chat with an automatic summary. The new chat has no permanent URL until
  * its first message is sent: a run that fails in between must leave the
  * previous conversation in place, so the next run can pick the work up.
+ *
+ * The runs name `headed` because the plain chat of ChatGPT is served by its
+ * backend now: the continuation of an exhausted chat belongs to the browser
+ * path, which a browser flag keeps (`wantsBrowser` in `src/core/orchestrator.ts`).
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -91,7 +95,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow();
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', headed: true })).rejects.toThrow();
 
     expect((await getStoredConversation(context, 'chatgpt'))?.id).toBe('abc');
   });
@@ -130,7 +134,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt', headed: true });
 
     expect(result.response).toBe('the answer');
     expect(submitPrompt).toHaveBeenCalledTimes(2);
@@ -164,7 +168,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] });
+    await runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file], headed: true });
 
     // Once for the old chat, once for the new one.
     expect(attachFiles).toHaveBeenCalledTimes(2);
@@ -195,7 +199,7 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow(
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', headed: true })).rejects.toThrow(
       /already continued in a new one 3 time/,
     );
 
@@ -238,9 +242,9 @@ describe('the continuation of an exhausted chat', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file] })).rejects.toThrow(
-      /could not be attached/,
-    );
+    await expect(
+      runChat({ prompt: 'hello', provider: 'chatgpt', attach: [file], headed: true }),
+    ).rejects.toThrow(/could not be attached/);
 
     // The prompt was not sent without the files.
     expect(submitPrompt).not.toHaveBeenCalled();
@@ -293,7 +297,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt', headed: true });
 
     expect(result.response).toBe('the whole answer');
     // One prompt, two captures of the same turn.
@@ -320,7 +324,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt', headed: true });
 
     expect(result.response).toBe('the begin');
     expect(result.truncated).toBe(true);
@@ -348,7 +352,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    const result = await runChat({ prompt: 'hello', provider: 'chatgpt' });
+    const result = await runChat({ prompt: 'hello', provider: 'chatgpt', headed: true });
 
     expect(result.response).toBe('the answer');
     expect(submitPrompt).toHaveBeenCalledTimes(2);
@@ -371,7 +375,7 @@ describe('the retry of a prompt', () => {
       } as unknown as ProviderActions,
     };
 
-    await expect(runChat({ prompt: 'hello', provider: 'chatgpt' })).rejects.toThrow(
+    await expect(runChat({ prompt: 'hello', provider: 'chatgpt', headed: true })).rejects.toThrow(
       /the provider reported an error/,
     );
 

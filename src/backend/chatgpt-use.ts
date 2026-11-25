@@ -107,6 +107,7 @@ const SUBMISSION_OF_KIND: Record<BackendFailureKind, BackendSubmission> = {
   invalid_output: 'unknown',
   cancelled: 'submitted',
   unknown_submission: 'unknown',
+  rejected: 'not_submitted',
 };
 
 /** The image types the CLI can upload. */
@@ -318,6 +319,19 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
   };
 
   const ask = async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
+    // A conversation the CLI cannot continue is refused: `ask` always opens a
+    // new chat, so answering here would silently drop the conversation the
+    // caller asked for.
+    if (request.conversationId && !CHATGPT_USE_CAPABILITIES.conversationReuse) {
+      return {
+        ok: false,
+        failure: {
+          kind: 'rejected',
+          message: `chatgpt-use cannot continue the conversation '${request.conversationId}' — every ask starts a new chat.`,
+          submission: 'not_submitted',
+        },
+      };
+    }
     const id = effectiveId(request.requestId);
     // A prompt that does not fit into one argument of a process travels
     // through the stdin of the CLI: the kernel refuses a bigger argument
