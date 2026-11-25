@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
+import { loadConfig } from '../config.js';
 import { OrcaClient } from '../orca/client.js';
 import {
   createWorkflowContext,
@@ -176,6 +177,11 @@ export function createWorkflowCommand(): Command {
 
       try {
         const { backend, label } = resolveBackend(options.backend as string | undefined);
+        const config = await loadConfig();
+        const backendProvider = providerOfBackend(
+          ((options.backend as string | undefined) ?? 'chatgpt-use') as string,
+        );
+        const chatgptProject = backendProvider === 'chatgpt' ? config.chatgptProject : undefined;
         const translated = startOptionsOf({
           issue,
           ...(options.agent ? { agent: options.agent as string } : {}),
@@ -192,6 +198,7 @@ export function createWorkflowCommand(): Command {
           backendLabel: label,
           backendName: translated.backendName,
           ...(options.model ? { model: options.model as string } : {}),
+          ...(chatgptProject ? { chatgptProject } : {}),
           ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
         });
         const record = await startWorkflow(
@@ -203,6 +210,7 @@ export function createWorkflowCommand(): Command {
             backendName: translated.backendName,
             ...(translated.agent ? { agent: translated.agent } : {}),
             ...(translated.model ? { model: translated.model } : {}),
+            ...(chatgptProject ? { chatgptProject } : {}),
             ...(translated.baseRef ? { baseRef: translated.baseRef } : {}),
             ...(translated.maxIterations !== undefined
               ? { maxIterations: translated.maxIterations }
@@ -287,6 +295,7 @@ export function createWorkflowCommand(): Command {
           backendLabel: label,
           backendName: chosen.backend,
           ...(chosen.model ? { model: chosen.model } : {}),
+          ...(stored.chatgptProject ? { chatgptProject: stored.chatgptProject } : {}),
           ...(wait !== undefined ? { waitTimeoutMs: wait } : {}),
         });
         const record = await resumeWorkflow(id, ctx);

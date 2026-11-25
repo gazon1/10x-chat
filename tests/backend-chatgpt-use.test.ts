@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CHATGPT_USE_BACKEND_NAME,
@@ -6,6 +9,8 @@ import {
   nodeProcessRunner,
   type ProcessResult,
   type ProcessRunner,
+  readChatgptUseProjects,
+  resolveChatgptProject,
 } from '../src/backend/chatgpt-use.js';
 import { providerOfBackend } from '../src/backend/registry.js';
 
@@ -252,6 +257,140 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(calls[0]?.args[0]).toBe('resume');
     expect(calls[0]?.args).toContain('req-1');
     expect(calls[0]?.args).not.toContain('hello');
+  });
+
+  it('does not pass --project when chatgptProject is unconfigured', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(true);
+    expect(calls[0]?.args ?? []).not.toContain('--project');
+  });
+
+  it('passes --project and verifies membership for a configured project', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const verifications: Array<{ conversationId: string; project: { name: string; id: string } }> =
+      [];
+    const { runner, calls } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({
+          status: 'completed',
+          request_id: 'req-1',
+          conversation_id: 'conv-1',
+          result: { text: 'ok' },
+        }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({
+      runner,
+      projectsPath,
+      verifyProjectMembership: async (conversationId, project) => {
+        verifications.push({ conversationId, project });
+        return undefined;
+      },
+    });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'chatgpt-use' });
+
+    expect(outcome.ok).toBe(true);
+    const args = calls[0]?.args ?? [];
+    expect(args[args.indexOf('--project') + 1]).toBe('chatgpt-use');
+    expect(verifications).toEqual([
+      {
+        conversationId: 'conv-1',
+        project: { name: 'chatgpt-use', id: 'g-p-6afee1f89d048191922c5b25247b5a95' },
+      },
+    ]);
+  });
+
+  it('fails explicitly and does not run the CLI when the configured project is unresolved', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const { runner, calls } = fakeRunner([]);
+    const backend = createChatgptUseBackend({ runner, projectsPath });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'typo-project' });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('rejected');
+    expect(outcome.failure.submission).toBe('not_submitted');
+    expect(outcome.failure.message).toContain('typo-project');
+    expect(outcome.failure.message).toContain(projectsPath);
+    expect(outcome.failure.message).toContain('would make chatgpt-use create a project');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fails the membership check when the conversation is not in the project list', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({
+          status: 'completed',
+          request_id: 'req-1',
+          conversation_id: 'conv-1',
+          result: { text: 'ok' },
+        }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({
+      runner,
+      projectsPath,
+      verifyProjectMembership: async () => ({
+        kind: 'invalid_output',
+        message: 'conversation not in project Chats list after reload',
+        submission: 'submitted',
+      }),
+    });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'chatgpt-use' });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+    expect(outcome.failure.submission).toBe('submitted');
+    expect(outcome.failure.message).toContain('Chats list');
+  });
+
+  it('reads projects.json and resolves a configured project name', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(projectsPath, JSON.stringify({ 'chatgpt-use': 'g-p-1' }), 'utf8');
+
+    await expect(readChatgptUseProjects(projectsPath)).resolves.toEqual({
+      'chatgpt-use': 'g-p-1',
+    });
+    await expect(resolveChatgptProject('chatgpt-use', projectsPath)).resolves.toEqual({
+      ok: true,
+      value: { name: 'chatgpt-use', id: 'g-p-1' },
+    });
   });
 
   it('reports the state of a request from its receipt', async () => {

@@ -267,6 +267,17 @@ export interface AppConfig {
    * works (`auto`, the default).
    */
   credentialStorage?: CredentialStorage;
+  /**
+   * The ChatGPT Project that receives newly created ChatGPT conversations.
+   *
+   * The value is the project **name** as it appears in
+   * `~/.chatgpt-use/projects.json` — that is what `chatgpt-use --project`
+   * accepts. The id underneath the name is the real identity; the name is a
+   * lookup key. Other providers ignore it. When unset, the behaviour of each
+   * command is unchanged (an unconfigured `review` still follows the CLI
+   * default).
+   */
+  chatgptProject?: string;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

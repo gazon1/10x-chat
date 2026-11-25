@@ -96,6 +96,14 @@ export async function runBackendChat(
     : undefined;
 
   const timeoutMs = options.timeoutMs ?? config.defaultTimeoutMs;
+  // The ChatGPT Project destination is ChatGPT-only. Other providers ignore it.
+  const chatgptProject = provider === 'chatgpt' ? config.chatgptProject : undefined;
+  if (chatgptProject && backend.name !== 'chatgpt-use') {
+    throw new Error(
+      `The backend '${backend.name}' cannot file a new ChatGPT conversation into a project. ` +
+        `Use the chatgpt-use backend, or unset chatgptProject in ${chalk.dim('~/.10x-chat/config.json')}.`,
+    );
+  }
 
   const bundle = await buildBundle({ prompt: options.prompt, files: options.file });
   // A stored conversation the backend cannot continue is named and dropped:
@@ -137,6 +145,7 @@ export async function runBackendChat(
     prompt: bundle,
     ...(model ? { model } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(chatgptProject ? { chatgptProject } : {}),
     saveDir,
     // The timeout of a chat: the flag of the command, then the config file.
     // The default of a provider does not apply — a backend has its own.

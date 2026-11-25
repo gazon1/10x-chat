@@ -80,6 +80,12 @@ export interface ReviewPipelineOptions {
   runDir?: string;
   /** The label of the backend in the report. */
   backendLabel?: string;
+  /**
+   * The ChatGPT Project that receives newly created ChatGPT conversations.
+   *
+   * Only ChatGPT backends use it; others reject it at the request boundary.
+   */
+  chatgptProject?: string;
 }
 
 /** The schema of a finding — the same for every role. */
@@ -731,6 +737,7 @@ async function verifyCandidates(options: {
   requirements?: IssueRequirements;
   model?: string;
   timeoutMs?: number;
+  chatgptProject?: string;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
   const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha, headSha } =
     options;
@@ -769,6 +776,7 @@ async function verifyCandidates(options: {
     }${material.join('\n\n')}`,
     ...(options.model ? { model: options.model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
   };
 
   let outcome: Awaited<ReturnType<AiBackend['ask']>>;
@@ -1020,6 +1028,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       prompt: `${promptOf(role)}\n\n${DATA_RULE}\n\n${brief}`,
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
     };
     let outcome: BackendOutcome<BackendResponse>;
     try {
@@ -1101,6 +1110,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       ...(context?.requirements ? { requirements: context.requirements } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
     });
     steps.push(verification.step);
     findings = dedupeFindings(verification.findings);
@@ -1132,6 +1142,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     findings,
     ...(options.model ? { model: options.model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
   });
 
   // ── the requirements of the change ─────────────────────────────
@@ -1258,6 +1269,7 @@ async function assessImprovements(options: {
   findings: Finding[];
   model?: string;
   timeoutMs?: number;
+  chatgptProject?: string;
 }): Promise<ReviewImprovements> {
   if (!options.context || !options.brief) {
     return {
@@ -1284,6 +1296,7 @@ async function assessImprovements(options: {
       prompt,
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
     });
   } catch (error) {
     return {

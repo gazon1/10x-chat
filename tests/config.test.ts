@@ -116,6 +116,24 @@ describe('Config Loading', () => {
     expect(config.profileMode).toBe('isolated');
   });
 
+  it('loads and trims chatgptProject', async () => {
+    await writeConfig(JSON.stringify({ chatgptProject: '  chatgpt-use  ' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = await loadConfig();
+
+    expect(config.chatgptProject).toBe('chatgpt-use');
+  });
+
+  it('reports an empty chatgptProject', async () => {
+    await writeConfig(JSON.stringify({ chatgptProject: '   ' }));
+
+    const { loadConfig } = await import('../src/config.js');
+    await expect(loadConfig()).rejects.toThrow(
+      /"chatgptProject" must be the name of an existing ChatGPT Project/,
+    );
+  });
+
   it('refuses to save an invalid config', async () => {
     const { saveConfig } = await import('../src/config.js');
 

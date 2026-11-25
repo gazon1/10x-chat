@@ -92,6 +92,8 @@ export interface WorkflowContext {
   backendLabel?: string;
   /** The name of the backend that reviews the change. */
   backendName?: string;
+  /** The ChatGPT Project that receives newly created ChatGPT conversations. */
+  chatgptProject?: string;
   /** The clock of the workflow. */
   now: () => Date;
   /** How long the workflow waits for the agent before it gives the turn back. */
@@ -131,6 +133,8 @@ export interface WorkflowStartOptions {
   backendName?: string;
   /** The model the reviewers use. */
   model?: string;
+  /** The ChatGPT Project that receives newly created ChatGPT conversations. */
+  chatgptProject?: string;
   /** The maximum number of iterations. */
   maxIterations?: number;
   /** The ref the worktree is created from — the default branch of origin. */
@@ -561,6 +565,7 @@ export function createWorkflowContext(options: {
   model?: string;
   backendLabel?: string;
   backendName?: string;
+  chatgptProject?: string;
   now?: () => Date;
   waitTimeoutMs?: number;
   review?: (request: WorkflowReviewRequest) => Promise<ReviewRun>;
@@ -577,6 +582,7 @@ export function createWorkflowContext(options: {
     ...(options.model ? { model: options.model } : {}),
     ...(options.backendLabel ? { backendLabel: options.backendLabel } : {}),
     ...(options.backendName ? { backendName: options.backendName } : {}),
+    ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
     now: options.now ?? (() => new Date()),
     waitTimeoutMs: options.waitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
     ...(options.review ? { review: options.review } : {}),
@@ -610,6 +616,7 @@ async function defaultReview(
     runDir: request.runDir,
     ...(ctx.model ? { model: ctx.model } : {}),
     ...(ctx.backendLabel ? { backendLabel: ctx.backendLabel } : {}),
+    ...(ctx.chatgptProject ? { chatgptProject: ctx.chatgptProject } : {}),
   });
 }
 
@@ -2869,6 +2876,7 @@ export async function startWorkflow(
       backend: options.backendLabel ?? options.backend.name,
       ...(options.backendName ? { backendName: options.backendName } : {}),
       ...(options.model ? { model: options.model } : {}),
+      ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
       ...(options.baseRef ? { baseRef: options.baseRef } : {}),
       maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
       iterations: [],

@@ -145,6 +145,37 @@ the Wayland session. A convenient alias:
 alias gpt='10x-chat chat --provider chatgpt --headless --timeout 180000'
 ```
 
+## ChatGPT Project destination
+
+`chatgptProject` in `~/.10x-chat/config.json` files **new** ChatGPT
+conversations into an existing ChatGPT Project. The value is the project
+**name** as it appears in `~/.chatgpt-use/projects.json` — the lookup key
+`chatgpt-use --project` accepts. The `g-p-…` id underneath the name is the real
+identity.
+
+```bash
+10x-chat config set chatgpt-project chatgpt-use
+10x-chat chat -p "Explain this" --provider chatgpt
+10x-chat config unset chatgpt-project
+```
+
+- The name is resolved against `~/.chatgpt-use/projects.json` before the CLI
+  runs. An unknown name fails explicitly; 10x-chat never passes an unknown name
+  through, because the CLI would create a project for it.
+- After a successful answer, 10x-chat verifies that the conversation is in the
+  project's Chats list after a reload — the primary signal from
+  [docs/chatgpt-projects.md](chatgpt-projects.md). A conversation not found in
+  that list is a failure, not a success.
+- The setting is ChatGPT-only. Other providers ignore it. A backend that cannot
+  file a conversation into a project rejects the request instead of creating a
+  chat outside the project.
+- With nothing configured, behaviour is unchanged. An unconfigured `review`
+  still follows the `chatgpt-use` CLI default (today the CLI's own
+  `chatgpt-use` project); 10x-chat does not change that by accident.
+- Existing conversations and conversation cache semantics are unchanged. The
+  project is a destination for new chats, not a new cache key (repo + branch +
+  provider).
+
 ## Timeouts, retries and cut-off answers
 
 The prompt is sent **once**. What the run does afterwards depends on what the

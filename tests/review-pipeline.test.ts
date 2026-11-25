@@ -606,6 +606,55 @@ describe('the review pipeline', () => {
     expect(prompt.split('\n')).toContain('````text');
   });
 
+  it('passes chatgptProject to every backend request when configured', async () => {
+    const requests: Array<{ prompt: string; chatgptProject?: string }> = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          requests.push({ prompt: request.prompt, chatgptProject: request.chatgptProject });
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      chatgptProject: 'chatgpt-use',
+      collect: async () => contextOf(),
+    });
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.chatgptProject === 'chatgpt-use')).toBe(true);
+  });
+
+  it('does not pass chatgptProject when unconfigured', async () => {
+    const requests: Array<{ chatgptProject?: string }> = [];
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: (request) => {
+          requests.push({ chatgptProject: request.chatgptProject });
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.chatgptProject === undefined)).toBe(true);
+  });
+
   it('sends the comparison page of a branch that is not a pull request', async () => {
     const prompts: string[] = [];
     const backend = createFakeBackend([
