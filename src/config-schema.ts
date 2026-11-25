@@ -29,6 +29,7 @@ export const CONFIG_KEYS = [
   'providerKeys',
   'proxy',
   'credentialStorage',
+  'chatgptProject',
 ] as const;
 
 /** The keys of the proxy section of the config file. */
@@ -238,6 +239,16 @@ export function validateConfig(raw: unknown, configPath: string): Partial<AppCon
     } catch (error) {
       throw configError(configPath, message(error));
     }
+  }
+
+  if (parsed.chatgptProject !== undefined) {
+    if (typeof parsed.chatgptProject !== 'string' || !parsed.chatgptProject.trim()) {
+      throw configError(
+        configPath,
+        '"chatgptProject" must be the name of an existing ChatGPT Project (a non-empty string)',
+      );
+    }
+    config.chatgptProject = parsed.chatgptProject.trim();
   }
 
   return config;

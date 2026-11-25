@@ -128,6 +128,16 @@ export interface BackendRequest {
    * only what the application shows while the answer is generated.
    */
   onChunk?: (chunk: string) => void;
+  /**
+   * The ChatGPT Project that receives a newly created conversation.
+   *
+   * The value is the project **name** as it appears in
+   * `~/.chatgpt-use/projects.json` — the lookup key the `chatgpt-use` CLI
+   * accepts. The id underneath the name is the real identity. A backend that
+   * cannot file a conversation into a project rejects the request; it must
+   * never silently create the conversation outside the project.
+   */
+  chatgptProject?: string;
 }
 
 /** The answer of a backend. */

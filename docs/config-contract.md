@@ -27,6 +27,7 @@ the environment.
 | Proxy | — | `proxy` (§5) | the environment (§5) |
 | API key of a provider | — | `providerKeys.<provider>` (a name, §6) | none |
 | Transport | `--transport browser\|api` | — | `browser` |
+| ChatGPT Project | — | `chatgptProject` | none (unchanged behaviour) |
 
 A CLI flag that is **not given** does not shadow the config file. This is why
 `--timeout` has no default value: a flag with a default would always win over
@@ -67,6 +68,7 @@ change the other commands.
   profileMode: 'shared',        // shared | isolated
   providerKeys: { deepseek: 'deepseek-key' },  // optional, names of secrets (§6)
   credentialStorage: 'auto',    // optional, auto | keyring | file (§6)
+  chatgptProject: 'chatgpt-use', // optional, ChatGPT-only: project name in ~/.chatgpt-use/projects.json
   proxy: {                      // optional, see §5
     enabled: true,
     server: 'http://proxy.example:3128',
@@ -82,8 +84,20 @@ key secrets are configured or missing.
 
 `10x-chat config set <key> <value>` writes the keys:
 `provider`, `model`, `timeout`, `headless`, `profile-mode`, `provider-key`,
-`credential-storage`. `10x-chat config unset <key>` removes `provider-key`,
-`credential-storage` and `proxy`.
+`credential-storage`, `chatgpt-project`. `10x-chat config unset <key>` removes
+`provider-key`, `credential-storage`, `proxy` and `chatgpt-project`.
+
+`chatgptProject` is the **ChatGPT Project name** as it appears in
+`~/.chatgpt-use/projects.json` — the lookup key `chatgpt-use --project`
+accepts. The `g-p-…` id underneath it is the real identity; the name is only a
+lookup key. The setting is optional and ChatGPT-only: other providers ignore it.
+When set, a new ChatGPT conversation is created in that project and 10x-chat
+verifies membership with the project's Chats list after reload before calling
+the run a success. An unresolved name, or a conversation not found in that list,
+fails explicitly and never silently creates a chat outside the project. With
+nothing configured, current behaviour is preserved exactly; an unconfigured
+`review` still follows the `chatgpt-use` CLI default (today that is the CLI's
+own `chatgpt-use` project).
 
 Proxy settings are managed under the same `config` command:
 

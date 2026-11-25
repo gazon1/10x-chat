@@ -172,6 +172,8 @@ export interface WorkflowRecord {
   backendName?: string;
   /** The model the reviewers use. */
   model?: string;
+  /** The ChatGPT Project that receives newly created ChatGPT conversations. */
+  chatgptProject?: string;
   /** The maximum number of iterations — more of them block the workflow. */
   maxIterations: number;
   /** The iterations of the workflow. */

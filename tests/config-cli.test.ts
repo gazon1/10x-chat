@@ -92,6 +92,39 @@ describe('config proxy commands', () => {
   });
 });
 
+describe('config chatgpt-project', () => {
+  it('sets, shows and unsets chatgpt-project', async () => {
+    await run(['set', 'chatgpt-project', 'chatgpt-use']);
+    let cfg = await readConfig();
+    expect(cfg.chatgptProject).toBe('chatgpt-use');
+
+    const shown = await run(['show']);
+    expect(shown).toContain('chatgptProject');
+    expect(shown).toContain('chatgpt-use');
+
+    await run(['unset', 'chatgpt-project']);
+    cfg = await readConfig();
+    expect(cfg.chatgptProject).toBeUndefined();
+  });
+
+  it('rejects an empty chatgpt-project', async () => {
+    const exit = process.exit;
+    let code: number | undefined;
+    (process.exit as any) = (c: number) => {
+      code = c;
+      throw new Error('exit');
+    };
+    try {
+      await expect(run(['set', 'chatgpt-project', '   '])).rejects.toThrow();
+      expect(code).toBe(1);
+      const cfg = await readConfig().catch(() => ({}));
+      expect(cfg.chatgptProject).toBeUndefined();
+    } finally {
+      process.exit = exit;
+    }
+  });
+});
+
 describe('config show effective state', () => {
   it('reports provider secret configured/missing and proxy without printing secret values', async () => {
     const secretValue = 'sk-do-not-print-me';

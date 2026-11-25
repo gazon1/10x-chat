@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
+import { loadConfig } from '../config.js';
 import { runReviewPipeline } from '../pipeline/review.js';
 
 /**
@@ -86,6 +87,8 @@ export function createReviewCommand(): Command {
       })();
 
       try {
+        const config = await loadConfig();
+        const chatgptProject = provider === 'chatgpt' ? config.chatgptProject : undefined;
         const run = await runReviewPipeline({
           backend,
           target: {
@@ -97,6 +100,7 @@ export function createReviewCommand(): Command {
           },
           ...(options.model ? { model: options.model as string } : {}),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          ...(chatgptProject ? { chatgptProject } : {}),
           backendLabel: provider ? `${backendName} (${provider})` : backendName,
         });
 

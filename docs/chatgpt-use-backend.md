@@ -14,6 +14,7 @@ no browser type crosses the seam.
 ```bash
 10x-chat chat -p "Explain this"                # the plain ChatGPT chat: this backend
 10x-chat chat -p "Explain this" --backend chatgpt-use   # the same run, named
+10x-chat config set chatgpt-project chatgpt-use  # optional: file new chats into a ChatGPT Project
 ```
 
 - **This backend is the plain chat of ChatGPT.** `chat --provider chatgpt` needs
@@ -41,6 +42,33 @@ no browser type crosses the seam.
   request that may have reached ChatGPT is never sent again — the receipt of
   the CLI says what happened to it (`chatgpt-use status <request-id>`).
 
+## ChatGPT Project destination
+
+`chatgptProject` in `~/.10x-chat/config.json` names an existing ChatGPT Project
+for **new** ChatGPT conversations. The value is the project **name** as it
+appears in `~/.chatgpt-use/projects.json` — the lookup key
+`chatgpt-use --project` accepts. The `g-p-…` id underneath the name is the real
+identity.
+
+- The backend resolves the name against `projects.json` **before** running the
+  CLI. An unknown name is rejected (`rejected`, `not_submitted`) with an
+  actionable message; 10x-chat never passes an unknown name through, because the
+  CLI would create a project for it.
+- After a successful answer, 10x-chat verifies membership with the project's
+  Chats list after a reload — the primary signal from
+  [docs/chatgpt-projects.md](chatgpt-projects.md). A bare `/c/<id>` redirect is
+  corroboration only. If the conversation is not in that list, the run fails; it
+  is not reported as a success.
+- Membership is verified through the 10x-chat browser profile. The `chatgpt-use`
+  CLI runs in its own browser, so that 10x-chat profile must be logged into the
+  same ChatGPT account. `10x-chat login chatgpt` is the normal way to establish
+  it.
+- The setting is ChatGPT-only. A backend that cannot file a conversation into a
+  project rejects the request; nothing is silently created outside the project.
+- With nothing configured, behaviour is unchanged. An unconfigured `review` still
+  follows the `chatgpt-use` CLI default — today that is the CLI's own
+  `chatgpt-use` project — and 10x-chat does not change that by accident.
+
 ## How it is called
 
 ```bash
@@ -67,6 +95,9 @@ chatgpt-use ask --json --request-id <id> --busy fail [--model <level>] \
 - The model of the request is the level of the composer of ChatGPT
   (`instant`, `medium`, `high`, `extra high`, `pro`, `current`); a name of a
   model of the picker (`GPT-5.5`) is passed as it is.
+- When `chatgptProject` is configured, the adapter passes `--project <name>`.
+  The name is resolved from `~/.chatgpt-use/projects.json` before the CLI runs;
+  an unresolved name is a `rejected` failure and the CLI is not started.
 
 ## The envelope
 

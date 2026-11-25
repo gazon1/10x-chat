@@ -142,6 +142,7 @@ export async function runChat(options: ChatOptions, deps: ChatDeps = {}): Promis
 
   const config = await loadConfig();
   const providerName = options.provider ?? config.defaultProvider;
+  const chatgptProject = providerName === 'chatgpt' ? config.chatgptProject : undefined;
 
   // The plain chat of a provider has one implementation: its backend. A run
   // that asks for the browser itself keeps the browser path — the backend
@@ -152,6 +153,13 @@ export async function runChat(options: ChatOptions, deps: ChatDeps = {}): Promis
     if (backend) {
       return runBackendChat(options, backend);
     }
+  }
+
+  if (chatgptProject) {
+    throw new Error(
+      `The configured ChatGPT Project "${chatgptProject}" can only be used when ChatGPT runs through the chatgpt-use backend. ` +
+        'Remove the browser-only flags, or unset chatgptProject in ~/.10x-chat/config.json.',
+    );
   }
 
   const provider = getProvider(providerName);

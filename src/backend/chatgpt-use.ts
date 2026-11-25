@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type {
   AiBackend,
   BackendCapabilities,
@@ -59,12 +62,36 @@ export const CHATGPT_USE_CAPABILITIES: BackendCapabilities = Object.freeze({
   imageOutput: false,
 });
 
+/** The resolved ChatGPT Project destination. */
+export interface ResolvedChatgptProject {
+  /** The project name as the CLI accepts it. */
+  name: string;
+  /** The project id (`g-p-…`) — the real identity under the name. */
+  id: string;
+}
+
+/** Verifies that a newly created conversation landed in the configured project. */
+export type ProjectMembershipVerifier = (
+  conversationId: string,
+  project: ResolvedChatgptProject,
+) => Promise<BackendFailure | undefined>;
+
 /** The options of the backend. */
 export interface ChatgptUseBackendOptions {
   /** The command of the CLI — the one on the PATH by default. */
   command?: string;
   /** The runner of the processes — the real one by default. */
   runner?: ProcessRunner;
+  /**
+   * Verifies that a newly created conversation is in the configured project.
+   *
+   * The default reads the project page through a browser and checks the
+   * project's Chats list — the primary membership signal from
+   * `docs/chatgpt-projects.md`. Tests inject a fake.
+   */
+  verifyProjectMembership?: ProjectMembershipVerifier;
+  /** The `projects.json` of `chatgpt-use` — the name → id map. */
+  projectsPath?: string;
 }
 
 /** The name of the backend in the registry. */
@@ -142,6 +169,8 @@ interface Envelope {
 export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}): AiBackend {
   const command = options.command ?? CHATGPT_USE_BACKEND_NAME;
   const runner = options.runner ?? nodeProcessRunner;
+  const projectsPath = options.projectsPath ?? chatgptUseProjectsPath();
+  const verifyMembership = options.verifyProjectMembership ?? verifyChatgptProjectMembership;
 
   // The queue of the session: one ask at a time.
   let queue: Promise<unknown> = Promise.resolve();
@@ -332,6 +361,12 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
         },
       };
     }
+    let project: ResolvedChatgptProject | undefined;
+    if (request.chatgptProject) {
+      const resolved = await resolveChatgptProject(request.chatgptProject, projectsPath);
+      if (!resolved.ok) return { ok: false, failure: resolved.failure };
+      project = resolved.value;
+    }
     const id = effectiveId(request.requestId);
     // A prompt that does not fit into one argument of a process travels
     // through the stdin of the CLI: the kernel refuses a bigger argument
@@ -352,6 +387,7 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       // prompt that is too big for an argument is read from the stdin.
       ...(throughStdin ? ['--stdin'] : ['--no-stdin']),
       ...(request.model ? ['--model', modelArg(request.model)] : []),
+      ...(project ? ['--project', project.name] : []),
       ...(request.timeoutMs ? ['--timeout', String(Math.ceil(request.timeoutMs / 1000))] : []),
       ...attachmentArgs(request.attachments ?? []),
       // The prompt is a positional argument: `--` keeps a prompt that starts
@@ -384,7 +420,9 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
         },
       };
     }
-    return outcomeOf(envelope, request, id);
+    const outcome = outcomeOf(envelope, request, id);
+    if (project) return verifyProjectMembership(outcome, project, verifyMembership);
+    return outcome;
   };
 
   const resume = async (request: BackendRequest): Promise<BackendOutcome<BackendResponse>> => {
@@ -515,6 +553,300 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       return { ok: false, failure: failureOf(envelope, 'chatgpt-use did not cancel the request.') };
     },
   };
+}
+
+/** The `~/.chatgpt-use/projects.json` path — the name → id map the CLI uses. */
+export function chatgptUseProjectsPath(): string {
+  return path.join(os.homedir(), '.chatgpt-use', 'projects.json');
+}
+
+/** Read the name → id map of `chatgpt-use`. */
+export async function readChatgptUseProjects(
+  filePath = chatgptUseProjectsPath(),
+): Promise<Record<string, string>> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return {};
+    throw new Error(
+      `Cannot read ChatGPT Projects map ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Cannot read ChatGPT Projects map ${filePath}: not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Cannot read ChatGPT Projects map ${filePath}: expected an object`);
+  }
+  const out: Record<string, string> = Object.create(null);
+  for (const [name, id] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof id === 'string' && id.trim()) out[name] = id;
+  }
+  return out;
+}
+
+/** Resolve a configured project name to its id through `projects.json`. */
+export async function resolveChatgptProject(
+  name: string,
+  filePath = chatgptUseProjectsPath(),
+): Promise<BackendOutcome<ResolvedChatgptProject>> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      failure: {
+        kind: 'rejected',
+        message: 'The ChatGPT Project name is empty.',
+        submission: 'not_submitted',
+      },
+    };
+  }
+  let projects: Record<string, string>;
+  try {
+    projects = await readChatgptUseProjects(filePath);
+  } catch (error) {
+    return {
+      ok: false,
+      failure: {
+        kind: 'unavailable',
+        message: error instanceof Error ? error.message : String(error),
+        submission: 'not_submitted',
+      },
+    };
+  }
+  const id = Object.hasOwn(projects, trimmed) ? projects[trimmed] : undefined;
+  if (!id) {
+    const known = Object.keys(projects)
+      .filter((key) => /^g-p-/.test(projects[key] ?? ''))
+      .slice(0, 8);
+    const hint = known.length > 0 ? ` Known project names: ${known.join(', ')}.` : '';
+    return {
+      ok: false,
+      failure: {
+        kind: 'rejected',
+        message:
+          `ChatGPT Project "${trimmed}" is not in ${filePath}. ` +
+          `The configured value must be the project name as it appears in that file; ` +
+          `an unknown name would make chatgpt-use create a project instead of using the one you meant.` +
+          hint,
+        submission: 'not_submitted',
+      },
+    };
+  }
+  return { ok: true, value: { name: trimmed, id } };
+}
+
+/**
+ * The primary membership signal: the conversation is in the project's own Chats
+ * list after a reload. A bare `/c/<id>` redirect is corroboration only and is
+ * not enough on its own (docs/chatgpt-projects.md).
+ *
+ * This verifier opens the project page in a 10x-chat browser session. The
+ * chatgpt-use CLI that created the conversation runs in its own browser, so
+ * both profiles must be logged into the same ChatGPT account for this check to
+ * observe the project list.
+ */
+export async function verifyChatgptProjectMembership(
+  conversationId: string,
+  project: ResolvedChatgptProject,
+): Promise<BackendFailure | undefined> {
+  const { launchBrowser } = await import('../browser/index.js');
+  const { getProvider } = await import('../providers/index.js');
+  const projectUrl = `https://chatgpt.com/g/${project.id}/project`;
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
+  try {
+    browser = await launchBrowser({
+      provider: 'chatgpt',
+      url: projectUrl,
+      operation: 'chat',
+    });
+    await browser.page
+      .goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      .catch(() => {});
+
+    const provider = getProvider('chatgpt');
+    let loggedIn = false;
+    try {
+      loggedIn = await provider.actions.isLoggedIn(browser.page);
+    } catch (error) {
+      return {
+        kind: 'unavailable',
+        message:
+          `Could not verify ChatGPT Project "${project.name}" (${project.id}) membership for conversation ${conversationId}: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          'Membership verification reads the project page through the 10x-chat browser profile; run `10x-chat login chatgpt` for that profile and ensure it uses the same ChatGPT account as chatgpt-use.',
+        submission: 'submitted',
+      };
+    }
+    if (!loggedIn) {
+      return {
+        kind: 'unavailable',
+        message:
+          `Cannot verify ChatGPT Project "${project.name}" (${project.id}) membership: the 10x-chat browser profile is not logged into ChatGPT. ` +
+          'Run `10x-chat login chatgpt` and ensure it uses the same ChatGPT account as chatgpt-use, then retry.',
+        submission: 'submitted',
+      };
+    }
+
+    // The project page paints a generic shell before the Chats list settles.
+    await browser.page.waitForTimeout(2_000);
+
+    // One reload: the primary membership signal is the project Chats list after
+    // reload (docs/chatgpt-projects.md). The initial check alone is not enough.
+    await browser.page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+    await browser.page.waitForTimeout(2_000);
+    const inListAfterReload = await projectChatsListContains(browser.page, conversationId);
+    if (inListAfterReload) return undefined;
+
+    return {
+      kind: 'invalid_output',
+      message:
+        `The conversation ${conversationId} was not found in the Chats list of ChatGPT Project "${project.name}" ` +
+        `(${project.id}) after reload. The project destination could not be verified; the conversation may be outside the project. ` +
+        'Membership verification reads the project page through the 10x-chat browser profile, so that profile must be logged into the same ChatGPT account as chatgpt-use.',
+      submission: 'submitted',
+    };
+  } catch (error) {
+    return {
+      kind: 'unavailable',
+      message:
+        `Could not verify that conversation ${conversationId} landed in ChatGPT Project "${project.name}" (${project.id}): ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        'Membership verification reads the project page through the 10x-chat browser profile, so that profile must be logged into the same ChatGPT account as chatgpt-use.',
+      submission: 'submitted',
+    };
+  } finally {
+    await browser?.close().catch(() => {});
+  }
+}
+
+/**
+ * True when `href` is a conversation URL for `conversationId`.
+ *
+ * The project page carries `/c/<id>` anchors in its Chats list and in global
+ * navigation. This helper is the shared href matcher used by the DOM predicate.
+ */
+export function conversationHrefMatches(
+  href: string,
+  conversationId: string,
+  origin: string,
+): boolean {
+  const needle = `/c/${conversationId}`;
+  const hasBoundary = (path: string, index: number): boolean => {
+    const next = path[index + needle.length];
+    return next === undefined || next === '/' || next === '?' || next === '#';
+  };
+  try {
+    const url = new URL(href, origin);
+    const index = url.pathname.indexOf(needle);
+    return index >= 0 && hasBoundary(url.pathname, index);
+  } catch {
+    const index = href.indexOf(needle);
+    return index >= 0 && hasBoundary(href, index);
+  }
+}
+
+/**
+ * DOM predicate for project Chats list membership.
+ *
+ * The project's own Chats list is the primary signal. Global navigation anchors
+ * (sidebar/nav/aside) can also link to conversations and must be ignored
+ * (docs/chatgpt-projects.md: 61 anchors in document, 50 in the project list).
+ *
+ * Kept as a pure function so it can be unit-tested without a browser. The real
+ * verifier calls it inside `page.evaluate`.
+ */
+export function isProjectChatsListAnchor(
+  anchor: { href: string; insideGlobalNav: boolean },
+  conversationId: string,
+  origin: string,
+): boolean {
+  if (anchor.insideGlobalNav) return false;
+  return conversationHrefMatches(anchor.href, conversationId, origin);
+}
+
+/**
+ * The in-browser predicate used by the default verifier.
+ *
+ * The project's own Chats list is the primary signal
+ * (docs/chatgpt-projects.md). Global navigation/sidebar anchors are not evidence.
+ * We scope to main content and exclude nav/sidebar/aside/header so a conversation
+ * link elsewhere on the page cannot satisfy membership by accident.
+ *
+ * Self-contained: `page.evaluate` serializes this function, so it must not
+ * reference module-scope helpers.
+ */
+export function projectChatsListDomPredicate(conversationId: string): boolean {
+  const needle = `/c/${conversationId}`;
+  const hrefMatches = (href: string): boolean => {
+    const hasBoundary = (path: string, index: number): boolean => {
+      const next = path[index + needle.length];
+      return next === undefined || next === '/' || next === '?' || next === '#';
+    };
+    try {
+      const url = new URL(href, window.location.origin);
+      const index = url.pathname.indexOf(needle);
+      return index >= 0 && hasBoundary(url.pathname, index);
+    } catch {
+      const index = href.indexOf(needle);
+      return index >= 0 && hasBoundary(href, index);
+    }
+  };
+  const roots = Array.from(document.querySelectorAll('main, [role="main"]')) as HTMLElement[];
+  const anchors =
+    roots.length > 0
+      ? roots.flatMap(
+          (root) => Array.from(root.querySelectorAll('a[href*="/c/"]')) as HTMLAnchorElement[],
+        )
+      : (Array.from(document.querySelectorAll('a[href*="/c/"]')) as HTMLAnchorElement[]);
+  return anchors.some((a) => {
+    if (a.closest('nav, [data-testid*="sidebar"], aside, header, [role="navigation"]'))
+      return false;
+    return hrefMatches(a.href);
+  });
+}
+
+/**
+ * Whether the project's Chats list contains the conversation.
+ *
+ * The project page's own list is the primary membership signal. Sidebar/global
+ * `/c/<id>` links are not evidence (docs/chatgpt-projects.md), so anchors inside
+ * nav/sidebar containers are ignored.
+ */
+async function projectChatsListContains(
+  page: Awaited<ReturnType<typeof import('../browser/index.js').launchBrowser>>['page'],
+  conversationId: string,
+): Promise<boolean> {
+  return page.evaluate(projectChatsListDomPredicate, conversationId);
+}
+
+async function verifyProjectMembership(
+  outcome: BackendOutcome<BackendResponse>,
+  project: ResolvedChatgptProject,
+  verify: ProjectMembershipVerifier = verifyChatgptProjectMembership,
+): Promise<BackendOutcome<BackendResponse>> {
+  if (!outcome.ok) return outcome;
+  const conversationId = outcome.value.conversationId;
+  if (!conversationId) {
+    return {
+      ok: false,
+      failure: {
+        kind: 'invalid_output',
+        message: `chatgpt-use answered without a conversation id, so membership in ChatGPT Project "${project.name}" (${project.id}) cannot be verified.`,
+        submission: 'submitted',
+      },
+    };
+  }
+  const failure = await verify(conversationId, project);
+  if (!failure) return outcome;
+  return { ok: false, failure };
 }
 
 /**

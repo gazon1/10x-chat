@@ -1,11 +1,19 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CHATGPT_USE_BACKEND_NAME,
+  conversationHrefMatches,
   createChatgptUseBackend,
+  isProjectChatsListAnchor,
   nodeProcessRunner,
   type ProcessResult,
   type ProcessRunner,
+  projectChatsListDomPredicate,
+  readChatgptUseProjects,
+  resolveChatgptProject,
 } from '../src/backend/chatgpt-use.js';
 import { providerOfBackend } from '../src/backend/registry.js';
 
@@ -252,6 +260,140 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(calls[0]?.args[0]).toBe('resume');
     expect(calls[0]?.args).toContain('req-1');
     expect(calls[0]?.args).not.toContain('hello');
+  });
+
+  it('does not pass --project when chatgptProject is unconfigured', async () => {
+    const { runner, calls } = fakeRunner([
+      { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
+    ]);
+    const backend = createChatgptUseBackend({ runner });
+
+    const outcome = await backend.ask(request);
+
+    expect(outcome.ok).toBe(true);
+    expect(calls[0]?.args ?? []).not.toContain('--project');
+  });
+
+  it('passes --project and verifies membership for a configured project', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const verifications: Array<{ conversationId: string; project: { name: string; id: string } }> =
+      [];
+    const { runner, calls } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({
+          status: 'completed',
+          request_id: 'req-1',
+          conversation_id: 'conv-1',
+          result: { text: 'ok' },
+        }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({
+      runner,
+      projectsPath,
+      verifyProjectMembership: async (conversationId, project) => {
+        verifications.push({ conversationId, project });
+        return undefined;
+      },
+    });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'chatgpt-use' });
+
+    expect(outcome.ok).toBe(true);
+    const args = calls[0]?.args ?? [];
+    expect(args[args.indexOf('--project') + 1]).toBe('chatgpt-use');
+    expect(verifications).toEqual([
+      {
+        conversationId: 'conv-1',
+        project: { name: 'chatgpt-use', id: 'g-p-6afee1f89d048191922c5b25247b5a95' },
+      },
+    ]);
+  });
+
+  it('fails explicitly and does not run the CLI when the configured project is unresolved', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const { runner, calls } = fakeRunner([]);
+    const backend = createChatgptUseBackend({ runner, projectsPath });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'typo-project' });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('rejected');
+    expect(outcome.failure.submission).toBe('not_submitted');
+    expect(outcome.failure.message).toContain('typo-project');
+    expect(outcome.failure.message).toContain(projectsPath);
+    expect(outcome.failure.message).toContain('would make chatgpt-use create a project');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fails the membership check when the conversation is not in the project list', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+    const { runner } = fakeRunner([
+      {
+        code: 0,
+        stdout: JSON.stringify({
+          status: 'completed',
+          request_id: 'req-1',
+          conversation_id: 'conv-1',
+          result: { text: 'ok' },
+        }),
+        stderr: '',
+        timedOut: false,
+      },
+    ]);
+    const backend = createChatgptUseBackend({
+      runner,
+      projectsPath,
+      verifyProjectMembership: async () => ({
+        kind: 'invalid_output',
+        message: 'conversation not in project Chats list after reload',
+        submission: 'submitted',
+      }),
+    });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'chatgpt-use' });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('invalid_output');
+    expect(outcome.failure.submission).toBe('submitted');
+    expect(outcome.failure.message).toContain('Chats list');
+  });
+
+  it('reads projects.json and resolves a configured project name', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(projectsPath, JSON.stringify({ 'chatgpt-use': 'g-p-1' }), 'utf8');
+
+    await expect(readChatgptUseProjects(projectsPath)).resolves.toEqual({
+      'chatgpt-use': 'g-p-1',
+    });
+    await expect(resolveChatgptProject('chatgpt-use', projectsPath)).resolves.toEqual({
+      ok: true,
+      value: { name: 'chatgpt-use', id: 'g-p-1' },
+    });
   });
 
   it('reports the state of a request from its receipt', async () => {
@@ -617,10 +759,463 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it('reports a command that cannot be started', async () => {
-    await expect(
-      nodeProcessRunner.run('chatgpt-use-does-not-exist-either', ['ask']),
-    ).rejects.toThrow();
+  it('rejects inherited project names instead of resolving Object.prototype members', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(projectsPath, JSON.stringify({ 'chatgpt-use': 'g-p-1' }), 'utf8');
+
+    for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      const outcome = await resolveChatgptProject(name, projectsPath);
+      expect(outcome.ok, name).toBe(false);
+      if (outcome.ok) continue;
+      expect(outcome.failure.kind).toBe('rejected');
+      expect(outcome.failure.submission).toBe('not_submitted');
+      expect(outcome.failure.message).toContain(name);
+    }
+  });
+
+  it('rejects an unresolved configured project even when the name exists on Object.prototype', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(projectsPath, JSON.stringify({}), 'utf8');
+    const { runner, calls } = fakeRunner([]);
+    const backend = createChatgptUseBackend({ runner, projectsPath });
+
+    const outcome = await backend.ask({ ...request, chatgptProject: 'constructor' });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe('rejected');
+    expect(outcome.failure.submission).toBe('not_submitted');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('treats project Chats anchors as membership evidence and ignores global navigation', () => {
+    const origin = 'https://chatgpt.com';
+    const cid = 'conv-1';
+
+    expect(
+      isProjectChatsListAnchor({ href: `/g/g-p-1/c/${cid}`, insideGlobalNav: false }, cid, origin),
+    ).toBe(true);
+    expect(
+      isProjectChatsListAnchor({ href: `/g/g-p-1/c/${cid}`, insideGlobalNav: true }, cid, origin),
+    ).toBe(false);
+    expect(
+      isProjectChatsListAnchor({ href: `/g/g-p-1/c/other`, insideGlobalNav: false }, cid, origin),
+    ).toBe(false);
+    expect(conversationHrefMatches(`https://chatgpt.com/g/g-p-1/c/${cid}`, cid, origin)).toBe(true);
+  });
+
+  it('does not treat a conversation id prefix as the same conversation', () => {
+    const origin = 'https://chatgpt.com';
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-123-extra', 'conv-123', origin),
+    ).toBe(false);
+    expect(conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-10', 'conv-1', origin)).toBe(
+      false,
+    );
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-1?x=1', 'conv-1', origin),
+    ).toBe(true);
+    expect(
+      conversationHrefMatches('https://chatgpt.com/g/g-p-1/c/conv-1#tail', 'conv-1', origin),
+    ).toBe(true);
+    expect(
+      isProjectChatsListAnchor(
+        { href: '/g/g-p-1/c/conv-123-extra', insideGlobalNav: false },
+        'conv-123',
+        origin,
+      ),
+    ).toBe(false);
+
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    try {
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]')
+            return [
+              {
+                querySelectorAll: () => [
+                  {
+                    href: 'https://chatgpt.com/g/g-p-1/c/conv-10',
+                    closest: () => null,
+                  },
+                ],
+              },
+            ];
+          if (selector === 'a[href*="/c/"]') return [];
+          return [];
+        },
+      };
+      expect(projectChatsListDomPredicate('conv-1')).toBe(false);
+    } finally {
+      if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
+      else (globalThis as { document?: unknown }).document = originalDocument;
+    }
+  });
+
+  it('checks project Chats list anchors in main content before global navigation', () => {
+    const cid = 'conv-1';
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    const makeAnchor = (href: string, nav: boolean) => ({
+      href,
+      closest: (selector: string) => {
+        if (!nav) return null;
+        return selector.includes('nav') ? {} : null;
+      },
+    });
+    const sidebarLink = makeAnchor(`https://chatgpt.com/c/${cid}`, true);
+    const mainLink = makeAnchor(`https://chatgpt.com/g/g-p-1/c/${cid}`, false);
+    try {
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]') return [{ querySelectorAll: () => [mainLink] }];
+          if (selector === 'a[href*="/c/"]') return [sidebarLink, mainLink];
+          return [];
+        },
+      };
+      expect(projectChatsListDomPredicate(cid)).toBe(true);
+
+      // Sidebar has the conversation, but main content does not: not a Chats-list hit.
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]') return [{ querySelectorAll: () => [] }];
+          if (selector === 'a[href*="/c/"]') return [sidebarLink];
+          return [];
+        },
+      };
+      expect(projectChatsListDomPredicate(cid)).toBe(false);
+    } finally {
+      if (originalDocument === undefined) {
+        delete (globalThis as { document?: unknown }).document;
+      } else {
+        (globalThis as { document?: unknown }).document = originalDocument;
+      }
+    }
+  });
+
+  it('falls back to non-nav document anchors when main content is absent', () => {
+    const cid = 'conv-1';
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    const makeAnchor = (href: string, nav: boolean) => ({
+      href,
+      closest: (selector: string) => (nav && selector.includes('nav') ? {} : null),
+    });
+    try {
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]') return [];
+          if (selector === 'a[href*="/c/"]')
+            return [
+              makeAnchor(`https://chatgpt.com/c/${cid}`, true),
+              makeAnchor(`https://chatgpt.com/g/g-p-1/c/${cid}`, false),
+            ];
+          return [];
+        },
+      };
+      expect(projectChatsListDomPredicate(cid)).toBe(true);
+    } finally {
+      if (originalDocument === undefined) {
+        delete (globalThis as { document?: unknown }).document;
+      } else {
+        (globalThis as { document?: unknown }).document = originalDocument;
+      }
+    }
+  });
+
+  it('verifies membership through the browser predicate: list match, sidebar-only miss, reload success, absent, browser failure', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ten-x-chat-projects-'));
+    const projectsPath = path.join(dir, 'projects.json');
+    await writeFile(
+      projectsPath,
+      JSON.stringify({ 'chatgpt-use': 'g-p-6afee1f89d048191922c5b25247b5a95' }),
+      'utf8',
+    );
+
+    const makeAnchor = (href: string, nav: boolean) => ({
+      href,
+      closest: (selector: string) => (nav && selector.includes('nav') ? {} : null),
+    });
+    const installDocument = (opts: {
+      mainAnchors: Array<{ href: string; nav: boolean }>;
+      docAnchors?: Array<{ href: string; nav: boolean }>;
+    }) => {
+      const main = {
+        querySelectorAll: () => opts.mainAnchors.map((a) => makeAnchor(a.href, a.nav)),
+      };
+      (globalThis as { document?: unknown }).document = {
+        querySelectorAll: (selector: string) => {
+          if (selector === 'main, [role="main"]') return [main];
+          if (selector === 'a[href*="/c/"]')
+            return (opts.docAnchors ?? opts.mainAnchors).map((a) => makeAnchor(a.href, a.nav));
+          return [];
+        },
+      };
+    };
+
+    const originalDocument = (globalThis as { document?: unknown }).document;
+    const browserModule = await import('../src/browser/index.js');
+    const providersModule = await import('../src/providers/index.js');
+    let reloadCount = 0;
+    let gotoCount = 0;
+    let closeCount = 0;
+    let onReload: () => void = () => {};
+    const fakePage = {
+      goto: async () => {
+        gotoCount += 1;
+      },
+      reload: async () => {
+        reloadCount += 1;
+        onReload();
+      },
+      waitForTimeout: async () => {},
+      evaluate: async (fn: (cid: string) => boolean, cid: string) => fn(cid),
+    };
+    const launchSpy = vi.spyOn(browserModule, 'launchBrowser').mockImplementation(
+      async () =>
+        ({
+          page: fakePage,
+          close: async () => {
+            closeCount += 1;
+          },
+        }) as never,
+    );
+    const providerSpy = vi.spyOn(providersModule, 'getProvider').mockReturnValue({
+      actions: { isLoggedIn: async () => true },
+    } as never);
+
+    try {
+      // 1) Present before reload and after reload: primary post-reload signal passes.
+      installDocument({
+        mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+      });
+      onReload = () => {
+        installDocument({
+          mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+        });
+      };
+      const backend1 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      await expect(
+        backend1.ask({ ...request, chatgptProject: 'chatgpt-use' }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(gotoCount).toBe(1);
+      expect(reloadCount).toBe(1);
+
+      // 1b) Visible before reload but absent after reload: fail, do not trust pre-reload DOM.
+      installDocument({
+        mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+      });
+      onReload = () => {
+        installDocument({ mainAnchors: [], docAnchors: [] });
+      };
+      reloadCount = 0;
+      const backend1b = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const preReloadOnly = await backend1b.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(preReloadOnly.ok).toBe(false);
+      if (!preReloadOnly.ok) expect(preReloadOnly.failure.kind).toBe('invalid_output');
+      expect(reloadCount).toBe(1);
+
+      installDocument({
+        mainAnchors: [],
+        docAnchors: [{ href: 'https://chatgpt.com/c/conv-1', nav: true }],
+      });
+      onReload = () => {};
+      reloadCount = 0;
+      const backend2 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const sidebarOnly = await backend2.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(sidebarOnly.ok).toBe(false);
+      if (!sidebarOnly.ok) expect(sidebarOnly.failure.kind).toBe('invalid_output');
+      expect(reloadCount).toBe(1);
+
+      installDocument({ mainAnchors: [] });
+      reloadCount = 0;
+      onReload = () => {
+        installDocument({
+          mainAnchors: [{ href: 'https://chatgpt.com/g/g-p-1/c/conv-1', nav: false }],
+        });
+      };
+      const backend3 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      await expect(
+        backend3.ask({ ...request, chatgptProject: 'chatgpt-use' }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(reloadCount).toBe(1);
+      onReload = () => {};
+
+      installDocument({ mainAnchors: [], docAnchors: [] });
+      const backend4 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const absent = await backend4.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(absent.ok).toBe(false);
+      if (!absent.ok) expect(absent.failure.kind).toBe('invalid_output');
+
+      launchSpy.mockImplementationOnce(async () => {
+        throw new Error('browser unavailable');
+      });
+      const backend5 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const browserFailure = await backend5.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(browserFailure.ok).toBe(false);
+      if (!browserFailure.ok) {
+        expect(browserFailure.failure.kind).toBe('unavailable');
+        expect(browserFailure.failure.submission).toBe('submitted');
+        expect(browserFailure.failure.message).toContain('browser unavailable');
+      }
+
+      providerSpy.mockReturnValueOnce({
+        actions: { isLoggedIn: async () => false },
+      } as never);
+      const backend6 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const notLoggedIn = await backend6.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(notLoggedIn.ok).toBe(false);
+      if (!notLoggedIn.ok) {
+        expect(notLoggedIn.failure.kind).toBe('unavailable');
+        expect(notLoggedIn.failure.submission).toBe('submitted');
+        expect(notLoggedIn.failure.message).toContain('10x-chat login chatgpt');
+      }
+
+      providerSpy.mockReturnValueOnce({
+        actions: {
+          isLoggedIn: async () => {
+            throw new Error('challenge visible');
+          },
+        },
+      } as never);
+      const backend7 = createChatgptUseBackend({
+        runner: fakeRunner([
+          {
+            code: 0,
+            stdout: JSON.stringify({
+              status: 'completed',
+              request_id: 'req-1',
+              conversation_id: 'conv-1',
+              result: { text: 'ok' },
+            }),
+            stderr: '',
+            timedOut: false,
+          },
+        ]).runner,
+        projectsPath,
+      });
+      const loginCheckFailed = await backend7.ask({ ...request, chatgptProject: 'chatgpt-use' });
+      expect(loginCheckFailed.ok).toBe(false);
+      if (!loginCheckFailed.ok) {
+        expect(loginCheckFailed.failure.kind).toBe('unavailable');
+        expect(loginCheckFailed.failure.submission).toBe('submitted');
+        expect(loginCheckFailed.failure.message).toContain('challenge visible');
+      }
+    } finally {
+      launchSpy.mockRestore();
+      providerSpy.mockRestore();
+      if (originalDocument === undefined) {
+        delete (globalThis as { document?: unknown }).document;
+      } else {
+        (globalThis as { document?: unknown }).document = originalDocument;
+      }
+      expect(closeCount).toBeGreaterThan(0);
+    }
   });
 
   it('keeps the hash of an id out of the namespace of the ordinary ids', async () => {

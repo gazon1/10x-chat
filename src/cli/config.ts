@@ -86,6 +86,7 @@ async function printEffective(config: AppConfig): Promise<void> {
   console.log(
     `  credentialStorage: config=${config.credentialStorage ?? 'auto'} actual=${await store.location()}`,
   );
+  console.log(`  chatgptProject: ${config.chatgptProject ? config.chatgptProject : '(none)'}`);
 }
 
 export function createConfigCommand(): Command {
@@ -111,7 +112,7 @@ export function createConfigCommand(): Command {
     .description('Set a configuration value')
     .argument(
       '<key>',
-      'Configuration key (provider, model, timeout, headless, profile-mode, provider-key, credential-storage)',
+      'Configuration key (provider, model, timeout, headless, profile-mode, provider-key, credential-storage, chatgpt-project)',
     )
     .argument('<value>', 'Configuration value')
     .argument('[secret]', 'Name of the secret (for provider-key)')
@@ -172,6 +173,17 @@ export function createConfigCommand(): Command {
           }
           config.credentialStorage = value as CredentialStorage;
           break;
+        case 'chatgptproject':
+          if (!value.trim()) {
+            console.error(
+              chalk.red(
+                'Invalid chatgpt-project: expected the project name as it appears in ~/.chatgpt-use/projects.json',
+              ),
+            );
+            process.exit(1);
+          }
+          config.chatgptProject = value.trim();
+          break;
         case 'providerkey': {
           if (!secret) {
             console.error(
@@ -202,7 +214,7 @@ export function createConfigCommand(): Command {
           console.error(chalk.red(`Unknown config key: ${key}`));
           console.log(
             chalk.dim(
-              'Available keys: provider, model, timeout, headless, profile-mode, provider-key, credential-storage. ' +
+              'Available keys: provider, model, timeout, headless, profile-mode, provider-key, credential-storage, chatgpt-project. ' +
                 'Use "10x-chat config proxy ..." for proxy settings.',
             ),
           );
@@ -210,13 +222,17 @@ export function createConfigCommand(): Command {
       }
 
       await saveConfig(config);
-      console.log(chalk.green(`✓ Set ${key} = ${value}`));
+      const displayValue = name === 'chatgptproject' ? config.chatgptProject : value;
+      console.log(chalk.green(`✓ Set ${key} = ${displayValue}`));
     });
 
   cmd
     .command('unset')
     .description('Remove a configuration value')
-    .argument('<key>', 'Configuration key (provider-key, credential-storage, proxy)')
+    .argument(
+      '<key>',
+      'Configuration key (provider-key, credential-storage, proxy, chatgpt-project)',
+    )
     .argument('[value]', 'Provider (for provider-key)')
     .action(async (key: string, value?: string) => {
       const config = await loadConfig({ checkSecrets: false });
@@ -249,6 +265,9 @@ export function createConfigCommand(): Command {
         case 'credentialstorage':
           delete config.credentialStorage;
           break;
+        case 'chatgptproject':
+          delete config.chatgptProject;
+          break;
         case 'proxy':
           delete config.proxy;
           break;
@@ -262,7 +281,9 @@ export function createConfigCommand(): Command {
           break;
         default:
           console.error(chalk.red(`Unknown config key: ${key}`));
-          console.log(chalk.dim('Available keys: provider-key, credential-storage, proxy'));
+          console.log(
+            chalk.dim('Available keys: provider-key, credential-storage, proxy, chatgpt-project'),
+          );
           process.exit(1);
       }
 
