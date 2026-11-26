@@ -80,22 +80,28 @@ export function isReviewProfile(value: string): value is ReviewProfile {
 }
 
 /**
- * The profile a record is read as, when its own value names none.
+ * The profile a record names, when this version knows it.
  *
- * The type says which four profiles exist, but a profile also arrives from
- * outside the type system: a `review.json` that was edited by hand or written
- * by a newer version. Such a record is read as `standard` — the profile every
- * caller had before this existed — and it is *named* standard too, so the
- * report never claims a coverage it did not apply. The live pipeline refuses
- * an unknown name before it gets here (see `runReviewPipeline`).
+ * A record arrives from outside the type system: another version wrote it, or
+ * a hand edited it. Three cases, and they do not mean the same thing:
+ *
+ * - **absent** — a record from before the profiles existed, and it ran the
+ *   full review: `standard`, and named so.
+ * - **known** — its own profile.
+ * - **unknown** — a name this version cannot read, which may be a cheaper
+ *   profile of a newer version. It stays `undefined`: reading it as `standard`
+ *   would present a review of unknown coverage as the full review.
+ *
+ * The live pipeline refuses an unknown name outright (see `runReviewPipeline`).
  */
-export function profileOfRecord(profile: string | undefined): ReviewProfile {
-  return typeof profile === 'string' && isReviewProfile(profile) ? profile : DEFAULT_REVIEW_PROFILE;
+export function knownProfile(profile: string | undefined): ReviewProfile | undefined {
+  if (profile === undefined) return DEFAULT_REVIEW_PROFILE;
+  return isReviewProfile(profile) ? profile : undefined;
 }
 
-/** The coverage of the profile a record is read as. */
-export function coverageOf(profile: string | undefined): ReviewProfileCoverage {
-  return REVIEW_PROFILE_COVERAGE[profileOfRecord(profile)];
+/** The coverage of one of the four profiles of this version. */
+export function coverageOf(profile: ReviewProfile): ReviewProfileCoverage {
+  return REVIEW_PROFILE_COVERAGE[profile];
 }
 
 /**

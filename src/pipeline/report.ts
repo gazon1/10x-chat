@@ -1,4 +1,4 @@
-import { coverageOf, profileCoverage, profileOfRecord } from './profiles.js';
+import { coverageOf, DEFAULT_REVIEW_PROFILE, knownProfile, profileCoverage } from './profiles.js';
 import type {
   DecisionKind,
   Finding,
@@ -351,15 +351,22 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
  * that omitted a stage — a review that skipped work is not an approval.
  */
 export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: string } {
-  const profile = profileOfRecord(run.profile);
+  // A record whose profile this version cannot read is judged with the gate of
+  // `standard` — never with a laxer one — and the reason says that its own
+  // gate is unknown, so no reader reads this verdict as the verdict of a
+  // profile that was never applied.
+  const known = knownProfile(run.profile);
+  const profile = known ?? DEFAULT_REVIEW_PROFILE;
   const coverage = coverageOf(profile);
+  const unknown =
+    known === undefined ? ` (its profile "${run.profile}" is unknown to this version)` : '';
   // A profile that demands the requirements cannot judge a change without
   // them: the gate itself is the refusal, so a caller of the library cannot
   // get an approval out of a critical run that never read an Issue.
   if (coverage.requiresIssue && !run.context?.requirements) {
     return {
       verdict: 'REQUEST CHANGES',
-      reason: `the ${profile} profile judges the change against the Issue that governs it — this run has no Issue.`,
+      reason: `the ${profile} profile judges the change against the Issue that governs it — this run has no Issue.${unknown}`,
     };
   }
   const unsettled = run.findings.filter((finding) => finding.verification === 'unverified');
@@ -380,7 +387,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
       reason:
         `${gate.length} finding(s) at or above the gate of the ${profile} profile` +
         (grave > 0 ? `, ${grave} of them not settled` : '') +
-        '.',
+        `.${unknown}`,
     };
   }
   const incomplete = run.steps.filter(
@@ -390,7 +397,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
   if (incomplete.length > 0) {
     return {
       verdict: 'REQUEST CHANGES',
-      reason: `the review is incomplete: ${incomplete.map((step) => step.id).join(', ')} did not pass.`,
+      reason: `the review is incomplete: ${incomplete.map((step) => step.id).join(', ')} did not pass.${unknown}`,
     };
   }
   const confirmed = run.findings.filter((finding) => finding.verification === 'confirmed').length;
@@ -400,7 +407,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
       `No confirmed finding of the severity BLOCKING or MAJOR` +
       (confirmed > 0 ? `, ${confirmed} confirmed finding(s) below the gate` : '') +
       (unsettled.length > 0 ? `, ${unsettled.length} unverified finding(s) below` : '') +
-      '.',
+      `.${unknown}`,
   };
 }
 
@@ -436,9 +443,18 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   lines.push(`- Reviewed at: ${run.finishedAt}`);
   // The profile is a fact of the report, not a footnote: a reader has to know
   // what the verdict is worth, and an omitted stage is named with it.
-  const profile = profileOfRecord(run.profile);
+  const known = knownProfile(run.profile);
+  const profile = known ?? DEFAULT_REVIEW_PROFILE;
   const coverage = coverageOf(profile);
-  lines.push(`- Profile: ${profile} — ${profileCoverage(profile)}`);
+  // A run of another version may name a profile this one cannot read. It is
+  // not dressed up as `standard`: the line names the value and the gate the
+  // report actually applied, so a reader is never told the coverage of a
+  // review nobody can account for.
+  lines.push(
+    known === undefined
+      ? `- Profile: ${literal(run.profile ?? '(none)')} — unknown to this version; the report was rendered, and the verdict judged, with the gate of \`${profile}\` (${profileCoverage(profile)})`
+      : `- Profile: ${profile} — ${profileCoverage(profile)}`,
+  );
   // The version of the requirements: the Issue the reviewers judged, and the
   // version of it they judged.
   const requirements = context?.requirements;

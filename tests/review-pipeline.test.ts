@@ -5085,10 +5085,11 @@ describe('the review profiles', () => {
     ).rejects.toThrow(/Unknown review profile: "thorogh"/);
   });
 
-  it('reads a record whose profile is not one of the four as standard', async () => {
-    // A record is data on the disk, not a typed value: one that was edited by
-    // hand or written by a newer version must still render, and it renders as
-    // the profile every caller had before the profiles existed.
+  it('names an unknown profile as unknown instead of dressing it up as standard', async () => {
+    // A record written by a newer version may name a profile this one cannot
+    // read — possibly a cheaper one. Reading it as `standard` would present a
+    // review of unknown coverage as the full review, so the report names the
+    // value and the gate it applied, and the verdict says the same.
     const run = await runReviewPipeline({
       backend: createFakeBackend(CLEAN),
       target: { cwd: repo },
@@ -5096,8 +5097,27 @@ describe('the review profiles', () => {
     });
 
     const foreign = { ...run, profile: 'experimental' } as typeof run;
-    expect(verdictOf(foreign).verdict).toBe('APPROVE');
-    expect(renderReviewReport(foreign)).toContain('- Profile: standard');
+    const report = renderReviewReport(foreign);
+    expect(report).toContain('- Profile: experimental — unknown to this version');
+    expect(report).toContain('with the gate of `standard`');
+    expect(report).not.toContain('- Profile: standard');
+    expect(verdictOf(foreign).reason).toContain('its profile "experimental" is unknown');
+  });
+
+  it('still reads a record without any profile as standard', async () => {
+    // The one case that really is a record of the full review: the versions
+    // before the profiles existed wrote no field at all.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const { profile: _dropped, ...legacy } = run;
+    const older = legacy as typeof run;
+    expect(verdictOf(older).verdict).toBe('APPROVE');
+    expect(verdictOf(older).reason).not.toContain('unknown');
+    expect(renderReviewReport(older)).toContain('- Profile: standard');
   });
 
   it('persists the profile, and reads a run of an older version as standard', async () => {

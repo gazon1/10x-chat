@@ -1034,3 +1034,22 @@ any severity, while a confirmed MINOR stays settled and below the gate.
 The check set of that round: typecheck, lint, knip, test (67 files /**1363
 tests**), e2e (25 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+The review of the round found three things, and all three were real. Two
+documentation contradictions were mine: `AGENTS.md` and the profile table both
+said `deep` and `critical` could never approve, which the code never did. The
+third was a gap in the contract: a profile name was validated only at the
+command line, while `runReviewPipeline` is exported — a JavaScript caller
+passing a typo reached the coverage map as `undefined` and crashed on the
+first field it read. The pipeline now refuses an unknown name. A *record* that
+names one is read differently: no field is a record of the full review and is
+named `standard`, while a name this version cannot read stays unknown, because
+it may be a cheaper profile of a newer version and calling it `standard` would
+present a review of unknown coverage as the full review.
+
+The second round added the one test the critical profile was missing — a run
+that has its Issue, passes every stage and approves — because the branch that
+refuses a critical review without an Issue would keep passing if every
+critical run became incomplete. The final check set: typecheck, lint, knip,
+test (67 files /**1367 tests**), e2e (25 CLI scenarios, 10 skipped) and build —
+all pass.

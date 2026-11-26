@@ -108,10 +108,17 @@ was. A caller that names no profile gets `standard`.
 A name that is not one of the four is **refused**, and the name is validated
 twice for two different callers. The command line refuses it with the list of
 profiles; `runReviewPipeline` refuses it too, because the pipeline is exported
-and a JavaScript caller never sees the type. Elsewhere — rendering a record
-that was edited by hand or written by a newer version — a name that is not one
-of the four is read as `standard`, and the report *names* standard, so it never
-claims a coverage it did not apply.
+and a JavaScript caller never sees the type.
+
+A **record** is a different case, because it is data rather than a request, and
+the three ways it can name a profile do not mean the same thing. No field at
+all is a record from before the profiles existed, and that run was the full
+review: it is read as `standard`, and named so. A name of this version is read
+as itself. A name this version cannot read is left **unknown** — it may be a
+cheaper profile of a newer version, and calling it `standard` would present a
+review of unknown coverage as the full review. The report names the value and
+the gate it actually applied, and the verdict says the same in one clause, so
+nobody reads it as the verdict of a profile that was never applied.
 
 ## The finding model
 

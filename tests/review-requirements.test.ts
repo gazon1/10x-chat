@@ -244,6 +244,27 @@ function outsideFences(text: string): string {
 }
 
 describe('the requirements of a review', () => {
+  it('approves a critical review that has its Issue and passes every stage', async () => {
+    // The critical profile differs from deep only by requiring the Issue, and
+    // a regression that made every critical run incomplete would still pass
+    // the test of the missing-Issue branch. This is the satisfied path: the
+    // Issue is read, the baseline advances, and the verdict is an APPROVE.
+    await fakeGh({});
+    const backend = quietBackend();
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo, pr: 42, issue: 7 },
+      profile: 'critical',
+    });
+
+    expect(run.context?.requirements?.number).toBe(7);
+    expect(run.steps.every((step) => step.status === 'passed')).toBe(true);
+    expect(run.verdict).toBe('APPROVE');
+    expect(run.verdictReason).not.toContain('unknown');
+    expect(run.report).toContain('- Profile: critical');
+  });
+
   it('reads the governing issue and hashes its requirements', async () => {
     await fakeGh({});
 
