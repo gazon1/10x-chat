@@ -14,5 +14,8 @@ e2e-test.mjs
 # Camoufox spike artifacts
 spike/camoufox/.data/
 
-# Local run artifacts (diagnostics logs, throw-away probes)
-build/
+# ACP spike scratch workspaces
+spike/acp/.workdir*/
+
+# Local run artifacts (diagnostics logs, throw-away probes) — the root only
+/build/

@@ -1,0 +1,1104 @@
+{
+  "meta": {
+    "issue": 86,
+    "startedAt": "2026-11-26T08:01:27.698Z",
+    "mcode": "0.7.10",
+    "workdir": "<repo>/spike/acp/.workdir",
+    "tuiSessionId": "mvs_a989f34d",
+    "finishedAt": "2026-11-26T08:06:46.550Z",
+    "protocolErrors": []
+  },
+  "steps": [
+    {
+      "name": "handshake",
+      "startedAt": "2026-11-26T08:01:28.039Z",
+      "ok": true,
+      "status": "ok",
+      "protocolVersion": 1,
+      "agentInfo": {
+        "name": "minimax-code",
+        "title": "MiniMax Code",
+        "version": "0.7.10"
+      },
+      "agentCapabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": false
+        },
+        "sessionCapabilities": {
+          "list": {},
+          "fork": {},
+          "resume": {},
+          "close": {}
+        }
+      },
+      "extensionMethods": [
+        "session/activate",
+        "mcode/session/activate",
+        "mcode/session/steer",
+        "mcode/session/queue/list",
+        "mcode/session/queue/enqueue",
+        "mcode/session/queue/update",
+        "mcode/session/queue/delete",
+        "mcode/session/queue/steer",
+        "mcode/session/goal/get",
+        "mcode/session/goal/create",
+        "mcode/session/goal/patch",
+        "mcode/session/goal/clear",
+        "mcode/session/delegation/get",
+        "mcode/session/delegation/stop",
+        "mcode/session/delegation/message",
+        "mcode/session/delegation/transcript"
+      ],
+      "extensionNotifications": [
+        "mcode/session/current_session_update",
+        "mcode/session/queue_update",
+        "mcode/session/goal_update",
+        "mcode/session/delegation_update"
+      ],
+      "durationMs": 2833
+    },
+    {
+      "name": "session/new",
+      "startedAt": "2026-11-26T08:01:30.875Z",
+      "ok": true,
+      "status": "ok",
+      "sessionId": "mvs_02f64226",
+      "modes": ["default", "plan"],
+      "configOptions": [
+        {
+          "id": "permissionMode",
+          "current": "bypassPermissions",
+          "scope": "process"
+        },
+        {
+          "id": "model",
+          "current": "m:custom_provider%3A<provider>:stealth%2Fglyph-cluster%3Afree:v:thinking"
+        },
+        {
+          "id": "thinkingEffort",
+          "current": "high"
+        }
+      ],
+      "durationMs": 900
+    },
+    {
+      "name": "session/set_config_option (model)",
+      "startedAt": "2026-11-26T08:01:31.776Z",
+      "ok": true,
+      "status": "ok",
+      "attempts": [
+        {
+          "value": "m:minimax:MiniMax-M3.1-Flash:v:",
+          "ok": true,
+          "result": {
+            "configOptions": [
+              {
+                "type": "select",
+                "id": "permissionMode",
+                "name": "Permission mode",
+                "description": "Controls how MiniMax Code handles tool permission requests in this process.",
+                "category": "_permission",
+                "currentValue": "bypassPermissions",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "Ask"
+                  },
+                  {
+                    "value": "auto",
+                    "name": "Auto"
+                  },
+                  {
+                    "value": "bypassPermissions",
+                    "name": "Full access"
+                  }
+                ],
+                "_meta": {
+                  "minimax-code/scope": "process"
+                }
+              },
+              {
+                "type": "select",
+                "id": "model",
+                "name": "Model",
+                "description": "Selects the model used by subsequent turns in this Session.",
+                "category": "model",
+                "currentValue": "m:minimax:MiniMax-M3.1-Flash:v:",
+                "options": [
+                  {
+                    "value": "m:minimax:MiniMax-M3.1-Flash:v:",
+                    "name": "M3.1-Flash"
+                  },
+                  {
+                    "value": "m:minimax:MiniMax-M3.1-Flash:v:thinking",
+                    "name": "M3.1-Flash · thinking"
+                  },
+                  {
+                    "value": "m:minimax:MiniMax-M3:v:",
+                    "name": "M3"
+                  },
+                  {
+                    "value": "m:minimax:MiniMax-M3:v:thinking",
+                    "name": "M3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2:v:thinking",
+                    "name": "MiniMax-M2 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2.1:v:thinking",
+                    "name": "MiniMax-M2.1 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2.5:v:thinking",
+                    "name": "MiniMax-M2.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2.5-highspeed:v:thinking",
+                    "name": "MiniMax-M2.5-highspeed · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2.7:v:thinking",
+                    "name": "MiniMax-M2.7 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M2.7-highspeed:v:thinking",
+                    "name": "MiniMax-M2.7-highspeed · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M3:v:thinking",
+                    "name": "MiniMax-M3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMax-M3.1-Flash:v:thinking",
+                    "name": "MiniMax-M3.1-Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:reflection%2Fbeam%3Afree:v:thinking",
+                    "name": "Beam 1.0 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-fable-5:v:thinking",
+                    "name": "Claude Fable 5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-fable-5-1:v:thinking",
+                    "name": "Claude Fable 5.1 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-haiku-4-5-20251001:v:thinking",
+                    "name": "Claude Haiku 4.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-haiku-5-5:v:thinking",
+                    "name": "Claude Haiku 5.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-opus-4-7:v:thinking",
+                    "name": "Claude Opus 4.7 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-opus-4-8:v:thinking",
+                    "name": "Claude Opus 4.8 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-opus-5:v:thinking",
+                    "name": "Claude Opus 5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-opus-5-5:v:thinking",
+                    "name": "Claude Opus 5.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-sonnet-4-6:v:thinking",
+                    "name": "Claude Sonnet 4.6 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-sonnet-5:v:thinking",
+                    "name": "Claude Sonnet 5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-sonnet-5-5:v:thinking",
+                    "name": "Claude Sonnet 5.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4-flash:v:thinking",
+                    "name": "DeepSeek V4 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4-flash-fast:v:thinking",
+                    "name": "DeepSeek V4 Flash Fast · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4-flash-vision-exp:v:thinking",
+                    "name": "DeepSeek V4 Flash Vision Exp · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4-pro:v:thinking",
+                    "name": "DeepSeek V4 Pro · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4.1-flash:v:thinking",
+                    "name": "DeepSeek V4.1 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4.1-flash-fast:v:thinking",
+                    "name": "DeepSeek V4.1 Flash Fast · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:sakana%2Ffugu-ultra:v:thinking",
+                    "name": "Fugu Ultra · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.1-flash-lite:v:thinking",
+                    "name": "Gemini 3.1 Flash Lite · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.5-flash:v:thinking",
+                    "name": "Gemini 3.5 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.5-flash-lite:v:thinking",
+                    "name": "Gemini 3.5 Flash Lite · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.6-flash:v:thinking",
+                    "name": "Gemini 3.6 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.7-flash:v:thinking",
+                    "name": "Gemini 3.7 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-3.8-flash:v:thinking",
+                    "name": "Gemini 3.8 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-4-argon:v:thinking",
+                    "name": "Gemini 4 Argon · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:zai-org%2FGLM-5:v:thinking",
+                    "name": "GLM-5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:zai-org%2FGLM-5.2:v:thinking",
+                    "name": "GLM-5.2 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:zai-org%2FGLM-5.2-Fast:v:thinking",
+                    "name": "GLM-5.2-Fast · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:zai-org%2FGLM-5.3:v:thinking",
+                    "name": "GLM-5.3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:z-ai%2Fglm-5.3-flash:v:thinking",
+                    "name": "GLM-5.3-Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:z-ai%2Fglm-5.3-flashx:v:thinking",
+                    "name": "GLM-5.3-FlashX · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:stealth%2Fglyph-cluster%3Afree:v:thinking",
+                    "name": "Glyph Cluster · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.3-codex:v:thinking",
+                    "name": "GPT-5.3 Codex · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.4:v:thinking",
+                    "name": "GPT-5.4 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.4-mini:v:thinking",
+                    "name": "GPT-5.4 mini · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.5:v:thinking",
+                    "name": "GPT-5.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.6-luna:v:thinking",
+                    "name": "GPT-5.6 Luna · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.6-sol:v:thinking",
+                    "name": "GPT-5.6 Sol · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-5.6-terra:v:thinking",
+                    "name": "GPT-5.6 Terra · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6-astra:v:thinking",
+                    "name": "GPT-6 Astra · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6-luna:v:thinking",
+                    "name": "GPT-6 Luna · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6-sol:v:thinking",
+                    "name": "GPT-6 Sol · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6.1-sol:v:thinking",
+                    "name": "GPT-6.1 Sol · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6.1-terra:v:thinking",
+                    "name": "GPT-6.1 Terra · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xai%2Fgrok-4.5:v:thinking",
+                    "name": "Grok 4.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xai%2Fgrok-4.6:v:thinking",
+                    "name": "Grok 4.6 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xai%2Fgrok-4.7:v:thinking",
+                    "name": "Grok 4.7 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:tencent%2Fhy3-paid:v:thinking",
+                    "name": "Hy3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:tencent%2Fhy4-preview:v:thinking",
+                    "name": "Hy4 preview · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:thinkingmachines%2Finkling:v:thinking",
+                    "name": "Inkling · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:thinkingmachines%2Finkling-small:v:thinking",
+                    "name": "Inkling Small · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K2.5:v:thinking",
+                    "name": "Kimi K2.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K2.6:v:thinking",
+                    "name": "Kimi K2.6 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K2.7-Code:v:thinking",
+                    "name": "Kimi K2.7 Code · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K2.7-Code-Highspeed:v:thinking",
+                    "name": "Kimi K2.7 Code Highspeed · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K3:v:thinking",
+                    "name": "Kimi K3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:moonshotai%2FKimi-K3.1-Pro:v:thinking",
+                    "name": "Kimi K3.1 Pro · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:poolside%2Flaguna-s-2.1-free:v:thinking",
+                    "name": "Laguna S 2.1 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:inclusionai%2Fling-3.1-flash:v:thinking",
+                    "name": "Ling 3.1 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:inclusionai%2Fling-3.1-flash%3Afree:v:thinking",
+                    "name": "Ling 3.1 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meituan%2FLongCat-2.0:v:thinking",
+                    "name": "LongCat-2.0 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xiaomi%2Fmimo-v2.6-flash:v:thinking",
+                    "name": "MiMo-V2.6-Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xiaomi%2Fmimo-v2.6-pro:v:thinking",
+                    "name": "MiMo-V2.6-Pro · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:xiaomi%2Fmimo-v2.6-pro-ultraspeed:v:thinking",
+                    "name": "MiMo-V2.6-Pro-UltraSpeed · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMaxAI%2FMiniMax-M2.5:v:thinking",
+                    "name": "MiniMax-M2.5 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMaxAI%2FMiniMax-M2.7:v:thinking",
+                    "name": "MiniMax-M2.7 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:MiniMaxAI%2FMiniMax-M3:v:thinking",
+                    "name": "MiniMax-M3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:minimax%2Fminimax-m3.1-flash:v:thinking",
+                    "name": "MiniMax-M3.1-Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:mistral%2Fmistral-large-4:v:thinking",
+                    "name": "Mistral Large 4 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-1.1:v:thinking",
+                    "name": "Muse Spark 1.1 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-1.2:v:thinking",
+                    "name": "Muse Spark 1.2 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-1.2-contributor:v:thinking",
+                    "name": "Muse Spark 1.2 (Contributor) · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-1.3:v:thinking",
+                    "name": "Muse Spark 1.3 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-1.3-contributor:v:thinking",
+                    "name": "Muse Spark 1.3 (Contributor) · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-spark-open:v:thinking",
+                    "name": "Muse Spark Open · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-wonder-1.0:v:thinking",
+                    "name": "Muse Wonder · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:nvidia%2Fnemotron-3-ultra-550b-a55b:v:thinking",
+                    "name": "Nemotron 3 Ultra 550B A55B · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:nvidia%2Fnemotron-3.5-super-vl:v:thinking",
+                    "name": "Nemotron 3.5 Super VL 120B A12B · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:ornith%2Fornith-1.5-122b:v:thinking",
+                    "name": "Ornith 1.5 122B · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-Max-Prime:v:thinking",
+                    "name": "Qwen 3.8 Max Prime · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.6-Plus:v:thinking",
+                    "name": "Qwen3.6 Plus · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.7-Flash:v:thinking",
+                    "name": "Qwen3.7 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.7-Max:v:thinking",
+                    "name": "Qwen3.7 Max · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.7-Plus:v:thinking",
+                    "name": "Qwen3.7 Plus · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-27B:v:thinking",
+                    "name": "Qwen3.8 27B · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-Flash:v:thinking",
+                    "name": "Qwen3.8 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-Max:v:thinking",
+                    "name": "Qwen3.8 Max · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-Max-0902:v:thinking",
+                    "name": "Qwen3.8 Max 0902 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.8-Omni-Flash:v:thinking",
+                    "name": "Qwen3.8 Omni Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:stepfun%2FStep-3.5-Flash:v:thinking",
+                    "name": "Step 3.5 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:stepfun%2FStep-3.7-Flash:v:thinking",
+                    "name": "Step 3.7 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:stepfun%2FStep-5-Preview:v:thinking",
+                    "name": "Step 5 Preview · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:claude-fable-5-2:v:thinking",
+                    "name": "Claude Fable 5.2 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6.2-astra:v:thinking",
+                    "name": "GPT-6.2 Astra · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:gpt-6.2-sol:v:thinking",
+                    "name": "GPT-6.2 Sol · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:deepseek%2Fdeepseek-v4.1-flash-ultrafast:v:thinking",
+                    "name": "DeepSeek V4.1 Flash Ultrafast · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:zai-org%2FGLM-5.1:v:thinking",
+                    "name": "GLM-5.1 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen4-Max:v:thinking",
+                    "name": "Qwen 4 Max · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:Qwen%2FQwen3.6-Max-Preview:v:thinking",
+                    "name": "Qwen 3.6 Max Preview · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:tencent%2Fhy4:v:thinking",
+                    "name": "Tencent Hy4 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:tencent%2Fhy4-flash:v:thinking",
+                    "name": "Tencent Hy4 Flash · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-4-carbon:v:thinking",
+                    "name": "Gemini 4 Carbon · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:google%2Fgemini-4-neon:v:thinking",
+                    "name": "Gemini 4 Neon · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:thinkingmachines%2Finkling-2-mini:v:thinking",
+                    "name": "Inkling 2 Mini · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:recursive%2Fflint-v1.0%3Afree:v:thinking",
+                    "name": "Flint · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:inclusionai%2Fling-3.1-flash-1019:v:thinking",
+                    "name": "Ling 3.1 Flash 1019 · thinking"
+                  },
+                  {
+                    "value": "m:custom_provider%3A<provider>:meta%2Fmuse-ember:v:thinking",
+                    "name": "Muse Ember · thinking"
+                  }
+                ]
+              },
+              {
+                "type": "select",
+                "id": "thinkingEffort",
+                "name": "Thinking effort",
+                "description": "Controls the reasoning effort for the selected model in this Session.",
+                "category": "thought_level",
+                "currentValue": "default",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "Default"
+                  },
+                  {
+                    "value": "low",
+                    "name": "Low"
+                  },
+                  {
+                    "value": "medium",
+                    "name": "Medium"
+                  },
+                  {
+                    "value": "high",
+                    "name": "High"
+                  },
+                  {
+                    "value": "xhigh",
+                    "name": "Xhigh"
+                  },
+                  {
+                    "value": "max",
+                    "name": "Max"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "value": "m:custom_provider%3A<provider>:MiniMax-M2.7:v:",
+          "ok": false,
+          "error": "Invalid params: Model selection is not advertised.",
+          "code": -32602
+        }
+      ],
+      "restore": {
+        "ok": true,
+        "model": "m:custom_provider%3A<provider>:stealth%2Fglyph-cluster%3Afree:v:thinking",
+        "restoredModel": "m:custom_provider%3A<provider>:stealth%2Fglyph-cluster%3Afree:v:thinking",
+        "verified": true,
+        "advertisedModels": 120
+      },
+      "selectionRefused": true,
+      "durationMs": 35
+    },
+    {
+      "name": "prompt-1 (streaming, completion)",
+      "startedAt": "2026-11-26T08:01:31.813Z",
+      "ok": true,
+      "status": "ok",
+      "ended": true,
+      "markerMatched": true,
+      "stopReason": "end_turn",
+      "answer": {
+        "chars": 5,
+        "sha256": "ba562d6cdee4"
+      },
+      "updateKinds": ["available_commands_update", "session_info_update", "agent_message_chunk"],
+      "updateCount": 5,
+      "turn": {
+        "runId": "acp_4d35f53e-8250-4561-b474-6b98eec56f83",
+        "turnId": "4d35f53e-8250-4561-b474-6b98eec56f83",
+        "model": {
+          "providerId": "custom_provider:<provider>",
+          "modelId": "stealth/glyph-cluster:free",
+          "variant": "thinking",
+          "providerSource": "custom_provider",
+          "providerKind": "custom",
+          "protocol": "openai-completions"
+        },
+        "durationMs": 5818,
+        "usageIncomplete": false
+      },
+      "durationMs": 5917
+    },
+    {
+      "name": "runtime config file (side effect of a session and of a turn)",
+      "startedAt": "2026-11-26T08:01:37.732Z",
+      "ok": true,
+      "status": "ok",
+      "changed": true,
+      "changedBeforeTurn": true,
+      "changedByTurn": false,
+      "changedByHandshake": true,
+      "changedBySession": false,
+      "changedByModelOption": false,
+      "beforeHash": "9a65ef315eab",
+      "afterHash": "ca189cb18298",
+      "namesServedModel": true,
+      "addedKeys": [],
+      "removedKeys": [],
+      "changedKeys": ["memory"],
+      "durationMs": 1
+    },
+    {
+      "name": "prompt-2 (same session)",
+      "startedAt": "2026-11-26T08:01:37.734Z",
+      "ok": true,
+      "status": "ok",
+      "ended": true,
+      "markerMatched": true,
+      "stopReason": "end_turn",
+      "answer": {
+        "chars": 5,
+        "sha256": "74bce3b02980"
+      },
+      "updateKinds": ["session_info_update", "agent_message_chunk"],
+      "durationMs": 3496
+    },
+    {
+      "name": "session/list",
+      "startedAt": "2026-11-26T08:01:41.231Z",
+      "ok": true,
+      "status": "ok",
+      "count": 48,
+      "entryKeys": ["sessionId", "cwd", "title", "updatedAt"],
+      "hasNextCursor": true,
+      "durationMs": 28
+    },
+    {
+      "name": "session/activate (own session)",
+      "startedAt": "2026-11-26T08:01:41.260Z",
+      "ok": true,
+      "status": "ok",
+      "activated": true,
+      "attempt": {
+        "ok": true,
+        "result": {
+          "sessionId": "mvs_02f64226"
+        }
+      },
+      "durationMs": 1
+    },
+    {
+      "name": "steer (during an active turn)",
+      "startedAt": "2026-11-26T08:01:41.262Z",
+      "ok": true,
+      "status": "ok",
+      "sawAgentChunk": true,
+      "steer": {
+        "ok": true,
+        "result": {
+          "turnId": "edd47d17-715d-4d34-96af-eccb93180b18",
+          "mode": "steered"
+        }
+      },
+      "steerAccepted": true,
+      "steerAcknowledged": true,
+      "stopReason": "end_turn",
+      "answer": {
+        "chars": 13397,
+        "sha256": "171725586cab"
+      },
+      "durationMs": 66539
+    },
+    {
+      "name": "queue/enqueue + queue/list (during an active turn)",
+      "startedAt": "2026-11-26T08:02:47.804Z",
+      "ok": true,
+      "status": "ok",
+      "enqueue": {
+        "ok": true,
+        "result": {
+          "itemId": "queue_5972647d-cfb9-46bb-b941-d5ed44753a52",
+          "status": "queued",
+          "position": 1
+        }
+      },
+      "turnEnded": true,
+      "listDuring": {
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "itemId": "queue_5972647d-cfb9-46bb-b941-d5ed44753a52",
+              "sessionId": "mvs_86ca13ba",
+              "status": "queued",
+              "source": "api",
+              "content": "QUEUED-FOLLOWUP",
+              "attachments": [],
+              "createdAt": 1795680189301
+            }
+          ]
+        }
+      },
+      "listAfter": {
+        "ok": true,
+        "result": {
+          "items": []
+        }
+      },
+      "queueNotifications": 0,
+      "queuedDelivered": false,
+      "queuedLeftover": 0,
+      "cleanup": null,
+      "stopReason": "end_turn",
+      "answer": {
+        "chars": 14922,
+        "sha256": "eb09d6bacb0a"
+      },
+      "durationMs": 90866
+    },
+    {
+      "name": "session/cancel (notification, active turn)",
+      "startedAt": "2026-11-26T08:04:18.672Z",
+      "ok": true,
+      "status": "ok",
+      "stopReason": "cancelled",
+      "result": {
+        "stopReason": "cancelled",
+        "_meta": {
+          "minimax-code/turn": {
+            "runId": "acp_5c1eb483-a6e3-4a4c-b5dc-238c9853f9ed",
+            "turnId": "5c1eb483-a6e3-4a4c-b5dc-238c9853f9ed",
+            "model": {
+              "providerId": "custom_provider:<provider>",
+              "modelId": "stealth/glyph-cluster:free",
+              "variant": "thinking",
+              "providerSource": "custom_provider",
+              "providerKind": "custom",
+              "protocol": "openai-completions"
+            },
+            "durationMs": 5279,
+            "usageIncomplete": true
+          }
+        }
+      },
+      "updateKinds": ["available_commands_update", "session_info_update", "agent_thought_chunk"],
+      "answer": {
+        "chars": 0,
+        "sha256": "e3b0c44298fc"
+      },
+      "durationMs": 5423
+    },
+    {
+      "name": "session/close",
+      "startedAt": "2026-11-26T08:04:24.098Z",
+      "ok": true,
+      "status": "ok",
+      "result": {},
+      "durationMs": 7
+    },
+    {
+      "name": "process exit",
+      "startedAt": "2026-11-26T08:04:24.108Z",
+      "ok": true,
+      "status": "ok",
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 310
+    },
+    {
+      "name": "resume in a NEW process (session/load)",
+      "startedAt": "2026-11-26T08:04:24.420Z",
+      "ok": true,
+      "status": "ok",
+      "load": {
+        "ok": true,
+        "keys": ["modes", "configOptions"]
+      },
+      "historyRestored": true,
+      "answer": {
+        "chars": 55,
+        "sha256": "088ea301cb75"
+      },
+      "durationMs": 12338
+    },
+    {
+      "name": "session/resume + session/fork",
+      "startedAt": "2026-11-26T08:04:36.759Z",
+      "ok": true,
+      "status": "ok",
+      "resume": {
+        "ok": true,
+        "keys": ["modes", "configOptions"]
+      },
+      "fork": {
+        "ok": true,
+        "keys": ["sessionId", "modes", "configOptions"]
+      },
+      "forkAttempts": [
+        {
+          "ok": true
+        }
+      ],
+      "forkId": "mvs_5efc491d",
+      "forkCarriesHistory": false,
+      "forkHistoryAnswer": {
+        "chars": 278,
+        "sha256": "4fd102a2fb34"
+      },
+      "sourceRecordsInFork": {
+        "matched": 6,
+        "total": 6
+      },
+      "durationMs": 12623
+    },
+    {
+      "name": "cross-process attach (process B on a session of process A)",
+      "startedAt": "2026-11-26T08:04:49.384Z",
+      "ok": true,
+      "status": "ok",
+      "sessionIdA": "mvs_f2482989",
+      "activate": {
+        "ok": false,
+        "error": "Resource not found: mvs_f2482989",
+        "code": -32002
+      },
+      "loadBeforeTurn": {
+        "ok": false,
+        "error": "Resource not found: mvs_f2482989"
+      },
+      "warmup": {
+        "ok": true,
+        "answer": {
+          "chars": 5,
+          "sha256": "0559aadba9e2"
+        }
+      },
+      "load": {
+        "ok": true
+      },
+      "promptB": {
+        "ok": true,
+        "answer": {
+          "chars": 8,
+          "sha256": "9448242431c8"
+        },
+        "stopReason": "end_turn",
+        "markerMatched": true
+      },
+      "promptA": {
+        "ok": true,
+        "answer": {
+          "chars": 17,
+          "sha256": "6358e8ee43f1"
+        },
+        "stopReason": "end_turn",
+        "markerMatched": true
+      },
+      "attached": true,
+      "durationMs": 26844
+    },
+    {
+      "name": "cross-process concurrent prompts (two processes, one session)",
+      "startedAt": "2026-11-26T08:05:16.229Z",
+      "ok": true,
+      "status": "ok",
+      "sessionId": "mvs_eae68d3d",
+      "warmup": {
+        "ok": true,
+        "answer": {
+          "chars": 5,
+          "sha256": "0559aadba9e2"
+        }
+      },
+      "load": {
+        "ok": true
+      },
+      "promptA": {
+        "ok": false,
+        "error": "Internal error: MiniMax Code Runtime failed: Session already has an active Turn. Use queue send to deliver the message after it.",
+        "code": -32603
+      },
+      "promptB": {
+        "ok": true,
+        "answer": {
+          "chars": 12,
+          "sha256": "f8d08ed2913f"
+        },
+        "stopReason": "end_turn",
+        "turnId": "48a69f57-4082-4844-8a8b-9cf101b8731a"
+      },
+      "bothAnswered": false,
+      "sameTurn": null,
+      "outcome": "one prompt was served, the other one was refused",
+      "refusedByActiveTurn": true,
+      "durationMs": 27301
+    },
+    {
+      "name": "permission flow (Ask mode, fresh process)",
+      "startedAt": "2026-11-26T08:05:43.531Z",
+      "ok": true,
+      "status": "ok",
+      "modeBefore": "default",
+      "setMode": {
+        "ok": true
+      },
+      "permissionAsked": true,
+      "askedForWrite": true,
+      "attempts": 2,
+      "permissionRequests": [
+        {
+          "tool": "write",
+          "kind": "edit",
+          "kinds": ["allow_once", "allow_always", "reject_once"]
+        }
+      ],
+      "refusedOutsideBoundary": [],
+      "stopReason": "end_turn",
+      "answer": {
+        "chars": 81,
+        "sha256": "63a498c0ffda"
+      },
+      "updateKinds": [
+        "config_option_update",
+        "available_commands_update",
+        "session_info_update",
+        "tool_call",
+        "tool_call_update",
+        "agent_message_chunk"
+      ],
+      "fileCreated": true,
+      "fileContentMatches": true,
+      "durationMs": 18048
+    },
+    {
+      "name": "TUI session (live, manually launched) — attach?",
+      "startedAt": "2026-11-26T08:06:01.581Z",
+      "ok": true,
+      "status": "ok",
+      "tuiSessionId": "mvs_a989f34d",
+      "tuiCwd": "<repo>/spike/acp/.workdir",
+      "activate": {
+        "ok": false,
+        "error": "Resource not found: mvs_a989f34d",
+        "code": -32002
+      },
+      "load": {
+        "ok": true,
+        "keys": ["modes", "configOptions"]
+      },
+      "fork": {
+        "ok": true
+      },
+      "forkAnswerQuotedSource": true,
+      "sourceMarker": {
+        "chars": 8,
+        "sha256": "1fd63055e3f4"
+      },
+      "sourceRecordsInFork": {
+        "matched": 2,
+        "total": 2
+      },
+      "forkLog": {
+        "records": 4,
+        "bytes": 8681
+      },
+      "liveSessionLog": {
+        "records": 2,
+        "bytes": 4311
+      },
+      "liveSessionFileBefore": {
+        "size": 4311,
+        "mtimeMs": 1795676062981.1443,
+        "hash": "d59671bd29e21674"
+      },
+      "liveSessionFileAfter": {
+        "size": 4311,
+        "mtimeMs": 1795676062981.1443,
+        "hash": "d59671bd29e21674"
+      },
+      "liveSessionMutated": false,
+      "durationMs": 16147
+    },
+    {
+      "name": "TUI launch from a pty (manually launched)",
+      "startedAt": "2026-11-26T08:06:17.730Z",
+      "ok": true,
+      "status": "ok",
+      "tuiExit": 0,
+      "newSessionDirs": 1,
+      "tuiSessionId": "mvs_d55c9507",
+      "composerVisible": true,
+      "tuiAnswered": true,
+      "durationMs": 28819
+    }
+  ]
+}
