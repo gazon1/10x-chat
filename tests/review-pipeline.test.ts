@@ -34,7 +34,7 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
-import { renderReviewReport } from '../src/pipeline/report.js';
+import { renderReviewReport, verdictOf } from '../src/pipeline/report.js';
 import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { ReviewContext } from '../src/pipeline/types.js';
 
@@ -5068,6 +5068,36 @@ describe('the review profiles', () => {
     expect(run.verdict).toBe('REQUEST CHANGES');
     expect(run.verdictReason).toContain('critical');
     expect(run.verdictReason).toContain('no Issue');
+  });
+
+  it('refuses a profile that is not one of the four at the pipeline boundary', async () => {
+    // The pipeline is exported and `profile` is typed, but a JavaScript caller
+    // never sees the type. A typo must not be read as an unknown profile (a
+    // crash on the first field of the coverage) and must not quietly become
+    // the full review either.
+    await expect(
+      runReviewPipeline({
+        backend: createFakeBackend(CLEAN),
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+        profile: 'thorogh' as 'quick',
+      }),
+    ).rejects.toThrow(/Unknown review profile: "thorogh"/);
+  });
+
+  it('reads a record whose profile is not one of the four as standard', async () => {
+    // A record is data on the disk, not a typed value: one that was edited by
+    // hand or written by a newer version must still render, and it renders as
+    // the profile every caller had before the profiles existed.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const foreign = { ...run, profile: 'experimental' } as typeof run;
+    expect(verdictOf(foreign).verdict).toBe('APPROVE');
+    expect(renderReviewReport(foreign)).toContain('- Profile: standard');
   });
 
   it('persists the profile, and reads a run of an older version as standard', async () => {

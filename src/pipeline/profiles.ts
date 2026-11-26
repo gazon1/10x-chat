@@ -80,6 +80,37 @@ export function isReviewProfile(value: string): value is ReviewProfile {
 }
 
 /**
+ * The profile a record is read as, when its own value names none.
+ *
+ * The type says which four profiles exist, but a profile also arrives from
+ * outside the type system: a `review.json` that was edited by hand or written
+ * by a newer version. Such a record is read as `standard` — the profile every
+ * caller had before this existed — and it is *named* standard too, so the
+ * report never claims a coverage it did not apply. The live pipeline refuses
+ * an unknown name before it gets here (see `runReviewPipeline`).
+ */
+export function profileOfRecord(profile: string | undefined): ReviewProfile {
+  return typeof profile === 'string' && isReviewProfile(profile) ? profile : DEFAULT_REVIEW_PROFILE;
+}
+
+/** The coverage of the profile a record is read as. */
+export function coverageOf(profile: string | undefined): ReviewProfileCoverage {
+  return REVIEW_PROFILE_COVERAGE[profileOfRecord(profile)];
+}
+
+/**
+ * The profile a run of an unknown name is refused with.
+ *
+ * A typo must not quietly become the full review any more than it may become
+ * a cheap one: the pipeline names the value and the four profiles it accepts.
+ */
+export function invalidProfileError(value: unknown): Error {
+  return new Error(
+    `Unknown review profile: ${JSON.stringify(value)} (expected one of: ${REVIEW_PROFILES.join(', ')})`,
+  );
+}
+
+/**
  * What a profile covers, in one line — the omitted stages are named.
  *
  * A reader of the report has to know what the verdict is worth: a quick run

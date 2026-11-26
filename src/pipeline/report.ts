@@ -1,4 +1,4 @@
-import { DEFAULT_REVIEW_PROFILE, profileCoverage, REVIEW_PROFILE_COVERAGE } from './profiles.js';
+import { coverageOf, profileCoverage, profileOfRecord } from './profiles.js';
 import type {
   DecisionKind,
   Finding,
@@ -351,8 +351,8 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
  * that omitted a stage — a review that skipped work is not an approval.
  */
 export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: string } {
-  const profile = run.profile ?? DEFAULT_REVIEW_PROFILE;
-  const coverage = REVIEW_PROFILE_COVERAGE[profile];
+  const profile = profileOfRecord(run.profile);
+  const coverage = coverageOf(profile);
   // A profile that demands the requirements cannot judge a change without
   // them: the gate itself is the refusal, so a caller of the library cannot
   // get an approval out of a critical run that never read an Issue.
@@ -436,8 +436,8 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   lines.push(`- Reviewed at: ${run.finishedAt}`);
   // The profile is a fact of the report, not a footnote: a reader has to know
   // what the verdict is worth, and an omitted stage is named with it.
-  const profile = run.profile ?? DEFAULT_REVIEW_PROFILE;
-  const coverage = REVIEW_PROFILE_COVERAGE[profile];
+  const profile = profileOfRecord(run.profile);
+  const coverage = coverageOf(profile);
   lines.push(`- Profile: ${profile} — ${profileCoverage(profile)}`);
   // The version of the requirements: the Issue the reviewers judged, and the
   // version of it they judged.

@@ -71,15 +71,20 @@ stage it still runs.
 |---|---|---|---|---|
 | `quick` | correctness only | **skipped** | **skipped** | every stage must pass — and the skipped ones never do |
 | `standard` (default) | correctness, architecture, tests | yes | yes | `BLOCKING`/`MAJOR` not rejected |
-| `deep` | correctness, architecture, tests | yes | yes | **every** finding not rejected |
-| `critical` | correctness, architecture, tests | yes | yes | **every** finding not rejected, **and** the governing Issue is required |
+| `deep` | correctness, architecture, tests | yes | yes | `BLOCKING`/`MAJOR` not rejected, **and** no finding left unverified |
+| `critical` | correctness, architecture, tests | yes | yes | the gate of `deep`, **and** the governing Issue is required |
 
 An omitted stage keeps its id and is `skipped` with the reason in the
 *Checks* table, so a reader never sees a shorter list and wonders what
 happened. Because `verdictOf` refuses a review that has any step not passed, a
 `quick` run **cannot** return `APPROVE`: the omitted stages are the stated
 reason. That is the property the profile exists for — a cheap run is a
-loudly incomplete review, not a quiet approval. Its advisory assessment
+loudly incomplete review, not a quiet approval.
+
+`quick` is the only profile that runs fewer stages. `standard`, `deep` and
+`critical` run all of them; `deep` and `critical` differ from `standard` only
+in how strict the gate is, so any of the three can still return `APPROVE` when
+nothing is left above its gate. Its advisory assessment
 records `unavailable` with the reason, and the report's *Follow-up
 improvements* section says the assessment did not run.
 
@@ -88,7 +93,8 @@ pass that would justify another model call: a fourth role would repeat one of
 the three, and a second opinion from the same model is not a second reviewer.
 The extra depth they buy is a stricter gate — under `standard` an unverified
 `MINOR` sits below the gate and the run may still approve, while under `deep`
-an unsettled finding of any severity asks for changes. `critical` adds the one
+an unsettled finding of any severity asks for changes. A *confirmed* `MINOR`
+or `INFO` is settled, and it stays below the gate of every profile. `critical` adds the one
 requirement the pipeline can actually enforce: a change is judged against the
 Issue that governs it, and a run without that Issue is refused — at the
 command line and again in `verdictOf`, so a caller of the library cannot get
@@ -98,6 +104,14 @@ The profile is written to `review.json` as `profile` and to the report as the
 `Profile:` line, with the coverage in words. A run recorded before the
 profiles existed has no field and is read as `standard` — the full review it
 was. A caller that names no profile gets `standard`.
+
+A name that is not one of the four is **refused**, and the name is validated
+twice for two different callers. The command line refuses it with the list of
+profiles; `runReviewPipeline` refuses it too, because the pipeline is exported
+and a JavaScript caller never sees the type. Elsewhere — rendering a record
+that was edited by hand or written by a newer version — a name that is not one
+of the four is read as `standard`, and the report *names* standard, so it never
+claims a coverage it did not apply.
 
 ## The finding model
 

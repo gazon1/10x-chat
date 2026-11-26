@@ -20,7 +20,12 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from './findings.js';
-import { DEFAULT_REVIEW_PROFILE, REVIEW_PROFILE_COVERAGE } from './profiles.js';
+import {
+  coverageOf,
+  DEFAULT_REVIEW_PROFILE,
+  invalidProfileError,
+  isReviewProfile,
+} from './profiles.js';
 import { renderReviewReport, verdictOf } from './report.js';
 import { advanceBaseline, checkFreshness } from './requirements.js';
 import type {
@@ -1014,6 +1019,21 @@ function mergeEvidence(first: string, second: string): string {
 }
 
 /**
+ * The profile of a run, validated.
+ *
+ * The option is typed, but the pipeline is exported and a profile can arrive
+ * from a caller the type system never saw. A typo is refused here rather than
+ * read as a profile that does not exist — and rather than quietly becoming
+ * the full review, which would answer a cheaper question with a costlier one
+ * nobody asked for.
+ */
+function profileOf(profile: string | undefined): ReviewProfile {
+  if (profile === undefined) return DEFAULT_REVIEW_PROFILE;
+  if (!isReviewProfile(profile)) throw invalidProfileError(profile);
+  return profile;
+}
+
+/**
  * Run a review pipeline.
  *
  * The pipeline knows the backend contract and the repository — no browser, no
@@ -1086,8 +1106,8 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── the reviewer roles ────────────────────────────────────────
   // Every role of the pipeline keeps its id, whatever the profile: a stage the
   // profile omits is reported as skipped, never dropped from the record.
-  const profile = options.profile ?? DEFAULT_REVIEW_PROFILE;
-  const coverage = REVIEW_PROFILE_COVERAGE[profile];
+  const profile = profileOf(options.profile);
+  const coverage = coverageOf(profile);
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
   const reported: Decision[] = [];
