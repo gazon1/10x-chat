@@ -5140,6 +5140,10 @@ describe('the review profiles', () => {
     // process while the report still claims the profile it was told.
     expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep)).toBe(true);
     expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep.roles)).toBe(true);
+    // The type promises the same thing the runtime does: a consumer cannot
+    // even compile a write to the roles of a profile it was handed.
+    const roles: readonly string[] = REVIEW_PROFILE_COVERAGE.deep.roles;
+    expect(roles).toEqual(['correctness', 'architecture', 'tests']);
     expect(() => {
       (REVIEW_PROFILE_COVERAGE.deep as { settleEveryFinding: boolean }).settleEveryFinding = false;
     }).toThrow();

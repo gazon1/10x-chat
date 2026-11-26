@@ -34,8 +34,8 @@ export const DEFAULT_REVIEW_PROFILE: ReviewProfile = 'standard';
 
 /** What a profile runs, and what its verdict gate asks. */
 export interface ReviewProfileCoverage {
-  /** The reviewer passes of the profile. */
-  roles: ReviewRole[];
+  /** The reviewer passes of the profile — the frozen array of the map. */
+  roles: readonly ReviewRole[];
   /** Whether the candidate findings are verified against the source. */
   verification: boolean;
   /** Whether the advisory post-review assessment runs. */
