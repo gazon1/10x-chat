@@ -24,6 +24,7 @@ function writeRun(
     changedFiles?: string[];
     verdict?: string;
     backend?: Record<string, unknown>;
+    improvements?: Record<string, unknown>;
   } = {},
 ): void {
   const runDir = path.join(dir, id);
@@ -34,6 +35,7 @@ function writeRun(
       id,
       verdict: options.verdict ?? 'APPROVE',
       ...(options.backend ? { backend: options.backend } : {}),
+      ...(options.improvements ? { improvements: options.improvements } : {}),
       context: { changedFiles: options.changedFiles ?? ['src/a.ts'] },
       steps,
     }),
@@ -89,6 +91,34 @@ describe('the latency benchmark of the review runs', () => {
     const output = run();
 
     expect(output).toContain('| small (1-5) | 1 | 100 ms | n=1 | — | — |');
+  });
+
+  it('counts a queue wait measured only by the advisory assessment', () => {
+    // Every step of the pipeline predates the measurement, but the assessment
+    // waited behind another request and reported it. A benchmark that sums the
+    // wait and then calls the run unmeasured reports a dash for a run whose
+    // queue it just counted — and drops the run from the execution percentiles.
+    writeRun(
+      'assessment-only-queue',
+      [
+        { id: 'collect-context', status: 'passed', durationMs: 10 },
+        { id: 'review-correctness', status: 'passed', durationMs: 100 },
+      ],
+      { improvements: { status: 'completed', durationMs: 4_000, queueWaitMs: 3_000 } },
+    );
+
+    const parsed = JSON.parse(run(['--json']));
+    const measured = parsed.runs[0];
+
+    // The wait is counted, so the run is a measurement.
+    expect(measured.measured).toBe(true);
+    expect(measured.queueWait).toBe(3_000);
+    // The execution is what was left of the total after the wait.
+    expect(measured.total).toBe(4_110);
+    expect(measured.execution).toBe(1_110);
+    // And the table shows the number instead of a dash.
+    const table = run();
+    expect(table).toContain('| small (1-5) | 1 | 4110 ms | n=1 | 3000 ms | 1110 ms |');
   });
 
   it('timed only the runs that finished every stage', () => {

@@ -57,9 +57,14 @@ function measurementOf(run) {
   // whose time does not add up reads as a slow review.
   const assessmentMs = run.improvements?.durationMs ?? 0;
   const total = timed.reduce((sum, step) => sum + step.durationMs, 0) + assessmentMs;
-  const queueWait =
-    timed.reduce((sum, step) => sum + (step.queueWaitMs ?? 0), 0) +
-    (run.improvements?.queueWaitMs ?? 0);
+  // The waits of the steps and of the assessment are one list: a run that
+  // measured a queue only in the assessment measured one, and the sum can
+  // never disagree with the flag that guards it.
+  const queueWaits = [
+    ...timed.map((step) => step.queueWaitMs),
+    run.improvements?.queueWaitMs,
+  ].filter((value) => typeof value === 'number');
+  const queueWait = queueWaits.reduce((sum, value) => sum + value, 0);
   const changedFiles = Array.isArray(run.context?.changedFiles)
     ? run.context.changedFiles.length
     : 0;
@@ -70,8 +75,9 @@ function measurementOf(run) {
     total,
     queueWait,
     // Whether the run measured a queue at all: a stage of an older run has no
-    // wait, and a sum of them is not a measurement of zero.
-    measured: timed.some((step) => typeof step.queueWaitMs === 'number'),
+    // wait, and a sum of them is not a measurement of zero. The assessment
+    // counts too — a bench that ignored its wait would still sum it.
+    measured: queueWaits.length > 0,
     execution: total - queueWait,
     verdict: run.verdict,
     backend: run.backend?.name,
