@@ -492,7 +492,14 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   lines.push('| # | Severity | Location | Problem | Impact | Evidence | Status |');
   lines.push('|---|---|---|---|---|---|---|');
   if (run.findings.length === 0) {
-    lines.push('| — | — | — | No finding survived the verification. | — | — | — |');
+    // "Survived the verification" is a claim about work that ran. A profile
+    // that skips the verification found nothing to argue with, and the table
+    // says that instead of borrowing the wording of a full review.
+    lines.push(
+      coverage.verification
+        ? '| — | — | — | No finding survived the verification. | — | — | — |'
+        : `| — | — | — | No finding was reported, and the ${profile} profile does not verify findings. | — | — | — |`,
+    );
   } else {
     run.findings.forEach((finding, index) => {
       lines.push(

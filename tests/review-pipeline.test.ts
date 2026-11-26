@@ -4936,6 +4936,12 @@ describe('the review profiles', () => {
     });
 
     expect(run.report).toContain('Unknown — this profile does not verify findings');
+    // The Findings table is read on its own too: it must not claim a
+    // verification that never ran.
+    expect(run.report).toContain(
+      'No finding was reported, and the quick profile does not verify findings.',
+    );
+    expect(run.report).not.toContain('No finding survived the verification.');
     expect(run.report).not.toContain('every finding was settled and none of them blocks');
     // The omitted stages are named where the reader looks for the gaps.
     expect(run.report).toContain('Unjudged: review-architecture, review-tests, verify-findings');
