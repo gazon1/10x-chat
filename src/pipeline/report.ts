@@ -504,11 +504,15 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   if (run.findings.length === 0) {
     // "Survived the verification" is a claim about work that ran. A profile
     // that skips the verification found nothing to argue with, and the table
-    // says that instead of borrowing the wording of a full review.
+    // says that instead of borrowing the wording of a full review — and a
+    // record whose profile this version cannot read establishes nothing at
+    // all, so it does not borrow the wording either.
     lines.push(
-      coverage.verification
-        ? '| — | — | — | No finding survived the verification. | — | — | — |'
-        : `| — | — | — | No finding was reported, and the ${profile} profile does not verify findings. | — | — | — |`,
+      known === undefined
+        ? '| — | — | — | No finding was recorded, and this version cannot establish whether the run verified any. | — | — | — |'
+        : coverage.verification
+          ? '| — | — | — | No finding survived the verification. | — | — | — |'
+          : `| — | — | — | No finding was reported, and the ${profile} profile does not verify findings. | — | — | — |`,
     );
   } else {
     run.findings.forEach((finding, index) => {
@@ -583,12 +587,12 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
     // "Settled" is a claim about work that ran: a profile that omits the
     // verification did not settle anything, and the section says what it did.
     lines.push(
-      coverage.verification
-        ? '- None — every finding was settled and none of them blocks the change.'
-        : `- Unknown — this profile does not verify findings, so nothing was settled. Unjudged: ${run.steps
+      known === undefined || !coverage.verification
+        ? `- Unknown — ${known === undefined ? 'this version cannot establish whether the run verified its findings' : 'this profile does not verify findings, so nothing was settled'}. Unjudged: ${run.steps
             .filter((step) => step.status === 'skipped')
             .map((step) => step.id)
-            .join(', ')}.`,
+            .join(', ')}.`
+        : '- None — every finding was settled and none of them blocks the change.',
     );
   } else {
     for (const finding of risks) {

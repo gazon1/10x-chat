@@ -5121,6 +5121,11 @@ describe('the review profiles', () => {
     const section = report.split('## Verdict')[1]?.split('## Checks')[0] ?? '';
     expect(section).toContain('REQUEST CHANGES');
     expect(section).not.toContain('APPROVE');
+    // Nothing about this record's verification can be established, so the
+    // Findings table and the risks do not claim one happened.
+    expect(report).toContain('cannot establish whether the run verified any');
+    expect(report).not.toContain('No finding survived the verification.');
+    expect(report).not.toContain('every finding was settled and none of them blocks');
   });
 
   it('publishes the names of the profiles as a value a caller cannot rewrite', async () => {
