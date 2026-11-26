@@ -1009,3 +1009,28 @@ rather than a defect.
 The check set of that round: typecheck, lint, knip, test (63 files /**1296
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twenty-seventh round — the profiles of a review
+
+The review profiles of Issue #100: `quick`, `standard`, `deep` and `critical`,
+selected with `review --profile`, typed and validated in
+`src/pipeline/profiles.ts`. The tests of the round are the profile block of
+`tests/review-pipeline.test.ts` (9 cases) and the three scenarios of
+`tests/e2e/cli.e2e.ts`: a value that is not one of the four, a `critical` run
+without an Issue, and a `quick` run that names every stage it omitted.
+
+Two properties carry the design. A profile decides **which stages run** and
+**how strict the gate is** — it never changes a stage, and no profile merges
+two reviewer roles into one prompt. And an omitted stage keeps its id and is
+`skipped` with the reason, so `verdictOf` refuses the run: a `quick` review
+cannot return `APPROVE`, and a run of an older version that carries no profile
+is read as `standard`.
+
+`deep` and `critical` add no stage on purpose: a fourth reviewer would repeat
+one of the three, and a second opinion from the same model is not a second
+reviewer. Their depth is the gate — `deep` refuses an unverified finding of
+any severity, while a confirmed MINOR stays settled and below the gate.
+
+The check set of that round: typecheck, lint, knip, test (67 files /**1363
+tests**), e2e (25 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.

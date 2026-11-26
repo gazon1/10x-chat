@@ -28,6 +28,15 @@ the environment.
 | API key of a provider | — | `providerKeys.<provider>` (a name, §6) | none |
 | Transport | `--transport browser\|api` | — | `browser` |
 | ChatGPT Project | — | `chatgptProject` | none (unchanged behaviour) |
+| Review profile | `review --profile` | — | `standard` (the full review) |
+
+`--profile` means two different things and never crosses commands: on `chat`
+and the other browser commands it names a browser profile (`profileMode`), and
+on `review` it names a **cost/coverage profile** — `quick`, `standard`, `deep`
+or `critical` (see [review-pipeline.md](review-pipeline.md#the-profiles)). A
+review profile is a per-run choice with no config file key on purpose: a stored
+default would let a cheaper profile become the standing gate of every review
+without anybody asking for it again.
 
 A CLI flag that is **not given** does not shadow the config file. This is why
 `--timeout` has no default value: a flag with a default would always win over

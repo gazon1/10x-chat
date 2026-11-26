@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { getBackend, listBackends, providerOfBackend } from '../backend/index.js';
 import { loadConfig } from '../config.js';
+import { DEFAULT_REVIEW_PROFILE, isReviewProfile, REVIEW_PROFILES } from '../pipeline/profiles.js';
 import { runReviewPipeline } from '../pipeline/review.js';
 
 /**
@@ -31,6 +32,13 @@ export function createReviewCommand(): Command {
     .option('--head <ref>', 'The head of the comparison (default: HEAD)')
     .option('--backend <name>', 'The backend that answers (default: chatgpt-use)')
     .option('--model <name>', 'The model the reviewers use')
+    .option(
+      '--profile <name>',
+      `The cost/coverage profile: quick (correctness pass only — no verification, ` +
+        `no advisory assessment, so it can never approve), standard (the full review, default), ` +
+        `deep (full review, every unverified finding asks for changes), ` +
+        `critical (deep, and --issue is required) — default: ${DEFAULT_REVIEW_PROFILE}`,
+    )
     .option('--timeout <ms>', 'The timeout of a request, in milliseconds')
     .option('--out <file>', 'Write the report to a file as well')
     .action(async (options) => {
@@ -86,6 +94,31 @@ export function createReviewCommand(): Command {
         return value;
       })();
 
+      const profile = (() => {
+        if (options.profile === undefined) return DEFAULT_REVIEW_PROFILE;
+        const value = String(options.profile).trim().toLowerCase();
+        if (!isReviewProfile(value)) {
+          console.error(
+            chalk.red(
+              `Invalid --profile value: ${options.profile} (expected one of: ${REVIEW_PROFILES.join(', ')})`,
+            ),
+          );
+          process.exit(1);
+        }
+        // The critical profile judges the requirements of the change: without
+        // the Issue that governs it there is nothing to judge it against, and
+        // a run that would silently judge less is refused here.
+        if (value === 'critical' && issue === undefined) {
+          console.error(
+            chalk.red(
+              'The --profile critical option needs --pr and --issue — it judges the change against its Issue.',
+            ),
+          );
+          process.exit(1);
+        }
+        return value;
+      })();
+
       try {
         const config = await loadConfig();
         const chatgptProject = provider === 'chatgpt' ? config.chatgptProject : undefined;
@@ -102,6 +135,7 @@ export function createReviewCommand(): Command {
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(chatgptProject ? { chatgptProject } : {}),
           ...(provider ? { provider } : {}),
+          profile,
           backendLabel: provider ? `${backendName} (${provider})` : backendName,
         });
 

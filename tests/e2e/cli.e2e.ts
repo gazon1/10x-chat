@@ -535,3 +535,56 @@ it('tells the caller of a review what the verdict is', async () => {
     }
   });
 });
+
+it('refuses a review profile that is not one of the four', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const result = await runCli(['review', '--pr', '42', '--profile', 'thorough'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('Invalid --profile value');
+    expect(result.output).toContain('quick, standard, deep, critical');
+  });
+});
+
+it('refuses a critical review that has no issue to judge the change against', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const result = await runCli(['review', '--pr', '42', '--profile', 'critical'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('needs --pr and --issue');
+  });
+});
+
+it('runs a quick review as an explicitly incomplete review', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // The only reviewer pass finds nothing, and the run still is not an
+      // approval: the stages the profile omits are named, and the exit code
+      // says the review is incomplete.
+      const quick = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'quick'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(quick.code).toBe(1);
+      expect(quick.output).toContain('REQUEST CHANGES');
+      expect(quick.output).toContain('Profile: quick');
+      expect(quick.output).toContain('cannot approve a change');
+      expect(quick.output).toContain('the review is incomplete');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});

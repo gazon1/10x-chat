@@ -62,6 +62,12 @@ export {
   parseReviewerFindings,
   parseVerdicts,
 } from './pipeline/findings.js';
+export {
+  DEFAULT_REVIEW_PROFILE,
+  isReviewProfile,
+  REVIEW_PROFILE_COVERAGE,
+  REVIEW_PROFILES,
+} from './pipeline/profiles.js';
 export { renderReviewReport } from './pipeline/report.js';
 export {
   persistRun,
@@ -80,6 +86,7 @@ export type {
   ReviewContext,
   ReviewImprovement,
   ReviewImprovements,
+  ReviewProfile,
   ReviewRole,
   ReviewRun,
   ReviewTarget,

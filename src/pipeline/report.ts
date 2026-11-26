@@ -1,3 +1,4 @@
+import { DEFAULT_REVIEW_PROFILE, profileCoverage, REVIEW_PROFILE_COVERAGE } from './profiles.js';
 import type {
   DecisionKind,
   Finding,
@@ -344,20 +345,41 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
  * guess. Only a rejected finding is settled and harmless. So does a review
  * that did not finish: a run whose reviewers all failed has found nothing, and
  * nothing is not an approval.
+ *
+ * The profile raises the gate: `deep` and `critical` refuse an unverified
+ * finding of any severity, and every profile but `standard` refuses a change
+ * that omitted a stage — a review that skipped work is not an approval.
  */
 export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: string } {
-  const grave = run.findings.filter(
+  const profile = run.profile ?? DEFAULT_REVIEW_PROFILE;
+  const coverage = REVIEW_PROFILE_COVERAGE[profile];
+  // A profile that demands the requirements cannot judge a change without
+  // them: the gate itself is the refusal, so a caller of the library cannot
+  // get an approval out of a critical run that never read an Issue.
+  if (coverage.requiresIssue && !run.context?.requirements) {
+    return {
+      verdict: 'REQUEST CHANGES',
+      reason: `the ${profile} profile judges the change against the Issue that governs it — this run has no Issue.`,
+    };
+  }
+  const unsettled = run.findings.filter((finding) => finding.verification === 'unverified');
+  // The gate of `standard` is the severity; a stricter profile also refuses a
+  // finding that nobody settled, whatever its severity. A confirmed MINOR is
+  // settled, and `deep` does not turn it into a blocking defect.
+  const gate = run.findings.filter(
     (finding) =>
       finding.verification !== 'rejected' &&
-      (finding.severity === 'BLOCKING' || finding.severity === 'MAJOR'),
+      (finding.severity === 'BLOCKING' ||
+        finding.severity === 'MAJOR' ||
+        (coverage.settleEveryFinding && finding.verification === 'unverified')),
   );
-  if (grave.length > 0) {
-    const unsettled = grave.filter((finding) => finding.verification !== 'confirmed').length;
+  if (gate.length > 0) {
+    const grave = gate.filter((finding) => finding.verification !== 'confirmed').length;
     return {
       verdict: 'REQUEST CHANGES',
       reason:
-        `${grave.length} finding(s) of the severity BLOCKING or MAJOR` +
-        (unsettled > 0 ? `, ${unsettled} of them not settled` : '') +
+        `${gate.length} finding(s) at or above the gate of the ${profile} profile` +
+        (grave > 0 ? `, ${grave} of them not settled` : '') +
         '.',
     };
   }
@@ -372,13 +394,12 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
     };
   }
   const confirmed = run.findings.filter((finding) => finding.verification === 'confirmed').length;
-  const unverified = run.findings.filter((finding) => finding.verification === 'unverified').length;
   return {
     verdict: 'APPROVE',
     reason:
       `No confirmed finding of the severity BLOCKING or MAJOR` +
       (confirmed > 0 ? `, ${confirmed} confirmed finding(s) below the gate` : '') +
-      (unverified > 0 ? `, ${unverified} unverified finding(s) below` : '') +
+      (unsettled.length > 0 ? `, ${unsettled.length} unverified finding(s) below` : '') +
       '.',
   };
 }
@@ -413,6 +434,11 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
       : '- Base → Head: unknown — the context could not be collected',
   );
   lines.push(`- Reviewed at: ${run.finishedAt}`);
+  // The profile is a fact of the report, not a footnote: a reader has to know
+  // what the verdict is worth, and an omitted stage is named with it.
+  const profile = run.profile ?? DEFAULT_REVIEW_PROFILE;
+  const coverage = REVIEW_PROFILE_COVERAGE[profile];
+  lines.push(`- Profile: ${profile} — ${profileCoverage(profile)}`);
   // The version of the requirements: the Issue the reviewers judged, and the
   // version of it they judged.
   const requirements = context?.requirements;
@@ -521,7 +547,16 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   // open even though it is settled, and a rejected one is no risk at all.
   const risks = run.findings.filter((finding) => finding.verification !== 'rejected');
   if (risks.length === 0) {
-    lines.push('- None — every finding was settled and none of them blocks the change.');
+    // "Settled" is a claim about work that ran: a profile that omits the
+    // verification did not settle anything, and the section says what it did.
+    lines.push(
+      coverage.verification
+        ? '- None — every finding was settled and none of them blocks the change.'
+        : `- Unknown — this profile does not verify findings, so nothing was settled. Unjudged: ${run.steps
+            .filter((step) => step.status === 'skipped')
+            .map((step) => step.id)
+            .join(', ')}.`,
+    );
   } else {
     for (const finding of risks) {
       lines.push(
@@ -563,7 +598,7 @@ function improvementsSection(improvements: ReviewImprovements | undefined): stri
       );
     }
   } else {
-    const state = improvements.status === 'failed' ? 'failed' : 'unavailable';
+    const state = improvements.status === 'failed' ? 'failed' : 'was unavailable';
     lines.push(
       `The advisory assessment ${state}${improvements.detail ? `: ${literal(improvements.detail)}` : ''}.`,
     );
