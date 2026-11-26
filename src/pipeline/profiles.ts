@@ -14,8 +14,20 @@
 
 import type { ReviewProfile, ReviewRole } from './types.js';
 
-/** The profiles, from the cheapest to the most demanding. */
-export const REVIEW_PROFILES: readonly ReviewProfile[] = ['quick', 'standard', 'deep', 'critical'];
+/**
+ * The profiles, from the cheapest to the most demanding.
+ *
+ * Frozen for the same reason the coverage map is: it is exported, and it is
+ * what `isReviewProfile` validates against. A consumer that pushed a name into
+ * it would make the validation accept a profile the coverage map does not
+ * have, and the first review of that name would crash on the missing coverage.
+ */
+export const REVIEW_PROFILES: readonly ReviewProfile[] = Object.freeze([
+  'quick',
+  'standard',
+  'deep',
+  'critical',
+] as const);
 
 /** The profile of a review that names none — today's full review. */
 export const DEFAULT_REVIEW_PROFILE: ReviewProfile = 'standard';

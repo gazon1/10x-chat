@@ -34,10 +34,10 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
-import { REVIEW_PROFILE_COVERAGE } from '../src/pipeline/profiles.js';
+import { REVIEW_PROFILE_COVERAGE, REVIEW_PROFILES } from '../src/pipeline/profiles.js';
 import { renderReviewReport, verdictOf } from '../src/pipeline/report.js';
 import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
-import type { ReviewContext } from '../src/pipeline/types.js';
+import type { ReviewContext, ReviewProfile } from '../src/pipeline/types.js';
 
 const SOURCE = ['export function run(input: string) {', '  return exec(input);', '}'].join('\n');
 
@@ -5121,6 +5121,17 @@ describe('the review profiles', () => {
     const section = report.split('## Verdict')[1]?.split('## Checks')[0] ?? '';
     expect(section).toContain('REQUEST CHANGES');
     expect(section).not.toContain('APPROVE');
+  });
+
+  it('publishes the names of the profiles as a value a caller cannot rewrite', async () => {
+    // The names are what the validation reads and what the coverage map is
+    // keyed by: a name pushed in here would pass validation and then crash on
+    // a coverage that does not exist.
+    expect(Object.isFrozen(REVIEW_PROFILES)).toBe(true);
+    expect(() => {
+      (REVIEW_PROFILES as ReviewProfile[]).push('quick');
+    }).toThrow();
+    expect([...REVIEW_PROFILES]).toEqual(['quick', 'standard', 'deep', 'critical']);
   });
 
   it('publishes the coverage of a profile as a value a caller cannot weaken', async () => {
