@@ -164,6 +164,11 @@ One ChatGPT window serves one request.
   (`--busy fail`), and the refusal becomes a `busy` failure of the contract
   (`not_submitted` — the prompt was never sent).
 
+The wait inside the queue is measured and stamped on the answer and on the
+failure (`queueWaitMs` of the contract) — a caller that times a review can tell
+a slow provider from a request that waited behind another one (see
+[review-pipeline.md](review-pipeline.md#the-timing-of-a-run)).
+
 ## What it supports
 
 | Capability            |      | Why                                                     |

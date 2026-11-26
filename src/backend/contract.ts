@@ -94,6 +94,13 @@ export interface BackendFailure {
   submission: BackendSubmission;
   /** The output the backend produced before it failed. */
   partialText?: string;
+  /**
+   * How long the request waited for the backend to be free, in milliseconds.
+   *
+   * Absent when the backend does not queue its requests. A backend that runs
+   * one request at a time measures the wait before it starts.
+   */
+  queueWaitMs?: number;
 }
 
 /** A request to a backend. */
@@ -158,6 +165,13 @@ export interface BackendResponse {
   submission: BackendSubmission;
   /** The images of the answer, when the backend produces them. */
   images?: GeneratedImage[];
+  /**
+   * How long the request waited for the backend to be free, in milliseconds.
+   *
+   * Absent when the backend does not queue its requests. The caller subtracts
+   * it from its own wall clock to get the time the provider really took.
+   */
+  queueWaitMs?: number;
 }
 
 /** The state of a request that is known to the backend. */
@@ -239,4 +253,23 @@ export class BackendError extends Error {
 /** The kind of a backend failure, or undefined when the error is not one. */
 export function backendFailureKind(error: unknown): BackendFailureKind | undefined {
   return error instanceof BackendError ? error.failure.kind : undefined;
+}
+
+/**
+ * The outcome of a queued request, stamped with the wait it served.
+ *
+ * A backend that runs one request at a time knows the wait and the caller does
+ * not: the value and the failure both carry it, so a failed request reports
+ * its wait as well as a successful one. A measured wait of zero is stamped as
+ * zero — it is a measurement, and an absent field would say that nobody
+ * measured it.
+ */
+export function withQueueWait<T extends { queueWaitMs?: number }>(
+  outcome: BackendOutcome<T>,
+  queueWaitMs: number,
+): BackendOutcome<T> {
+  const wait = Math.max(0, queueWaitMs);
+  return outcome.ok
+    ? { ok: true, value: { ...outcome.value, queueWaitMs: wait } }
+    : { ok: false, failure: { ...outcome.failure, queueWaitMs: wait } };
 }

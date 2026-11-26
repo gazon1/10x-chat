@@ -5,6 +5,8 @@
  * knows a target, a backend and a set of findings — nothing else.
  */
 
+import type { BackendFailureKind, BackendSubmission } from '../backend/contract.js';
+
 /** The severities of the report format of the repository. */
 export type FindingSeverity = 'BLOCKING' | 'MAJOR' | 'MINOR' | 'INFO';
 
@@ -105,7 +107,44 @@ export interface StepOutcome {
   status: StepStatus;
   /** What the step did, or why it failed. */
   detail?: string;
+  /** The wall-clock duration of the step, in milliseconds. */
   durationMs?: number;
+  /**
+   * When the step started and when it ended, as ISO timestamps.
+   *
+   * The duration says how long, the bounds say when: a stage that waited for
+   * the other stages is only visible with both.
+   */
+  startedAt?: string;
+  finishedAt?: string;
+  /**
+   * The part of `durationMs` the step spent waiting for the backend to be
+   * free, in milliseconds.
+   *
+   * Absent when the backend does not queue its requests, or when the stage
+   * never reached the backend. `durationMs - queueWaitMs` is the time the
+   * provider really worked on the request.
+   */
+  queueWaitMs?: number;
+  /**
+   * Whether the failed request reached the model.
+   *
+   * It is what makes a failure actionable: `not_submitted` can be sent again,
+   * `submitted` can only be resumed — sending it again would run it twice.
+   */
+  submission?: BackendSubmission;
+  /** Why a failed stage failed — the kind of the backend failure. */
+  failureKind?: BackendFailureKind;
+}
+
+/** What answered a review run — the backend and the model of it. */
+export interface ReviewBackend {
+  /** The name of the backend — the key of the registry. */
+  name: string;
+  /** The provider underneath it, when the backend drives one. */
+  provider?: string;
+  /** The model the reviewers asked for, when one was named. */
+  model?: string;
 }
 
 /**
@@ -265,6 +304,16 @@ export interface ReviewImprovements {
   recommendations: ReviewImprovement[];
   /** Why the assessment could not be completed, when it could not. */
   detail?: string;
+  /**
+   * How long the assessment took, in milliseconds.
+   *
+   * It is not a step and never gates the verdict, but it is a request to the
+   * backend like the others: without its duration the time of the run would
+   * not be accounted for.
+   */
+  durationMs?: number;
+  /** The part of that time the assessment waited for the backend to be free. */
+  queueWaitMs?: number;
 }
 
 /** The result of a review run. */
@@ -289,6 +338,13 @@ export interface ReviewRun {
   verdictReason: string;
   /** The report of the run, in the format of the repository. */
   report: string;
+  /**
+   * What answered the run — the backend, its provider and the model.
+   *
+   * Additive: a run of an older version has none, and the report says so
+   * instead of failing.
+   */
+  backend?: ReviewBackend;
   startedAt: string;
   finishedAt: string;
 }

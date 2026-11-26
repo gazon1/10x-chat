@@ -4325,6 +4325,234 @@ describe('the list of the callers of a finding', () => {
   });
 });
 
+describe('the timings of a review', () => {
+  /**
+   * A clock that moves only when the test moves it.
+   *
+   * The timings are read without a wall-clock sleep: the test decides how long
+   * a stage took, so the assertion never depends on how fast the machine is.
+   */
+  function controllableClock(start = 1_000_000) {
+    let value = start;
+    return {
+      now: () => value,
+      /** Move the clock by `ms` — what a stage of that length would have cost. */
+      spend: (ms: number) => {
+        value += ms;
+        return value;
+      },
+    };
+  }
+
+  /** A backend whose queue reports a wait, and that spends a fixed time. */
+  function queuedBackend(
+    clock: { spend: (ms: number) => number },
+    options: { queueWaitMs?: number; workMs?: number; failure?: string } = {},
+  ) {
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+    return {
+      ...backend,
+      ask: async (request: Parameters<typeof backend.ask>[0]) => {
+        // The wait in the queue is the clock of the caller as well: a request
+        // that waited 4 s before it started took 4 s of the wall clock.
+        clock.spend((options.queueWaitMs ?? 0) + (options.workMs ?? 10));
+        const outcome = await backend.ask(request);
+        const queueWaitMs = options.queueWaitMs;
+        if (queueWaitMs === undefined) return outcome;
+        return outcome.ok
+          ? { ok: true as const, value: { ...outcome.value, queueWaitMs } }
+          : { ok: false as const, failure: { ...outcome.failure, queueWaitMs } };
+      },
+    };
+  }
+
+  it('emits a duration and stable bounds for every stage that ran', async () => {
+    const clock = controllableClock();
+    const run = await runReviewPipeline({
+      backend: queuedBackend(clock),
+      target: { cwd: repo },
+      collect: async () => {
+        clock.spend(25);
+        return contextOf();
+      },
+      runDir: path.join(home, 'run-timings'),
+      now: clock.now,
+    });
+
+    // Every stage of the pipeline carries its identifier, its bounds and its
+    // duration — the identifier is the stable one of the pipeline.
+    expect(run.steps.map((step) => step.id)).toEqual([...REVIEW_STEP_IDS]);
+    for (const step of run.steps) {
+      expect(step.durationMs).toBeTypeOf('number');
+      expect(step.startedAt).toBeTypeOf('string');
+      expect(step.finishedAt).toBeTypeOf('string');
+      // The bounds are the same clock as the duration: they agree.
+      expect(Date.parse(step.finishedAt as string) - Date.parse(step.startedAt as string)).toBe(
+        step.durationMs,
+      );
+    }
+    // The clock of the test decided the length of the collection, and the run
+    // reports that length instead of the length of the call.
+    expect(run.steps.find((step) => step.id === 'collect-context')?.durationMs).toBe(25);
+    // The whole run is bounded by its own clock, not by the wall clock.
+    expect(Date.parse(run.finishedAt) - Date.parse(run.startedAt)).toBeGreaterThan(0);
+  });
+
+  it('keeps the queue wait apart from the time the provider worked', async () => {
+    const clock = controllableClock();
+    const run = await runReviewPipeline({
+      backend: queuedBackend(clock, { queueWaitMs: 4_000, workMs: 60 }),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      runDir: path.join(home, 'run-queue'),
+      now: clock.now,
+    });
+
+    for (const role of ['correctness', 'architecture', 'tests']) {
+      const step = run.steps.find((candidate) => candidate.id === `review-${role}`);
+      // The stage waited 4 s for the queue and worked 60 ms: the wait is the
+      // queue, and the execution is what is left.
+      expect(step?.queueWaitMs).toBe(4_000);
+      expect(step?.durationMs).toBe(4_060);
+      expect((step?.durationMs ?? 0) - (step?.queueWaitMs ?? 0)).toBe(60);
+    }
+    // The report shows the two apart, for a reader who does not parse JSON.
+    expect(run.report).toContain('## Timing');
+    expect(run.report).toContain('| review-correctness | 4060 ms | 4000 ms | 60 ms | PASSED |');
+    expect(run.report).toContain('waited for the backend to be free');
+  });
+
+  it('reports no queue wait when the backend does not queue its requests', async () => {
+    const clock = controllableClock();
+    const run = await runReviewPipeline({
+      backend: queuedBackend(clock, { workMs: 30 }),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      runDir: path.join(home, 'run-noqueue'),
+      now: clock.now,
+    });
+
+    const step = run.steps.find((candidate) => candidate.id === 'review-tests');
+    // A backend without a queue says nothing about a wait, and the stage does
+    // not invent one: the absence is not a zero.
+    expect(step?.queueWaitMs).toBeUndefined();
+    expect(step?.durationMs).toBe(30);
+    // The column exists and says that nobody measured it.
+    expect(run.report).toContain('| review-tests | 30 ms | — | — | PASSED |');
+  });
+
+  it('records the kind and the submission state of a failed stage', async () => {
+    const clock = controllableClock();
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', failure: 'timeout' },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+    const run = await runReviewPipeline({
+      backend: {
+        ...backend,
+        ask: async (request) => {
+          clock.spend(15);
+          return backend.ask(request);
+        },
+      },
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      runDir: path.join(home, 'run-failed'),
+      now: clock.now,
+    });
+
+    const failed = run.steps.find((step) => step.id === 'review-correctness');
+    expect(failed?.status).toBe('failed');
+    // Why it failed and what can be done next: a submitted request is resumed,
+    // never sent again.
+    expect(failed?.failureKind).toBe('timeout');
+    expect(failed?.submission).toBe('submitted');
+    // A failed stage is timed as well: a failure has a duration too.
+    expect(failed?.durationMs).toBe(15);
+    expect(failed?.startedAt).toBeTypeOf('string');
+    // The report names the kind of the failure in the row of the stage.
+    expect(run.report).toContain('FAILED (timeout)');
+  });
+
+  it('keeps the timings of a run that is read back instead of run again', async () => {
+    const clock = controllableClock();
+    // A workflow that was interrupted reads the run of the pipeline back
+    // instead of judging the change again: the timings of that run are the
+    // evidence of the review, and they survive the round trip through the disk.
+    const runDir = path.join(home, 'run-resumed');
+    const first = await runReviewPipeline({
+      backend: queuedBackend(clock, { workMs: 5 }),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      runId: 'resumed-run',
+      runDir,
+      now: clock.now,
+    });
+    const stored = JSON.parse(await readFile(path.join(runDir, 'review.json'), 'utf-8'));
+
+    // Every stage of the stored run keeps its own duration, so a run that is
+    // read back later still says where its time went.
+    expect(
+      stored.steps.every((step: { durationMs?: number }) => step.durationMs !== undefined),
+    ).toBe(true);
+    expect(stored.steps.map((step: { id: string }) => step.id)).toEqual(
+      first.steps.map((step) => step.id),
+    );
+    expect(stored.backend).toEqual({ name: 'fake' });
+  });
+
+  it('times the advisory assessment even though it is not a step', async () => {
+    const clock = controllableClock();
+    const run = await runReviewPipeline({
+      backend: queuedBackend(clock, { workMs: 10 }),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      runDir: path.join(home, 'run-assessment'),
+      now: clock.now,
+    });
+
+    // The assessment is not a step and never gates the verdict, but it is a
+    // request to the backend: a run whose time is not accounted for reads as a
+    // slow review.
+    expect(run.steps.map((step) => step.id)).not.toContain('advisory assessment');
+    expect(run.improvements?.durationMs).toBeTypeOf('number');
+    // Its time reaches the report, labelled as what it is.
+    expect(run.report).toContain('| advisory assessment |');
+    expect(run.report).toContain('(not a step)');
+    // The total of the report is the time of the whole review: the rows of
+    // the table add up to it, the assessment included.
+    const total = Number(run.report.split('Total: ')[1].split(' ms')[0]);
+    const durations = run.report
+      .split('\n')
+      .filter((line) => line.startsWith('| ') && line.split('|')[2]?.trim().endsWith(' ms'))
+      .map((line) => Number(line.split('|')[2].trim().replace(' ms', '')));
+    expect(durations.reduce((sum, value) => sum + value, 0)).toBe(total);
+  });
+
+  it('names the backend and the model of the run', async () => {
+    const clock = controllableClock();
+    const run = await runReviewPipeline({
+      backend: queuedBackend(clock),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      provider: 'chatgpt',
+      model: 'Thinking',
+      runDir: path.join(home, 'run-backend'),
+      now: clock.now,
+    });
+
+    // The identity of the run is data of the run: a later measurement does not
+    // have to guess which reviewer produced it.
+    expect(run.backend).toEqual({ name: 'fake', provider: 'chatgpt', model: 'Thinking' });
+    expect(run.report).toContain('backend fake (chatgpt), model Thinking');
+  });
+});
+
 describe('the boundaries of the rules', () => {
   it('merges two titles that overlap by three fifths and keeps two that do not', () => {
     // The overlap of the titles decides whether two findings of one place are
@@ -4537,7 +4765,9 @@ describe('the advisory follow-up improvements', () => {
       collect: async () => contextOf(),
     });
 
-    expect(run.improvements).toEqual({ status: 'completed', recommendations: [] });
+    // The assessment carries its own duration now — additive metadata that
+    // does not change what the assessment says.
+    expect(run.improvements).toMatchObject({ status: 'completed', recommendations: [] });
     expect(run.report).toContain('## Follow-up improvements');
     expect(run.report).toContain('No follow-up improvements recommended.');
   });

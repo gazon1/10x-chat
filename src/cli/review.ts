@@ -101,6 +101,7 @@ export function createReviewCommand(): Command {
           ...(options.model ? { model: options.model as string } : {}),
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(chatgptProject ? { chatgptProject } : {}),
+          ...(provider ? { provider } : {}),
           backendLabel: provider ? `${backendName} (${provider})` : backendName,
         });
 

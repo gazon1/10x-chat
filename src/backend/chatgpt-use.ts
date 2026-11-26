@@ -13,6 +13,7 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
+import { withQueueWait } from './contract.js';
 import { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './process-runner.js';
 
 export type { ProcessResult, ProcessRunner };
@@ -181,6 +182,24 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       () => undefined,
     );
     return result;
+  };
+
+  /**
+   * Run an ask or a resume through the queue, and report how long it waited.
+   *
+   * The wait is measured here and not by the caller: only the queue knows when
+   * a request reached the front of it. The caller's wall clock minus this wait
+   * is the time the provider really worked, and the pipeline reports both.
+   */
+  const queued = (
+    task: () => Promise<BackendOutcome<BackendResponse>>,
+  ): Promise<BackendOutcome<BackendResponse>> => {
+    const queuedAt = Date.now();
+    return serialize(async () => {
+      const startedAt = Date.now();
+      const outcome = await task();
+      return withQueueWait(outcome, startedAt - queuedAt);
+    });
   };
 
   /**
@@ -484,9 +503,9 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
     name: CHATGPT_USE_BACKEND_NAME,
     capabilities: CHATGPT_USE_CAPABILITIES,
 
-    ask: (request) => serialize(() => ask(request)),
+    ask: (request) => queued(() => ask(request)),
 
-    resume: (request) => serialize(() => resume(request)),
+    resume: (request) => queued(() => resume(request)),
 
     status: async (requestId: string): Promise<BackendStatus> => {
       const id = effectiveId(requestId);

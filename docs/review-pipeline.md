@@ -358,6 +358,164 @@ The exit code of the command is the verdict of the review: `0` when the
 verdict is `APPROVE`, `1` when the review is incomplete or asks for changes.
 A caller must not read a clean exit of an incomplete review as an approval.
 
+## The timing of a run
+
+Every step carries its own measurement, and the measurement is data of the
+run — not a line of a log:
+
+| Field | What it says |
+|---|---|
+| `durationMs` | The wall-clock time of the step. |
+| `startedAt`, `finishedAt` | When the step began and when it ended, one clock for both — the two agree with the duration. |
+| `queueWaitMs` | The part of the duration the step spent waiting for the backend to be free. Absent when nobody measured it. |
+| `failureKind`, `submission` | Why a failed step failed and whether the request reached the model: `not_submitted` can be sent again, `submitted` can only be resumed. |
+
+The **queue wait** belongs to the backend, not to the pipeline: only a backend
+that runs one request at a time knows when a request reached the front of its
+queue. `chatgpt-use` and `chrome-use-perplexity` stamp the wait on the answer
+and on the failure; a backend without a queue reports nothing, and the step
+keeps the field absent rather than claiming a wait of zero. The time the
+provider really worked is `durationMs - queueWaitMs`.
+
+The run itself names what answered it: `backend` in `review.json` carries the
+backend, its provider and the model. A run recorded before this existed has
+none, and the report says so instead of failing.
+
+The report gains a **Timing** section — the stages with their duration, their
+queue wait, the execution left after it, and the result. It is additive: the
+*Checks* table keeps the shape of
+`skills/10x-chat/workflows/report-format.md`.
+
+The advisory follow-up assessment is **not a step** and never gates the
+verdict, but it is a request to the backend like the others: it carries its own
+`durationMs` and `queueWaitMs` in `improvements`, and it is a row of the Timing
+table marked *not a step*. Without it a third of the wall clock of a run was
+unaccounted for — up to 13 minutes in the store of this machine. The total of
+the section includes it, so the rows add up to the total.
+
+The record carries no prompt, no diff, no credential and no cookie: a duration,
+two timestamps, an identifier, an outcome and the names of the backend and the
+model. The identifier of a stage is the stable id of the step, never a request
+of a provider.
+
+## The benchmark
+
+The measurements are the runs the pipeline already writes — there is no
+metrics service and no database:
+
+```bash
+node scripts/review-latency.mjs                 # the store of this machine
+node scripts/review-latency.mjs --dir <path>    # another store
+node scripts/review-latency.mjs --json          # the raw measurements
+```
+
+It buckets the runs by the number of changed files (`small` 1–5, `medium`
+6–20, `large` more than 20), times only the runs that finished every stage, and
+reports p50 and p95 per bucket and per stage. A p95 needs at least 20 samples:
+below that the cell gives the sample size, because the nearest-rank p95 of a
+small sample is its maximum.
+
+### A baseline
+
+Run three reviews of each size, and keep the runs. The change under review must
+be a real one of that size — the point is the size, not the defect. One ChatGPT
+window serves one request, so the reviews run one after the other:
+
+```bash
+./scripts/baseline-reviews.sh      # 3 PRs per size bucket, one clean checkout each
+node scripts/review-latency.mjs
+```
+
+The script checks out the head of every PR in a clean detached worktree of its
+own (`~/.cache/10x-chat-tmp/baseline-checkout`): `collect-context` refuses a
+checkout that is not the revision under review, and the worktree of the change
+is the wrong place to measure from. It writes one line per review to
+`build/diagnostics/baseline-reviews-<timestamp>.log`.
+
+Judge the baseline only on runs whose steps all passed: a stage that failed or
+was skipped did not do the work, and its duration is not the cost of the work.
+Keep the same backend, model and timeout across the rounds — the table names
+them so two baselines are never confused. A verdict of `REQUEST CHANGES` is a
+result and not a failure of the measurement.
+
+#### 2026-11-26, with the timing of this document
+
+Nine reviews — three per bucket — on `chatgpt-use` / `chatgpt` with the default
+model and timeout. Every one of the nine finished every stage, so all nine are
+timed. The accounting is exact: the measured rows of every run add up to its
+wall clock (gap 0.0 s on all nine), where 252 of the 520 older runs left more
+than 10 s unaccounted.
+
+| Size | PRs | Changed files | Total median | Total range |
+|---|---|---|---|---|
+| small (1-5) | #82, #67, #60 | 1-5 | 189 s | 159-207 s |
+| medium (6-20) | #71, #70, #61 | 10-15 | 212 s | 204-245 s |
+| large (>20) | #83, #74, #39 | 21-53 | 340 s | 225-378 s |
+
+Per stage, across the nine:
+
+| Stage | Median | Min | Max |
+|---|---|---|---|
+| `collect-context` | 0.9 s | 0.8 s | 1.1 s |
+| `build-bundle` | 0.0 s | 0.0 s | 0.0 s |
+| `review-correctness` | 63.0 s | 41.5 s | 130.0 s |
+| `review-architecture` | 51.6 s | 41.5 s | 142.6 s |
+| `review-tests` | 45.1 s | 31.6 s | 58.1 s |
+| `verify-findings` | 15.8 s | 0.0 s | 22.4 s |
+| `normalize-findings` | 0.0 s | 0.0 s | 0.0 s |
+| `render-report` | 0.0 s | 0.0 s | 0.0 s |
+| advisory assessment | 41.7 s | 21.8 s | 71.1 s |
+
+Three things this baseline establishes.
+
+**The queue is not the bottleneck.** Only 1 of the 43 measured backend waits was
+above zero, and that one by 1 ms. The queue exists — the three reviewer stages
+are serialized behind one window — but under the default `--busy fail` policy a
+contested window fails instead of waiting, and a sequential run never contends
+with itself. So `durationMs` is provider time on this path, and a queue column
+that grows is a signal of a *second* process competing for the window, not of a
+slow provider.
+
+**The models are the cost, and they are the whole cost.** The three reviewer
+stages plus the verification are ~175 s of the ~212 s median. Nothing outside a
+model call costs more than a second except the advisory assessment. The headroom
+in this pipeline is prompt and stage-count work, not I/O.
+
+**The advisory assessment is a third of the run.** At a 41.7 s median it is
+larger than any single reviewer stage and larger than the verification. It never
+gates the verdict, and before the timing above nobody could see it. Any change
+that shortens the review has to decide what to do about it.
+
+The spread is honest and should not be read as noise: the large bucket ranges
+225-378 s, and the widest stage (`review-architecture`, 41.5-142.6 s) moves more
+than 3x on the same backend. Three samples per bucket give a median and a range,
+not a p95 — the table above is a shape to compare against, not a bound.
+
+#### 2026-11-26, from the store this change inherited
+
+The 520 runs the machine already held, taken before the timing above was added.
+Kept because it is the only p95 available, and because it is what "no
+instrumentation" looked like:
+
+| Size | Complete runs | Total p50 | Total p95 |
+|---|---|---|---|
+| small (1-5) | 43 | 217 s | 414 s |
+| medium (6-20) | 119 | 249 s | 387 s |
+| large (>20) | 35 | 273 s | 413 s |
+
+Those runs carry no queue wait: the backends of the time did not measure one.
+They also show where the time goes — at p50 the three reviewer stages are 55 s
+to 73 s each and the verification 28 s, while the collection is 3 s and the
+render below 20 ms. A p50 of the whole review sits near 4 minutes and its p95
+near 6.5. That is the shape to compare a later baseline against, and the reason
+the queue wait was added: the reviewer stages ran one after the other behind a
+queue that nobody measured.
+
+The baseline also carries what those runs did **not** account for: 252 of the
+520 left more than 10 s between their steps and their wall clock, because the
+advisory assessment was a backend request nobody timed. A baseline taken before
+this change is therefore comparable on the stages and not on the total.
+
 ## The bounds
 
 - The diff of a change that has no page is cut at 120 000 characters; the cut

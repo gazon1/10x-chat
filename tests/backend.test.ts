@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SUBMISSIONS_OF_FAILURE } from '../src/backend/contract.js';
+import { SUBMISSIONS_OF_FAILURE, withQueueWait } from '../src/backend/contract.js';
 import {
   type AiBackend,
   BackendError,
@@ -922,5 +922,54 @@ describe('Chat through the backend contract', () => {
       write.mockRestore();
     }
     expect(written.join('')).toContain('first second');
+  });
+});
+
+describe('the queue wait of a request', () => {
+  it('stamps the wait on the answer and on the failure, and keeps a measured zero', () => {
+    const answer = withQueueWait(
+      {
+        ok: true as const,
+        value: { requestId: 'r', text: 'a', truncated: false, submission: 'submitted' as const },
+      },
+      1200,
+    );
+    expect(answer.ok && answer.value.queueWaitMs).toBe(1200);
+
+    // A failure reports its wait as well: a request that failed after a wait
+    // spent that wait all the same.
+    const failure = withQueueWait(
+      {
+        ok: false as const,
+        failure: {
+          kind: 'timeout' as const,
+          message: 'too slow',
+          submission: 'submitted' as const,
+        },
+      },
+      900,
+    );
+    expect(!failure.ok && failure.failure.queueWaitMs).toBe(900);
+
+    // A measured zero is a measurement: it is not the absence of one.
+    const empty = withQueueWait(
+      {
+        ok: true as const,
+        value: { requestId: 'r', text: 'a', truncated: false, submission: 'submitted' as const },
+      },
+      0,
+    );
+    expect(empty.ok && empty.value.queueWaitMs).toBe(0);
+
+    // A clock that went backwards is a measurement of nothing, never a
+    // negative wait that would inflate the execution time.
+    const backwards = withQueueWait(
+      {
+        ok: true as const,
+        value: { requestId: 'r', text: 'a', truncated: false, submission: 'submitted' as const },
+      },
+      -50,
+    );
+    expect(backwards.ok && backwards.value.queueWaitMs).toBe(0);
   });
 });
