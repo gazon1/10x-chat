@@ -588,3 +588,87 @@ it('runs a quick review as an explicitly incomplete review', async () => {
     }
   });
 });
+
+it('runs the full review through the CLI when no profile is named', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // Omitting --profile is the common invocation: it has to reach the
+      // pipeline as standard, with the advisory assessment intact. The
+      // library-level test cannot catch a CLI default that drifts.
+      const approve = await runCli(
+        ['review', '--base', 'main', '--head', 'feature'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(approve.code).toBe(0);
+      expect(approve.output).toContain('- Profile: standard');
+      expect(approve.output).toContain('APPROVE');
+      // The advisory assessment ran — a profile that omitted it says so.
+      expect(approve.output).toContain('## Follow-up improvements');
+      expect(approve.output).not.toContain('does not run the advisory assessment');
+      expect(approve.output).not.toContain('SKIPPED');
+
+      // The explicit name does the same thing.
+      const named = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'standard'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(named.code).toBe(0);
+      expect(named.output).toContain('- Profile: standard');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+it('runs a critical review through the CLI with its Issue', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    // The repository of the checkout: the Issue is read from it.
+    await gitIn(repo, 'remote', 'add', 'origin', 'https://github.com/owner/name.git');
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      await writeFile(path.join(bin, 'gh'), FAKE_GH, 'utf-8');
+      await chmod(path.join(bin, 'gh'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // The refusal of `critical` without an Issue is tested next door. What
+      // this pins is the other half of the path: --pr, --issue and --profile
+      // all reach the pipeline together, and the run approves.
+      const critical = await runCli(
+        ['review', '--pr', '42', '--issue', '7', '--profile', 'critical'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(critical.code).toBe(0);
+      expect(critical.output).toContain('- Profile: critical');
+      expect(critical.output).toContain('APPROVE');
+      // The Issue really reached the pipeline — not only the option parser.
+      expect(critical.output).toContain('issue #7');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
