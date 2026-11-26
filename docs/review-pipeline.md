@@ -114,11 +114,13 @@ A **record** is a different case, because it is data rather than a request, and
 the three ways it can name a profile do not mean the same thing. No field at
 all is a record from before the profiles existed, and that run was the full
 review: it is read as `standard`, and named so. A name of this version is read
-as itself. A name this version cannot read is left **unknown** — it may be a
-cheaper profile of a newer version, and calling it `standard` would present a
-review of unknown coverage as the full review. The report names the value and
-the gate it actually applied, and the verdict says the same in one clause, so
-nobody reads it as the verdict of a profile that was never applied.
+as itself. A name this version cannot read is **unknown**, and an unknown
+record is never approved: its gate cannot be established, so `verdictOf`
+answers `REQUEST CHANGES` and the report says that the coverage of the run is
+unknown while still reporting the steps, the findings and the timings as they
+were recorded. Judging such a record under the gate of `standard` would be the
+wrong answer in both directions — too strict for a stricter profile of a newer
+version, and too lax for a cheaper one, which is the case that matters.
 
 ## The finding model
 

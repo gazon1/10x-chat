@@ -351,22 +351,28 @@ function findingsOfRole(run: ReviewRun, role: string): Finding[] {
  * that omitted a stage — a review that skipped work is not an approval.
  */
 export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: string } {
-  // A record whose profile this version cannot read is judged with the gate of
-  // `standard` — never with a laxer one — and the reason says that its own
-  // gate is unknown, so no reader reads this verdict as the verdict of a
-  // profile that was never applied.
+  // A record whose profile this version cannot read is not judged at all. The
+  // gate of `standard` is the strictest this version knows, but the recorded
+  // run may have used a weaker one: evaluating its findings under a gate that
+  // was never applied would return an approval nobody can establish. An
+  // absent profile is not this case — it is a record of the full review,
+  // written before the profiles existed, and it is read as `standard`.
   const known = knownProfile(run.profile);
-  const profile = known ?? DEFAULT_REVIEW_PROFILE;
+  if (known === undefined) {
+    return {
+      verdict: 'REQUEST CHANGES',
+      reason: `the run names the profile "${run.profile}", which this version does not know — its coverage and its gate cannot be established, so it is not approved.`,
+    };
+  }
+  const profile = known;
   const coverage = coverageOf(profile);
-  const unknown =
-    known === undefined ? ` (its profile "${run.profile}" is unknown to this version)` : '';
   // A profile that demands the requirements cannot judge a change without
   // them: the gate itself is the refusal, so a caller of the library cannot
   // get an approval out of a critical run that never read an Issue.
   if (coverage.requiresIssue && !run.context?.requirements) {
     return {
       verdict: 'REQUEST CHANGES',
-      reason: `the ${profile} profile judges the change against the Issue that governs it — this run has no Issue.${unknown}`,
+      reason: `the ${profile} profile judges the change against the Issue that governs it — this run has no Issue.`,
     };
   }
   const unsettled = run.findings.filter((finding) => finding.verification === 'unverified');
@@ -387,7 +393,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
       reason:
         `${gate.length} finding(s) at or above the gate of the ${profile} profile` +
         (grave > 0 ? `, ${grave} of them not settled` : '') +
-        `.${unknown}`,
+        '.',
     };
   }
   const incomplete = run.steps.filter(
@@ -397,7 +403,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
   if (incomplete.length > 0) {
     return {
       verdict: 'REQUEST CHANGES',
-      reason: `the review is incomplete: ${incomplete.map((step) => step.id).join(', ')} did not pass.${unknown}`,
+      reason: `the review is incomplete: ${incomplete.map((step) => step.id).join(', ')} did not pass.`,
     };
   }
   const confirmed = run.findings.filter((finding) => finding.verification === 'confirmed').length;
@@ -407,7 +413,7 @@ export function verdictOf(run: ReviewRun): { verdict: ReviewVerdict; reason: str
       `No confirmed finding of the severity BLOCKING or MAJOR` +
       (confirmed > 0 ? `, ${confirmed} confirmed finding(s) below the gate` : '') +
       (unsettled.length > 0 ? `, ${unsettled.length} unverified finding(s) below` : '') +
-      `.${unknown}`,
+      '.',
   };
 }
 
@@ -447,12 +453,11 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
   const profile = known ?? DEFAULT_REVIEW_PROFILE;
   const coverage = coverageOf(profile);
   // A run of another version may name a profile this one cannot read. It is
-  // not dressed up as `standard`: the line names the value and the gate the
-  // report actually applied, so a reader is never told the coverage of a
-  // review nobody can account for.
+  // not dressed up as `standard` — nor as any profile of this version — so a
+  // reader is never told the coverage of a review nobody can account for.
   lines.push(
     known === undefined
-      ? `- Profile: ${literal(run.profile ?? '(none)')} — unknown to this version; the report was rendered, and the verdict judged, with the gate of \`${profile}\` (${profileCoverage(profile)})`
+      ? `- Profile: ${literal(run.profile ?? '(none)')} — unknown to this version: its coverage and its gate cannot be established, so the run is not approved. The steps, the findings and the timings below are reported as they were recorded.`
       : `- Profile: ${profile} — ${profileCoverage(profile)}`,
   );
   // The version of the requirements: the Issue the reviewers judged, and the

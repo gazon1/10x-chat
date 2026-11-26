@@ -5105,9 +5105,15 @@ describe('the review profiles', () => {
     const foreign = { ...run, profile: 'experimental' } as typeof run;
     const report = renderReviewReport(foreign);
     expect(report).toContain('- Profile: experimental — unknown to this version');
-    expect(report).toContain('with the gate of `standard`');
     expect(report).not.toContain('- Profile: standard');
-    expect(verdictOf(foreign).reason).toContain('its profile "experimental" is unknown');
+    // The gate of this run cannot be established, so it is not approved: the
+    // recorded steps and findings were all fine under standard, and that says
+    // nothing about the gate the run actually used.
+    expect(run.verdict).toBe('APPROVE');
+    const verdict = verdictOf(foreign);
+    expect(verdict.verdict).toBe('REQUEST CHANGES');
+    expect(verdict.reason).toContain('"experimental"');
+    expect(verdict.reason).toContain('cannot be established');
   });
 
   it('still reads a record without any profile as standard', async () => {

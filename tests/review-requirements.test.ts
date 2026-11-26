@@ -244,6 +244,48 @@ function outsideFences(text: string): string {
 }
 
 describe('the requirements of a review', () => {
+  it('keeps the stricter gate of deep and critical when the Issue is there', async () => {
+    // critical is deep plus the Issue. Its own tests cover the gate (no Issue:
+    // refused) and the Issue (nothing to verify: approved), so a regression
+    // that dropped `settleEveryFinding` for critical would pass both. This is
+    // the conjunction: the Issue is read, and an unverified finding still
+    // asks for changes.
+    const backend = createFakeBackend([
+      {
+        prompt: '# Role: correctness',
+        answer: JSON.stringify({ findings: [FINDING], decisions: [] }),
+      },
+      { prompt: '# Role: architecture', answer: JSON.stringify({ findings: [], decisions: [] }) },
+      { prompt: '# Role: tests', answer: JSON.stringify({ findings: [], decisions: [] }) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: FINDING.file, line: FINDING.line, title: FINDING.title }),
+              verdict: 'unverified',
+              evidence: '',
+              note: 'the excerpt does not settle it',
+            },
+          ],
+        }),
+      },
+    ]);
+
+    await fakeGh({});
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo, pr: 42, issue: 7 },
+      profile: 'critical',
+    });
+
+    expect(run.context?.requirements?.number).toBe(7);
+    expect(run.findings).toHaveLength(1);
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.verdictReason).toContain('critical');
+  });
+
   it('approves a critical review that has its Issue and passes every stage', async () => {
     // The critical profile differs from deep only by requiring the Issue, and
     // a regression that made every critical run incomplete would still pass
