@@ -42,8 +42,15 @@ export interface ReviewProfileCoverage {
  * review" — they raise the gate instead, so that no hypothesis leaves the
  * review unsettled. `critical` additionally requires the governing Issue: a
  * change nobody wrote the requirements for cannot be judged critically.
+ *
+ * The map is **frozen**, and it is exported: these are the gates the review
+ * promises, and a caller of the package that could rewrite one would be able
+ * to weaken the gate of every later run in the process while the report still
+ * claims the profile it was told. Read it; do not edit what you are given.
  */
-export const REVIEW_PROFILE_COVERAGE: Record<ReviewProfile, ReviewProfileCoverage> = {
+export const REVIEW_PROFILE_COVERAGE: Readonly<
+  Record<ReviewProfile, Readonly<ReviewProfileCoverage>>
+> = deepFreeze({
   quick: {
     roles: ['correctness'],
     verification: false,
@@ -72,7 +79,16 @@ export const REVIEW_PROFILE_COVERAGE: Record<ReviewProfile, ReviewProfileCoverag
     settleEveryFinding: true,
     requiresIssue: true,
   },
-};
+});
+
+/** Freeze a value and everything it holds, so a reader can only read. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const held of Object.values(value)) deepFreeze(held);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 /** Whether a value names a profile. */
 export function isReviewProfile(value: string): value is ReviewProfile {
@@ -99,8 +115,8 @@ export function knownProfile(profile: string | undefined): ReviewProfile | undef
   return isReviewProfile(profile) ? profile : undefined;
 }
 
-/** The coverage of one of the four profiles of this version. */
-export function coverageOf(profile: ReviewProfile): ReviewProfileCoverage {
+/** The coverage of one of the four profiles of this version — read-only. */
+export function coverageOf(profile: ReviewProfile): Readonly<ReviewProfileCoverage> {
   return REVIEW_PROFILE_COVERAGE[profile];
 }
 

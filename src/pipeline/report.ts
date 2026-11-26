@@ -433,8 +433,13 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
     ? `pull request #${context.pr}${context.prUrl ? ` — ${context.prUrl}` : ''}`
     : `branch ${context?.headRef ?? 'HEAD'}${context ? ` (${context.headSha.slice(0, 7)})` : ''}`;
   const provider = options.backendLabel ?? 'backend';
-  const verdict = run.verdict;
-  const reason = run.verdictReason;
+  // The recorded verdict is the verdict of a run whose gate is known. A record
+  // whose profile this version cannot read is the one case where it cannot be
+  // trusted: the report shows that it is not approved, and it must not then
+  // print the APPROVE that the run recorded for itself.
+  const recomputed = knownProfile(run.profile) === undefined ? verdictOf(run) : undefined;
+  const verdict = recomputed?.verdict ?? run.verdict;
+  const reason = recomputed?.reason ?? run.verdictReason;
 
   const lines: string[] = [];
   lines.push(`# PR review — ${literal(subject)}`);

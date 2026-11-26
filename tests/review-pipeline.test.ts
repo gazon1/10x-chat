@@ -34,6 +34,7 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
+import { REVIEW_PROFILE_COVERAGE } from '../src/pipeline/profiles.js';
 import { renderReviewReport, verdictOf } from '../src/pipeline/report.js';
 import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
 import type { ReviewContext } from '../src/pipeline/types.js';
@@ -5114,6 +5115,24 @@ describe('the review profiles', () => {
     expect(verdict.verdict).toBe('REQUEST CHANGES');
     expect(verdict.reason).toContain('"experimental"');
     expect(verdict.reason).toContain('cannot be established');
+    // The rendered Verdict section must not print the APPROVE the record
+    // carries: the fail-closed verdict is the one a reader sees.
+    expect(run.verdict).toBe('APPROVE');
+    const section = report.split('## Verdict')[1]?.split('## Checks')[0] ?? '';
+    expect(section).toContain('REQUEST CHANGES');
+    expect(section).not.toContain('APPROVE');
+  });
+
+  it('publishes the coverage of a profile as a value a caller cannot weaken', async () => {
+    // The map is exported, and these are the gates the review promises. A
+    // caller that could rewrite one would weaken every later run in the
+    // process while the report still claims the profile it was told.
+    expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep)).toBe(true);
+    expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep.roles)).toBe(true);
+    expect(() => {
+      (REVIEW_PROFILE_COVERAGE.deep as { settleEveryFinding: boolean }).settleEveryFinding = false;
+    }).toThrow();
+    expect(REVIEW_PROFILE_COVERAGE.deep.settleEveryFinding).toBe(true);
   });
 
   it('still reads a record without any profile as standard', async () => {
