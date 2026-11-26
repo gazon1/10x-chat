@@ -81,6 +81,15 @@ export interface ReviewPipelineOptions {
   /** The label of the backend in the report. */
   backendLabel?: string;
   /**
+   * The clock of the run, in milliseconds.
+   *
+   * The tests replace it to read the timings without a wall-clock sleep; a
+   * real run uses `Date.now`.
+   */
+  now?: Clock;
+  /** The provider underneath the backend, when it drives one. */
+  provider?: string;
+  /**
    * The ChatGPT Project that receives newly created ChatGPT conversations.
    *
    * Only ChatGPT backends use it; others reject it at the request boundary.
@@ -361,18 +370,56 @@ Conventions: read AGENTS.md, CONTRIBUTING.md and the README of the repository at
 ${change}`;
 }
 
-/** The state of a step, with the time it took. */
+/** The clock of the pipeline — the seam the tests replace to read the timings. */
+export type Clock = () => number;
+
+/**
+ * The state of a step, with the time it took and what answered it.
+ *
+ * The duration and the bounds come from the same two readings of one clock: a
+ * stage that kept its own clock and a run that kept another would report two
+ * durations that disagree.
+ */
 function step(
+  now: Clock,
   id: string,
   status: StepOutcome['status'],
-  detail?: string,
-  startedAt?: number,
+  detail: string | undefined,
+  startedAt: number,
+  extra?: Partial<Pick<StepOutcome, 'queueWaitMs' | 'submission' | 'failureKind'>>,
 ): StepOutcome {
+  const finishedAt = now();
   return {
     id,
     status,
     ...(detail ? { detail } : {}),
-    ...(startedAt !== undefined ? { durationMs: Date.now() - startedAt } : {}),
+    durationMs: finishedAt - startedAt,
+    startedAt: new Date(startedAt).toISOString(),
+    finishedAt: new Date(finishedAt).toISOString(),
+    ...(extra?.queueWaitMs !== undefined ? { queueWaitMs: extra.queueWaitMs } : {}),
+    ...(extra?.submission !== undefined ? { submission: extra.submission } : {}),
+    ...(extra?.failureKind !== undefined ? { failureKind: extra.failureKind } : {}),
+  };
+}
+
+/**
+ * What the backend reported about a request, as the fields of its step.
+ *
+ * The queue wait is measured by the backend that queues; the caller subtracts
+ * it from its own wall clock to get the time the provider really worked. A
+ * backend without a queue reports nothing, and the step says nothing either.
+ * A failure carries its kind and whether it reached the model — it says what
+ * can be done next: `not_submitted` can be sent again, `submitted` resumed.
+ */
+function backendExtra(
+  outcome: BackendOutcome<BackendResponse>,
+): Partial<Pick<StepOutcome, 'queueWaitMs' | 'submission' | 'failureKind'>> {
+  const queueWaitMs = outcome.ok ? outcome.value.queueWaitMs : outcome.failure.queueWaitMs;
+  return {
+    ...(queueWaitMs !== undefined ? { queueWaitMs } : {}),
+    ...(outcome.ok
+      ? {}
+      : { failureKind: outcome.failure.kind, submission: outcome.failure.submission }),
   };
 }
 
@@ -738,10 +785,12 @@ async function verifyCandidates(options: {
   model?: string;
   timeoutMs?: number;
   chatgptProject?: string;
+  /** The clock of the run — the bounds and the duration of the stage. */
+  now: Clock;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
-  const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha, headSha } =
+  const { backend, runId, candidates, repoRoot, tracked, deleted, secret, baseSha, headSha, now } =
     options;
-  const startedAt = Date.now();
+  const startedAt = now();
   const material: string[] = [];
   const mechanical = new Map<
     string,
@@ -786,6 +835,7 @@ async function verifyCandidates(options: {
     return {
       findings: candidates,
       step: step(
+        now,
         'verify-findings',
         'failed',
         error instanceof Error ? error.message : String(error),
@@ -797,17 +847,25 @@ async function verifyCandidates(options: {
     return {
       findings: candidates,
       step: step(
+        now,
         'verify-findings',
         'failed',
         `${outcome.failure.kind}: ${outcome.failure.message}`,
         startedAt,
+        backendExtra(outcome),
       ),
     };
   }
   if (outcome.value.truncated) {
     return {
       findings: candidates,
-      step: step('verify-findings', 'failed', 'the answer of the verifier was cut off', startedAt),
+      step: step(
+        now,
+        'verify-findings',
+        'failed',
+        'the answer of the verifier was cut off',
+        startedAt,
+      ),
     };
   }
 
@@ -925,6 +983,7 @@ async function verifyCandidates(options: {
   return {
     findings,
     step: step(
+      now,
       'verify-findings',
       complete ? 'passed' : 'failed',
       `${candidates.length} candidates, ${confirmed} confirmed, ${answered} answered` +
@@ -932,6 +991,7 @@ async function verifyCandidates(options: {
         (contradictory.size > 0 ? `, ${contradictory.size} contradictory verdicts` : '') +
         (complete ? '' : ' — the verification is incomplete'),
       startedAt,
+      backendExtra(outcome),
     ),
   };
 }
@@ -954,17 +1014,19 @@ function mergeEvidence(first: string, second: string): string {
 export async function runReviewPipeline(options: ReviewPipelineOptions): Promise<ReviewRun> {
   const { backend, target } = options;
   const runId = options.runId ?? randomUUID();
-  const startedAt = new Date().toISOString();
+  const now = options.now ?? Date.now;
+  const startedAt = new Date(now()).toISOString();
   const steps: StepOutcome[] = [];
   const collect = options.collect ?? collectReviewContext;
 
   // ── collect-context ───────────────────────────────────────────
-  const collectStart = Date.now();
+  const collectStart = now();
   let context: ReviewContext | undefined;
   try {
     context = await collect(target);
     steps.push(
       step(
+        now,
         'collect-context',
         // A cut diff is a partial change: the reviewers cannot approve what
         // they did not see, so the review is not complete.
@@ -979,6 +1041,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   } catch (error) {
     steps.push(
       step(
+        now,
         'collect-context',
         'failed',
         error instanceof Error ? error.message : String(error),
@@ -992,11 +1055,13 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // reviewer that can open GitHub reads the whole change in its context, and a
   // pasted diff only burns the window of the model.
   let brief = '';
+  const bundleSkippedAt = now();
   if (context) {
-    const bundleStart = Date.now();
+    const bundleStart = now();
     brief = contextBlock(context);
     steps.push(
       step(
+        now,
         'build-bundle',
         'passed',
         context.repositoryUrl && !context.local
@@ -1006,7 +1071,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       ),
     );
   } else {
-    steps.push(step('build-bundle', 'skipped', 'no context to bundle'));
+    steps.push(step(now, 'build-bundle', 'skipped', 'no context to bundle', bundleSkippedAt));
   }
 
   // ── the reviewer roles ────────────────────────────────────────
@@ -1018,9 +1083,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // reached. A backend that never answers breaks its contract, and the run
   // waits for it.
   for (const role of roles) {
-    const roleStart = Date.now();
+    const roleStart = now();
     if (!context || !brief) {
-      steps.push(step(`review-${role}`, 'skipped', 'no brief to review'));
+      steps.push(step(now, `review-${role}`, 'skipped', 'no brief to review', roleStart));
       continue;
     }
     const request = {
@@ -1036,6 +1101,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     } catch (error) {
       steps.push(
         step(
+          now,
           `review-${role}`,
           'failed',
           error instanceof Error ? error.message : String(error),
@@ -1047,24 +1113,37 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     if (!outcome.ok) {
       steps.push(
         step(
+          now,
           `review-${role}`,
           'failed',
           `${outcome.failure.kind}: ${outcome.failure.message}`,
           roleStart,
+          backendExtra(outcome),
         ),
       );
       continue;
     }
     const text = outcome.value.text;
     if (text.trim() === '') {
-      steps.push(step(`review-${role}`, 'failed', 'the reviewer answered with nothing', roleStart));
+      steps.push(
+        step(now, `review-${role}`, 'failed', 'the reviewer answered with nothing', roleStart, {
+          ...backendExtra(outcome),
+        }),
+      );
       continue;
     }
     // A cut off answer is not an answer: the findings it carries may be half
     // of the review.
     if (outcome.value.truncated) {
       steps.push(
-        step(`review-${role}`, 'failed', 'the answer of the reviewer was cut off', roleStart),
+        step(
+          now,
+          `review-${role}`,
+          'failed',
+          'the answer of the reviewer was cut off',
+          roleStart,
+          backendExtra(outcome),
+        ),
       );
       continue;
     }
@@ -1079,12 +1158,14 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     const invalid = invalidEntries.length > 0 ? `, ${invalidEntries.length} invalid` : '';
     steps.push(
       step(
+        now,
         `review-${role}`,
         // An entry that did not pass the schema may be the defect that
         // matters: a reviewer that lost one is a reviewer that did not finish.
         invalidEntries.length > 0 ? 'failed' : 'passed',
         `${parsed.findings.length} findings, ${parsedDecisions.decisions.length} decisions${invalid}${invalidEntries.length > 0 ? ` — ${invalidEntries.join('; ')}` : ''}`,
         roleStart,
+        backendExtra(outcome),
       ),
     );
   }
@@ -1092,10 +1173,13 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── verify-findings ───────────────────────────────────────────
   const unique = dedupeFindings(candidates);
   let findings = unique;
+  const verifyEmptyStart = now();
   if (unique.length === 0) {
     // Nothing to verify is a finished verification — the status 'skipped' is
     // for a step that could not run, and it makes the verdict incomplete.
-    steps.push(step('verify-findings', 'passed', 'no candidate finding to verify'));
+    steps.push(
+      step(now, 'verify-findings', 'passed', 'no candidate finding to verify', verifyEmptyStart),
+    );
   } else {
     const verification = await verifyCandidates({
       backend,
@@ -1111,18 +1195,20 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+      now,
     });
     steps.push(verification.step);
     findings = dedupeFindings(verification.findings);
   }
 
   // ── normalize-findings ────────────────────────────────────────
-  const normalizeStart = Date.now();
+  const normalizeStart = now();
   // The decisions of the roles are merged too: two roles that name the same
   // decision name it once.
   const decisions = dedupeDecisions(reported);
   steps.push(
     step(
+      now,
       'normalize-findings',
       'passed',
       `${candidates.length} reported, ${findings.length} after the merge, ${decisions.length} decisions`,
@@ -1143,6 +1229,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     ...(options.model ? { model: options.model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+    now,
   });
 
   // ── the requirements of the change ─────────────────────────────
@@ -1153,19 +1240,26 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // "reviewed" without a review on the disk is a lie.
   let pendingAdvance: { requirements: IssueRequirements; startedAt: number } | undefined;
   if (context?.requirements) {
-    const checkStart = Date.now();
+    const checkStart = now();
     const fresh = await checkFreshness(context.requirements, context.repoRoot);
     steps.push(
-      step(CHECK_REQUIREMENTS_STEP, fresh.fresh ? 'passed' : 'failed', fresh.detail, checkStart),
+      step(
+        now,
+        CHECK_REQUIREMENTS_STEP,
+        fresh.fresh ? 'passed' : 'failed',
+        fresh.detail,
+        checkStart,
+      ),
     );
 
-    const updateStart = Date.now();
+    const updateStart = now();
     // Every step of the review must have passed: an incomplete run has not
     // judged the requirements, and it must not advance their baseline.
     const complete = steps.every((candidate) => candidate.status === 'passed');
     if (!complete) {
       steps.push(
         step(
+          now,
           UPDATE_REQUIREMENTS_STEP,
           'skipped',
           'the review is incomplete — the baseline of the issue was not advanced',
@@ -1178,7 +1272,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   }
 
   // ── render-report ─────────────────────────────────────────────
-  const renderStart = Date.now();
+  const renderStart = now();
   const run: ReviewRun = {
     id: runId,
     target,
@@ -1190,8 +1284,13 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     verdict: 'APPROVE',
     verdictReason: '',
     report: '',
+    backend: {
+      name: backend.name,
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.model ? { model: options.model } : {}),
+    },
     startedAt,
-    finishedAt: new Date().toISOString(),
+    finishedAt: new Date(now()).toISOString(),
   };
   // The verdict is data of the run, not only a line of the report: the caller
   // reads it to decide what to do with the review.
@@ -1201,7 +1300,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   run.report = renderReviewReport(run, {
     backendLabel: options.backendLabel ?? backend.name,
   });
-  steps.push(step('render-report', 'passed', 'the report of the run', renderStart));
+  steps.push(step(now, 'render-report', 'passed', 'the report of the run', renderStart));
 
   // The run is written before the baseline of the Issue moves: a review that
   // could not be written did not happen, and its Issue was not reviewed.
@@ -1214,11 +1313,12 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       // A newer snapshot of a concurrent run was kept: the baseline is up
       // to date, and this run is not made older by it.
       steps.push(
-        step(UPDATE_REQUIREMENTS_STEP, 'passed', advanced.detail, pendingAdvance.startedAt),
+        step(now, UPDATE_REQUIREMENTS_STEP, 'passed', advanced.detail, pendingAdvance.startedAt),
       );
     } catch (error) {
       steps.push(
         step(
+          now,
           UPDATE_REQUIREMENTS_STEP,
           'failed',
           error instanceof Error ? error.message : String(error),
@@ -1235,7 +1335,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     run.report = renderReviewReport(run, {
       backendLabel: options.backendLabel ?? backend.name,
     });
-    run.finishedAt = new Date().toISOString();
+    run.finishedAt = new Date(now()).toISOString();
     await persistRun(run, runDir);
   }
   return run;
@@ -1270,6 +1370,8 @@ async function assessImprovements(options: {
   model?: string;
   timeoutMs?: number;
   chatgptProject?: string;
+  /** The clock of the run — the duration of the assessment. */
+  now: Clock;
 }): Promise<ReviewImprovements> {
   if (!options.context || !options.brief) {
     return {
@@ -1289,6 +1391,17 @@ async function assessImprovements(options: {
     findingsForAssessment(options.findings),
   ].join('\n\n');
 
+  // The assessment is not a step and never gates the verdict, but it is a
+  // request to the backend: without its duration the time of the run would
+  // not be accounted for, and a slow assessment would look like a slow review.
+  const startedAt = options.now();
+  /** The assessment with its timing — every way it can end. */
+  const timed = (value: ReviewImprovements): ReviewImprovements => {
+    const durationMs = options.now() - startedAt;
+    return { ...value, durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) };
+  };
+  let queueWaitMs: number | undefined;
+
   let outcome: Awaited<ReturnType<AiBackend['ask']>>;
   try {
     outcome = await options.backend.ask({
@@ -1299,61 +1412,62 @@ async function assessImprovements(options: {
       ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
     });
   } catch (error) {
-    return {
+    return timed({
       status: 'failed',
       recommendations: [],
       detail: error instanceof Error ? error.message : String(error),
-    };
+    });
   }
 
+  queueWaitMs = outcome.ok ? outcome.value.queueWaitMs : outcome.failure.queueWaitMs;
   if (!outcome.ok) {
-    return {
+    return timed({
       status:
         outcome.failure.kind === 'timeout' || outcome.failure.kind === 'unavailable'
           ? 'unavailable'
           : 'failed',
       recommendations: [],
       detail: `${outcome.failure.kind}: ${outcome.failure.message}`,
-    };
+    });
   }
   if (outcome.value.text.trim() === '') {
-    return {
+    return timed({
       status: 'failed',
       recommendations: [],
       detail: 'the assessment answered with nothing',
-    };
+    });
   }
   if (outcome.value.truncated) {
-    return {
+    return timed({
       status: 'failed',
       recommendations: [],
       detail: 'the answer of the assessment was cut off',
-    };
+    });
   }
 
   // The fake backend's default answer is not a payload: existing tests that
   // do not stub the assessment get a completed assessment with no advice.
   if (outcome.value.text.startsWith('Fake answer for: # Follow-up improvements')) {
-    return { status: 'completed', recommendations: [] };
+    return timed({ status: 'completed', recommendations: [] });
   }
 
   const parsed = parseImprovementRecommendations(outcome.value.text);
   if (parsed.missing) {
-    return {
+    return timed({
       status: 'failed',
       recommendations: [],
       detail: parsed.invalid.join('; ') || 'the answer could not be read',
-    };
+    });
   }
   // A malformed entry is not a recommendation: the answer is read, and the
   // invalid parts are named instead of being turned into advice.
   const detail =
     parsed.invalid.length > 0 ? `${parsed.invalid.length} invalid recommendation(s)` : undefined;
-  return {
+  return timed({
     status: 'completed',
     recommendations: parsed.recommendations,
     ...(detail ? { detail } : {}),
-  };
+  });
 }
 
 /**

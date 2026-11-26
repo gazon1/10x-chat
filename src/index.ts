@@ -76,6 +76,7 @@ export type {
   FindingSeverity,
   FindingVerification,
   ImprovementPriority,
+  ReviewBackend,
   ReviewContext,
   ReviewImprovement,
   ReviewImprovements,

@@ -189,6 +189,67 @@ function locationOf(finding: Finding): string {
   return `<code>${location}</code>`;
 }
 
+/** A duration in the report, in milliseconds — never a fraction of one. */
+function ms(value: number): string {
+  return `${Math.max(0, Math.round(value))} ms`;
+}
+
+/**
+ * The latency of the run — where its wall clock went.
+ *
+ * A section of its own and not a column of the *Checks* table: the format of
+ * the shared report is the one of `skills/10x-chat/workflows/report-format.md`,
+ * and a new metadata is additive to it. The queue wait is kept apart from the
+ * execution time, because a stage that waited for the backend to be free says
+ * nothing about the speed of the provider. A run of an older version has no
+ * timings, and the section says so instead of failing.
+ */
+function timingSection(run: ReviewRun): string[] {
+  const timed = run.steps.filter((step) => step.durationMs !== undefined);
+  if (timed.length === 0) return [];
+  // The assessment is not a step, but its request costs time: the total is the
+  // time of the whole review, so the rows of the table add up to it.
+  const assessment = run.improvements;
+  const total =
+    timed.reduce((sum, step) => sum + (step.durationMs ?? 0), 0) + (assessment?.durationMs ?? 0);
+  const queued =
+    timed.reduce((sum, step) => sum + (step.queueWaitMs ?? 0), 0) + (assessment?.queueWaitMs ?? 0);
+  const backend = run.backend;
+
+  const lines: string[] = ['## Timing'];
+  lines.push(
+    `- Total: ${ms(total)}` +
+      (queued > 0 ? `, of which ${ms(queued)} waited for the backend to be free` : '') +
+      (backend
+        ? ` — backend ${literal(backend.name)}${backend.provider ? ` (${literal(backend.provider)})` : ''}${backend.model ? `, model ${literal(backend.model)}` : ''}`
+        : ''),
+  );
+  lines.push('');
+  lines.push('| Stage | Duration | Queue wait | Execution | Result |');
+  lines.push('|---|---|---|---|---|');
+  for (const step of timed) {
+    const wait = step.queueWaitMs;
+    lines.push(
+      `| ${step.id} | ${ms(step.durationMs ?? 0)} | ${wait !== undefined ? ms(wait) : '—'} | ${
+        wait !== undefined ? ms((step.durationMs ?? 0) - wait) : '—'
+      } | ${RESULT_OF[step.status]}${step.failureKind ? ` (${literal(step.failureKind)})` : ''} |`,
+    );
+  }
+  // The advisory assessment is not a step and never gates the verdict, but it
+  // is a request to the backend: a run whose time is not accounted for reads
+  // as a slow review.
+  if (assessment?.durationMs !== undefined) {
+    const wait = assessment.queueWaitMs;
+    lines.push(
+      `| advisory assessment | ${ms(assessment.durationMs)} | ${wait !== undefined ? ms(wait) : '—'} | ${
+        wait !== undefined ? ms(assessment.durationMs - wait) : '—'
+      } | ${assessment.status.toUpperCase()} (not a step) |`,
+    );
+  }
+  lines.push('');
+  return lines;
+}
+
 /** The status of a finding in the wording of the report format. */
 function statusOf(finding: Finding): string {
   switch (finding.verification) {
@@ -382,6 +443,8 @@ export function renderReviewReport(run: ReviewRun, options: ReportOptions = {}):
     );
   }
   lines.push('');
+
+  lines.push(...timingSection(run));
 
   lines.push('## Findings');
   lines.push('| # | Severity | Location | Problem | Impact | Evidence | Status |');

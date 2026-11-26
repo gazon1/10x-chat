@@ -9,6 +9,7 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
+import { withQueueWait } from './contract.js';
 import { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './process-runner.js';
 
 export type { ProcessResult, ProcessRunner };
@@ -183,6 +184,23 @@ export function createChromeUsePerplexityBackend(
       () => undefined,
     );
     return result;
+  };
+
+  /**
+   * Run an ask through the queue, and report how long it waited.
+   *
+   * Only the queue knows when a request reached the front of it. The caller's
+   * wall clock minus this wait is the time the provider really worked.
+   */
+  const queued = (
+    task: () => Promise<BackendOutcome<BackendResponse>>,
+  ): Promise<BackendOutcome<BackendResponse>> => {
+    const queuedAt = Date.now();
+    return serialize(async () => {
+      const startedAt = Date.now();
+      const outcome = await task();
+      return withQueueWait(outcome, startedAt - queuedAt);
+    });
   };
 
   const run = async (
@@ -612,7 +630,7 @@ export function createChromeUsePerplexityBackend(
   return {
     name: CHROME_USE_PERPLEXITY_BACKEND_NAME,
     capabilities: CHROME_USE_PERPLEXITY_CAPABILITIES,
-    ask: (request) => serialize(() => ask(request)),
+    ask: (request) => queued(() => ask(request)),
     status: async (requestId: string): Promise<BackendStatus> => {
       const k = known.get(requestId);
       // This POC keeps no persistent receipt across processes; without

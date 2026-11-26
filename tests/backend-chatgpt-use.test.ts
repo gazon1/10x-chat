@@ -482,6 +482,39 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     expect(peak).toBe(1);
   });
 
+  it('reports how long an ask waited for the queue', async () => {
+    // The first process is held open by the test itself: no wall-clock sleep,
+    // and the second ask provably waits behind it.
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runner: ProcessRunner = {
+      run: async (_command, args) => {
+        const id = args[args.indexOf('--request-id') + 1] ?? 'req-1';
+        // The answer names the request it answers, the way the CLI does.
+        const answer = { code: 0, stdout: completed('ok', id), stderr: '', timedOut: false };
+        if (id === 'req-1') await held;
+        return answer;
+      },
+    };
+    const backend = createChatgptUseBackend({ runner });
+
+    const first = backend.ask(request);
+    const second = backend.ask({ ...request, requestId: 'req-2' });
+    // The second ask cannot start before the first one is released.
+    release?.();
+    const [one, two] = await Promise.all([first, second]);
+
+    // The first ask found the queue empty; the second served a wait behind it
+    // — and both say so, because only the queue knows when a request reached
+    // the front. The wait is a measurement of the wall clock, so its size is
+    // not asserted here: `withQueueWait` below is the arithmetic of it.
+    expect(one.ok && one.value.queueWaitMs).toBe(0);
+    expect(two.ok && typeof (two.ok ? two.value.queueWaitMs : undefined)).toBe('number');
+    expect(two.ok && (two.value.queueWaitMs ?? -1)).toBeGreaterThanOrEqual(0);
+  });
+
   it('builds the whole command line of a request', async () => {
     const { runner, calls } = fakeRunner([
       { code: 0, stdout: completed('ok'), stderr: '', timedOut: false },
