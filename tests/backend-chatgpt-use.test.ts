@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHATGPT_USE_BACKEND_NAME,
   conversationHrefMatches,
@@ -16,6 +16,7 @@ import {
   resolveChatgptProject,
 } from '../src/backend/chatgpt-use.js';
 import { providerOfBackend } from '../src/backend/registry.js';
+import { createRequestQueue, resetSharedRequestQueues } from '../src/backend/queue.js';
 
 interface Call {
   command: string;
@@ -63,6 +64,9 @@ const request = {
 };
 
 describe('the ChatGPT backend of chatgpt-use', () => {
+  afterEach(() => {
+    resetSharedRequestQueues();
+  });
   it('parses a completed answer', async () => {
     const { runner, calls } = fakeRunner([
       { code: 0, stdout: completed('the answer'), stderr: '', timedOut: false },
@@ -480,6 +484,42 @@ describe('the ChatGPT backend of chatgpt-use', () => {
     await Promise.all([backend.ask(request), backend.ask({ ...request, requestId: 'req-2' })]);
 
     expect(peak).toBe(1);
+  });
+
+  it('serializes two backend instances that share the same configured session boundary', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const events: string[] = [];
+    const runner: ProcessRunner = {
+      run: async (_command, args) => {
+        const id = args[args.indexOf('--request-id') + 1] ?? 'req';
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        events.push(`start:${id}`);
+        if (id === 'req-1') await held;
+        active -= 1;
+        events.push(`end:${id}`);
+        return { code: 0, stdout: completed('ok', id), stderr: '', timedOut: false };
+      },
+    };
+    // Same command/session boundary, different instances, same injected queue.
+    const queue = createRequestQueue(1);
+    const a = createChatgptUseBackend({ runner, queue, command: 'chatgpt-use' });
+    const b = createChatgptUseBackend({ runner, queue, command: 'chatgpt-use' });
+
+    const first = a.ask(request);
+    const second = b.ask({ ...request, requestId: 'req-2' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual(['start:req-1']);
+    release?.();
+    await Promise.all([first, second]);
+
+    expect(maxActive).toBe(1);
+    expect(events.indexOf('start:req-2')).toBeGreaterThan(events.indexOf('end:req-1'));
   });
 
   it('reports how long an ask waited for the queue', async () => {

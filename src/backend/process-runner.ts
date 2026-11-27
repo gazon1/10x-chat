@@ -10,6 +10,8 @@ export interface ProcessResult {
   stderr: string;
   /** The process was killed: it did not finish in time. */
   timedOut: boolean;
+  /** The process was cancelled by an AbortSignal. */
+  cancelled?: boolean;
 }
 
 /** How the adapter starts a process — the seam the unit tests replace. */
@@ -17,7 +19,7 @@ export interface ProcessRunner {
   run(
     command: string,
     args: string[],
-    options?: { timeoutMs?: number; input?: string },
+    options?: { timeoutMs?: number; input?: string; signal?: AbortSignal },
   ): Promise<ProcessResult>;
 }
 
@@ -33,13 +35,36 @@ const KILL_GRACE_MS = 2_000;
 export const nodeProcessRunner: ProcessRunner = {
   run(command, args, options = {}) {
     return new Promise((resolve, reject) => {
+      if (options.signal?.aborted) {
+        resolve({ code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true });
+        return;
+      }
       const child = spawn(command, args, {
         stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let cancelled = false;
       let killTimer: NodeJS.Timeout | undefined;
+      const onAbort = (): void => {
+        cancelled = true;
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // process may already be gone
+        }
+        killTimer ??= setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // ignore
+          }
+        }, KILL_GRACE_MS);
+      };
+      if (options.signal) {
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
       if (options.input !== undefined) {
         // The stdin of the process is closed after the input: the CLI reads it
         // until the end and then it has the whole of it. A process that dies
@@ -51,10 +76,20 @@ export const nodeProcessRunner: ProcessRunner = {
       const timer = options.timeoutMs
         ? setTimeout(() => {
             timedOut = true;
-            child.kill('SIGTERM');
+            try {
+              child.kill('SIGTERM');
+            } catch {
+              // ignore
+            }
             // A process that ignores SIGTERM must not keep the run pending
             // forever: it is killed after the grace period.
-            killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+            killTimer ??= setTimeout(() => {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                // ignore
+              }
+            }, KILL_GRACE_MS);
           }, options.timeoutMs)
         : undefined;
       child.stdout?.on('data', (chunk) => {
@@ -66,12 +101,14 @@ export const nodeProcessRunner: ProcessRunner = {
       child.on('error', (error) => {
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
+        if (options.signal) options.signal.removeEventListener('abort', onAbort);
         reject(error);
       });
       child.on('close', (code) => {
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
-        resolve({ code, stdout, stderr, timedOut });
+        if (options.signal) options.signal.removeEventListener('abort', onAbort);
+        resolve({ code, stdout, stderr, timedOut, ...(cancelled ? { cancelled: true } : {}) });
       });
     });
   },

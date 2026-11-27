@@ -127,9 +127,10 @@ export interface StepOutcome {
    */
   queueWaitMs?: number;
   /**
-   * How many backend slots were active while the stage ran its request(s).
+   * How many backend slots were active when the stage outcome was reported.
    *
-   * Absent when the backend does not report slot diagnostics.
+   * Completion-time snapshot, not peak concurrency. Absent when the backend
+   * does not report slot diagnostics.
    */
   activeSlots?: number;
   /**

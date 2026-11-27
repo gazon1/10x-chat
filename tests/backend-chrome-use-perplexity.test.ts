@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   CHROME_USE_PERPLEXITY_BACKEND_NAME,
   createChromeUsePerplexityBackend,
   type ProcessResult,
   type ProcessRunner,
 } from '../src/backend/chrome-use-perplexity.js';
+import { createRequestQueue, resetSharedRequestQueues } from '../src/backend/queue.js';
 
 interface Call {
   args: string[];
@@ -31,6 +32,9 @@ function failJson(error: string): ProcessResult {
 }
 
 describe('chrome-use Perplexity backend (POC)', () => {
+  afterEach(() => {
+    resetSharedRequestQueues();
+  });
   it('declares explicit unsupported capabilities', () => {
     const backend = createChromeUsePerplexityBackend({ runner: { run: async () => ok() } });
     expect(backend.name).toBe(CHROME_USE_PERPLEXITY_BACKEND_NAME);
@@ -383,5 +387,249 @@ describe('chrome-use Perplexity backend (POC)', () => {
     const m = await backend.ask({ requestId: 'r', prompt: 'hi', model: 'Pro' });
     expect(m.ok).toBe(false);
     if (!m.ok) expect(m.failure.message).toMatch(/model selection/);
+  });
+
+  it('aborts an active request while a chrome-use command is executing', async () => {
+    let releaseOpen: (() => void) | undefined;
+    const openHeld = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    const calls: string[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args, opts) => {
+        const sub = args[2] ?? '';
+        calls.push(sub);
+        if (sub === 'open') {
+          if (opts?.signal?.aborted) {
+            return { code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true };
+          }
+          return await new Promise<ProcessResult>((resolve) => {
+            const onAbort = () => {
+              resolve({ code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true });
+            };
+            opts?.signal?.addEventListener('abort', onAbort, { once: true });
+            void openHeld.then(() => {
+              opts?.signal?.removeEventListener('abort', onAbort);
+              resolve(ok({ url: 'https://www.perplexity.ai' }));
+            });
+          });
+        }
+        if (sub === 'done') return ok();
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1 });
+    const controller = new AbortController();
+    const pending = backend.ask({
+      requestId: 'r-abort-active',
+      prompt: 'hi',
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    releaseOpen?.();
+    const out = await pending;
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('cancelled');
+    expect(out.failure.submission).toBe('not_submitted');
+    expect(calls).toContain('open');
+    expect(calls).toContain('done');
+
+    // Slot released: next request should be able to start.
+    const before = calls.length;
+    await backend.ask({ requestId: 'r-after-abort', prompt: 'hi', timeoutMs: 100 }).catch(() => undefined);
+    expect(calls.length).toBeGreaterThan(before);
+  });
+
+  it('aborts during Perplexity answer polling and releases the slot', async () => {
+    let polls = 0;
+    const runner: ProcessRunner = {
+      run: async (_cmd, args, opts) => {
+        const sub = args[2] ?? '';
+        if (sub === 'open' || sub === 'wait' || sub === 'fill' || sub === 'click' || sub === 'done') {
+          return ok(sub === 'open' ? { url: 'https://www.perplexity.ai' } : {});
+        }
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            polls += 1;
+            if (opts?.signal?.aborted) {
+              return { code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true };
+            }
+            // Keep changing so the answer never becomes stable before abort.
+            return ok({ result: { count: 1, text: `partial ${polls}`, html: `<p>partial ${polls}</p>` } });
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 10 });
+    const controller = new AbortController();
+    const pending = backend.ask({
+      requestId: 'r-poll-abort',
+      prompt: 'hi',
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    const out = await pending;
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('cancelled');
+    expect(out.failure.submission).toBe('submitted');
+    expect(polls).toBeGreaterThan(0);
+
+    const status = await backend.status('r-poll-abort');
+    expect(status.cancelled).toBe(true);
+
+    // Slot released: a subsequent request should be able to start on the same backend.
+    const callsAfter = polls;
+    await backend.ask({ requestId: 'r-after-poll', prompt: 'hi', timeoutMs: 100 }).catch(() => undefined);
+    expect(polls).toBeGreaterThan(callsAfter);
+  });
+
+  it('does not report success when the operation completes after abort', async () => {
+    let resolveEval: ((value: ProcessResult) => void) | undefined;
+    const evalHeld = new Promise<ProcessResult>((resolve) => {
+      resolveEval = resolve;
+    });
+    const runner: ProcessRunner = {
+      run: async (_cmd, args, opts) => {
+        const sub = args[2] ?? '';
+        if (sub === 'open') return ok({ url: 'https://www.perplexity.ai' });
+        if (sub === 'wait' || sub === 'fill' || sub === 'click' || sub === 'done') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            // Return success even if aborted - queue/backend must convert to cancelled.
+            if (opts?.signal?.aborted) return await evalHeld;
+            return await evalHeld;
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1 });
+    const controller = new AbortController();
+    const pending = backend.ask({
+      requestId: 'r-late-success',
+      prompt: 'hi',
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    resolveEval?.(ok({ result: { count: 1, text: 'late answer', html: '<p>late</p>' } }));
+    const out = await pending;
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('cancelled');
+  });
+
+  it('cancels multiple queued requests while active request finishes', async () => {
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let openCount = 0;
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        const sub = args[2] ?? '';
+        if (sub === 'open') {
+          openCount += 1;
+          if (openCount === 1) await held;
+          return ok({ url: 'https://www.perplexity.ai' });
+        }
+        if (sub === 'wait' || sub === 'fill' || sub === 'click' || sub === 'done') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            return ok({ result: { count: 1, text: 'ok', html: '<p>ok</p>' } });
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1 });
+    const c2 = new AbortController();
+    const c3 = new AbortController();
+    const c4 = new AbortController();
+
+    const first = backend.ask({ requestId: 'r1', prompt: 'one', timeoutMs: 5_000 });
+    const second = backend.ask({ requestId: 'r2', prompt: 'two', timeoutMs: 5_000, signal: c2.signal });
+    const third = backend.ask({ requestId: 'r3', prompt: 'three', timeoutMs: 5_000, signal: c3.signal });
+    const fourth = backend.ask({ requestId: 'r4', prompt: 'four', timeoutMs: 5_000, signal: c4.signal });
+    await new Promise((r) => setTimeout(r, 10));
+    c2.abort();
+    c3.abort();
+    c4.abort();
+    release?.();
+
+    const results = await Promise.all([first, second, third, fourth]);
+    expect(results[0].ok).toBe(true);
+    for (const idx of [1, 2, 3] as const) {
+      const r = results[idx];
+      expect(r.ok).toBe(false);
+      if (r.ok) continue;
+      expect(r.failure.kind).toBe('cancelled');
+      expect(r.failure.submission).toBe('not_submitted');
+    }
+    expect(openCount).toBe(1);
+  });
+
+  it('serializes two backend instances sharing the same session queue', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let openCount = 0;
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        const sub = args[2] ?? '';
+        if (sub === 'open') {
+          openCount += 1;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          if (openCount === 1) await held;
+          active -= 1;
+          return ok({ url: 'https://www.perplexity.ai' });
+        }
+        if (sub === 'wait' || sub === 'fill' || sub === 'click' || sub === 'done') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            return ok({ result: { count: 1, text: 'ok', html: '<p>ok</p>' } });
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const queue = createRequestQueue(1);
+    const a = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1, queue });
+    const b = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1, queue });
+
+    const first = a.ask({ requestId: 'r1', prompt: 'one', timeoutMs: 5_000 });
+    const second = b.ask({ requestId: 'r2', prompt: 'two', timeoutMs: 5_000 });
+    await new Promise((r) => setTimeout(r, 10));
+    release?.();
+    await Promise.all([first, second]);
+
+    expect(maxActive).toBe(1);
+    expect(openCount).toBe(2);
   });
 });

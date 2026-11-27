@@ -104,10 +104,12 @@ export interface BackendFailure {
    */
   queueWaitMs?: number;
   /**
-   * How many backend slots were active while this request was being served.
+   * How many backend slots were active when the outcome was reported.
    *
-   * Absent when the backend does not report slot diagnostics. `1` means the
-   * request ran alone in a serial backend; larger values mean concurrent work.
+   * This is a completion-time snapshot (including this request), not a peak-
+   * concurrency measurement. Absent when the backend does not report slot
+   * diagnostics. `1` means the request completed in a serial backend slot;
+   * larger values mean concurrent work at completion time.
    */
   activeSlots?: number;
 }
@@ -190,8 +192,9 @@ export interface BackendResponse {
    */
   queueWaitMs?: number;
   /**
-   * How many backend slots were active while this request was being served.
+   * How many backend slots were active when the outcome was reported.
    *
+   * Completion-time snapshot (including this request), not peak concurrency.
    * Absent when the backend does not report slot diagnostics.
    */
   activeSlots?: number;

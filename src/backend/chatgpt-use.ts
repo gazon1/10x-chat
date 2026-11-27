@@ -13,8 +13,8 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
-import { withQueueWait } from './contract.js';
 import { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './process-runner.js';
+import { createRequestQueue, getSharedRequestQueue, type RequestQueue } from './queue.js';
 
 export type { ProcessResult, ProcessRunner };
 export { nodeProcessRunner };
@@ -95,6 +95,15 @@ export interface ChatgptUseBackendOptions {
   verifyProjectMembership?: ProjectMembershipVerifier;
   /** The `projects.json` of `chatgpt-use` — the name → id map. */
   projectsPath?: string;
+  /**
+   * Serialization boundary for this backend.
+   *
+   * By default, backends created in the same process with the same `command`
+   * share a queue. That models one configured local `chatgpt-use` session per
+   * CLI command. Pass an explicit queue to isolate tests or to model a separate
+   * session boundary intentionally.
+   */
+  queue?: RequestQueue;
 }
 
 /** The name of the backend in the registry. */
@@ -174,152 +183,29 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
   const runner = options.runner ?? nodeProcessRunner;
   const projectsPath = options.projectsPath ?? chatgptUseProjectsPath();
   const verifyMembership = options.verifyProjectMembership ?? verifyChatgptProjectMembership;
-
-  // The queue of the session: one ask at a time. The backend reports its own
-  // capacity; the pipeline reads it, but the backend must also enforce it in
-  // case concurrent callers bypass the pipeline.
   const capacity = CHATGPT_USE_CAPABILITIES.maxConcurrentRequests ?? 1;
-  let active = 0;
-  const waiting: Array<{
-    signal?: AbortSignal;
-    start: () => void;
-    onAbort?: () => void;
-  }> = [];
+  // Session boundary: same configured CLI command/session => same queue by
+  // default. Two independent backend instances in one process targeting the
+  // same configured chatgpt-use session must not open parallel slots. A custom
+  // runner means a test/injected process boundary; it gets an isolated queue
+  // unless an explicit queue is passed.
+  const queue =
+    options.queue ??
+    (options.runner && options.runner !== nodeProcessRunner
+      ? createRequestQueue(capacity)
+      : getSharedRequestQueue(`chatgpt-use:${command}`, capacity));
 
-  const removeWaiting = (entry: (typeof waiting)[number]): void => {
-    const index = waiting.indexOf(entry);
-    if (index >= 0) waiting.splice(index, 1);
-  };
-
-  const wake = (): void => {
-    while (active < capacity && waiting.length > 0) {
-      const next = waiting.shift();
-      if (!next) return;
-      if (next.onAbort && next.signal) next.signal.removeEventListener('abort', next.onAbort);
-      active += 1;
-      next.start();
-    }
-  };
-
-  const cancelledBeforeStart = (
-    requestId: string,
-  ): BackendOutcome<BackendResponse> => ({
-    ok: false,
-    failure: {
-      kind: 'cancelled',
-      message: `The request '${requestId}' was cancelled before it started.`,
-      submission: 'not_submitted',
-    },
-  });
-
-  /**
-   * Run an ask/resume through the serial queue. Queued requests may be
-   * cancelled before they start; an active request is handled by the backend
-   * itself and by explicit cancel(requestId).
-   */
   const queued = (
     request: BackendRequest,
     task: () => Promise<BackendOutcome<BackendResponse>>,
-  ): Promise<BackendOutcome<BackendResponse>> => {
-    const queuedAt = Date.now();
-    return new Promise<BackendOutcome<BackendResponse>>((resolve) => {
-      let settled = false;
-      const finish = (outcome: BackendOutcome<BackendResponse>): void => {
-        if (settled) return;
-        settled = true;
-        resolve(outcome);
-      };
-
-      const start = (): void => {
-        if (request.signal?.aborted) {
-          active = Math.max(0, active - 1);
-          wake();
-          finish(cancelledBeforeStart(request.requestId));
-          return;
-        }
-        const startedAt = Date.now();
-        const onActiveAbort = request.signal
-          ? (): void => {
-              // Best-effort: chatgpt-use supports cancellation; the running CLI
-              // may also observe it. We never blindly retry unknown submissions.
-              void run(['cancel', effectiveId(request.requestId)]).catch(() => undefined);
-            }
-          : undefined;
-        if (onActiveAbort && request.signal) {
-          request.signal.addEventListener('abort', onActiveAbort, { once: true });
-        }
-        void task()
-          .catch(
-            (error): BackendOutcome<BackendResponse> => ({
-              ok: false,
-              failure: {
-                kind: 'invalid_output',
-                message: error instanceof Error ? error.message : String(error),
-                submission: 'unknown',
-              },
-            }),
-          )
-          .then((outcome) => {
-            if (request.signal?.aborted && !outcome.ok && outcome.failure.kind !== 'cancelled') {
-              // Preserve cancellation semantics when the backend did not surface it.
-              finish(
-                withQueueWait(
-                  {
-                    ok: false,
-                    failure: {
-                      kind: 'cancelled',
-                      message: `The request '${request.requestId}' was cancelled.`,
-                      submission:
-                        outcome.failure.submission === 'not_submitted' ? 'not_submitted' : 'submitted',
-                      ...(outcome.failure.partialText
-                        ? { partialText: outcome.failure.partialText }
-                        : {}),
-                    },
-                  },
-                  startedAt - queuedAt,
-                  active,
-                ),
-              );
-              return;
-            }
-            finish(withQueueWait(outcome, startedAt - queuedAt, active));
-          })
-          .finally(() => {
-            if (onActiveAbort && request.signal) {
-              request.signal.removeEventListener('abort', onActiveAbort);
-            }
-            active = Math.max(0, active - 1);
-            wake();
-          });
-      };
-
-      if (request.signal?.aborted) {
-        finish(cancelledBeforeStart(request.requestId));
-        return;
-      }
-
-      if (active < capacity) {
-        active += 1;
-        start();
-        return;
-      }
-
-      const entry: (typeof waiting)[number] = {
-        signal: request.signal,
-        start,
-        onAbort: undefined,
-      };
-      if (request.signal) {
-        const onAbort = (): void => {
-          removeWaiting(entry);
-          finish(cancelledBeforeStart(request.requestId));
-        };
-        entry.onAbort = onAbort;
-        request.signal.addEventListener('abort', onAbort, { once: true });
-      }
-      waiting.push(entry);
+  ): Promise<BackendOutcome<BackendResponse>> =>
+    queue.enqueue(request, task, {
+      onActiveAbort: () => {
+        // Best-effort: chatgpt-use supports cancellation; the running CLI may
+        // also observe it. We never blindly retry unknown submissions.
+        void run(['cancel', effectiveId(request.requestId)]).catch(() => undefined);
+      },
     });
-  };
 
   /**
    * Run the CLI.
@@ -331,19 +217,28 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
     args: string[],
     timeoutMs?: number,
     input?: string,
-  ): Promise<{ stdout: string; stderr: string; timedOut: boolean; started: boolean }> => {
+    signal?: AbortSignal,
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+    started: boolean;
+    cancelled?: boolean;
+  }> => {
     try {
       const result = await runner.run(command, args, {
         // The CLI has its own timeout for the turn; this one is the backstop
         // for the parts around it (opening the browser).
         ...(timeoutMs ? { timeoutMs: timeoutMs + 60_000 } : {}),
         ...(input !== undefined ? { input } : {}),
+        ...(signal ? { signal } : {}),
       });
       return {
         stdout: result.stdout,
         stderr: result.stderr,
         timedOut: result.timedOut,
         started: true,
+        ...(result.cancelled ? { cancelled: true } : {}),
       };
     } catch (error) {
       return {
@@ -533,9 +428,24 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
       '--',
       throughStdin ? CONTEXT_PROMPT : request.prompt,
     ];
-    const result = await run(args, request.timeoutMs, throughStdin ? request.prompt : undefined);
+    const result = await run(
+      args,
+      request.timeoutMs,
+      throughStdin ? request.prompt : undefined,
+      request.signal,
+    );
     if (!result.started) {
       return { ok: false, failure: { ...UNAVAILABLE, message: result.stderr } };
+    }
+    if (result.cancelled || request.signal?.aborted) {
+      return {
+        ok: false,
+        failure: {
+          kind: 'cancelled',
+          message: `The request '${request.requestId}' was cancelled.`,
+          submission: 'submitted',
+        },
+      };
     }
     if (result.timedOut) {
       return {
@@ -578,9 +488,21 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
         ...(request.timeoutMs ? ['--timeout', String(Math.ceil(request.timeoutMs / 1000))] : []),
       ],
       request.timeoutMs,
+      undefined,
+      request.signal,
     );
     if (!result.started) {
       return { ok: false, failure: { ...UNAVAILABLE, message: result.stderr } };
+    }
+    if (result.cancelled || request.signal?.aborted) {
+      return {
+        ok: false,
+        failure: {
+          kind: 'cancelled',
+          message: `The request '${request.requestId}' was cancelled.`,
+          submission: 'submitted',
+        },
+      };
     }
     if (result.timedOut) {
       return {

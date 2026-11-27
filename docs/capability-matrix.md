@@ -11,8 +11,10 @@ truth. The date of the inventory is the commit of this file.
 pipeline may use. It is absent/`1` unless a backend explicitly declares higher
 capacity. `chatgpt-use` and the chrome-use Perplexity POC declare `1`: they
 serialize requests at the backend boundary, so concurrent callers cannot exceed
-the configured account/session. The review pipeline runs independent reviewer
-roles concurrently only when this capacity allows it and otherwise keeps
+the configured account/session. In-process backend instances that target the
+same configured command/session share a queue by default; tests may inject an
+explicit queue to model a separate session. The review pipeline runs independent
+reviewer roles concurrently only when this capacity allows it and otherwise keeps
 deterministic serialized execution.
 
 The decision per provider — migrate to a backend or retain the browser — and the
