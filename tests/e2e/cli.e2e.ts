@@ -377,7 +377,24 @@ const requestId = idAt >= 0 ? args[idAt + 1] : '';
 const sepAt = args.indexOf('--');
 const prompt = sepAt >= 0 ? args.slice(sepAt + 1).join(' ') : '';
 let text;
-if (prompt.indexOf('# Verification') >= 0) {
+if (prompt.indexOf('# Follow-up improvements') >= 0) {
+  // The advisory assessment is its own request with its own schema: an
+  // answer of the reviewer shape would fail it, and a report that renders the
+  // heading anyway would hide the failure.
+  text = JSON.stringify({
+    recommendations: [
+      {
+        title: 'Name the profile in the workflow record',
+        rationale: 'An operator reads the record to know how a change was judged.',
+        evidence: ['src/pipeline/review.ts'],
+        benefit: 'The coverage of a review is visible where it is stored.',
+        scope: 'One field of the workflow review record.',
+        priority: 'RECOMMENDED',
+        separateWork: true,
+      },
+    ],
+  });
+} else if (prompt.indexOf('# Verification') >= 0) {
   const ids = Array.from(new Set(prompt.match(/f-[0-9a-f]{8}/g) || []));
   text = JSON.stringify({
     verdicts: ids.map((id) => ({
@@ -616,7 +633,12 @@ it('runs the full review through the CLI when no profile is named', async () => 
       expect(approve.output).toContain('- Profile: standard');
       expect(approve.output).toContain('APPROVE');
       // The advisory assessment ran — a profile that omitted it says so.
+      // The assessment ran and its recommendation is in the report — the
+      // heading alone says nothing, because it renders for a failed
+      // assessment too.
       expect(approve.output).toContain('## Follow-up improvements');
+      expect(approve.output).toContain('Name the profile in the workflow record');
+      expect(approve.output).not.toContain('The advisory assessment was unavailable');
       expect(approve.output).not.toContain('does not run the advisory assessment');
       expect(approve.output).not.toContain('SKIPPED');
 
@@ -687,6 +709,7 @@ it('runs a deep review through the CLI and applies its stricter gate', async () 
       // Every stage ran: deep omits nothing, unlike quick.
       expect(deep.output).not.toContain('SKIPPED');
       expect(deep.output).toContain('## Follow-up improvements');
+      expect(deep.output).toContain('Name the profile in the workflow record');
       expect(deep.output).not.toContain('does not run the advisory assessment');
     } finally {
       await rm(repo, { recursive: true, force: true });
