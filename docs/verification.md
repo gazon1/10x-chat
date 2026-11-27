@@ -1053,3 +1053,33 @@ refuses a critical review without an Issue would keep passing if every
 critical run became incomplete. The final check set: typecheck, lint, knip,
 test (67 files /**1367 tests**), e2e (25 CLI scenarios, 10 skipped) and build —
 all pass.
+
+### The twenty-eighth round — the review that read the code it was reviewing
+
+The reviews of the profiles were run through the pipeline of this branch, against
+PR #108 and Issue #100, with the `chatgpt-use` backend. The first six rounds were
+run with the globally installed `10x-chat` 0.12.0, which predates the profiles
+entirely — its `dist/pipeline/` has no `profiles.js` at all — so those runs could
+not exercise the change they were judging. They were discarded and every round
+below was re-run with `node dist/bin/cli.js` of the branch itself. The lesson is
+the one the record keeps: a reviewer that answers is not a reviewer that ran.
+
+Four defect classes came out of the rounds that read the real code, and every one
+of them was in this change:
+
+| Round | What it found | The answer |
+|---|---|---|
+| B2 | an unknown profile in a record was read as `standard`, so an unrecognised — possibly cheaper — run could be approved | an unknown profile is refused outright; only a record with **no** field, from before the profiles existed, is `standard` |
+| B3 | `verdictOf` refused the unknown record while the **report** still printed the recorded `APPROVE` | the report renders the verdict of `verdictOf` for that one case |
+| B3 | `REVIEW_PROFILE_COVERAGE` was exported mutable, so a caller could set `deep.settleEveryFinding = false` and weaken every later run | the map is frozen all the way down, `roles` is `readonly`, and the names are frozen too |
+| B7 | the report substituted `standard`'s coverage for an unknown record and claimed "every finding was settled" | the Findings table and the risks say that this version cannot establish it |
+
+Two findings were documentation contradictions of mine, and one — that the
+critical profile had no test of its stricter gate — was a false positive: the test
+lives in `tests/review-requirements.test.ts`, where the `gh` stub for a governing
+Issue is, and it asserts exactly that conjunction.
+
+The final round approved `94cf7ed` with **zero findings**, every mandatory step
+passed and the baseline of the Issue advanced. The check set: typecheck, lint,
+knip, test (67 files / **1370 tests**), e2e (**29 CLI scenarios**, 10 live provider
+scenarios skipped) and build — all pass.
