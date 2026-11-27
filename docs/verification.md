@@ -1009,3 +1009,77 @@ rather than a defect.
 The check set of that round: typecheck, lint, knip, test (63 files /**1296
 tests**), e2e (22 CLI scenarios, the 10 live provider scenarios skipped) and
 build — all pass.
+
+### The twenty-seventh round — the profiles of a review
+
+The review profiles of Issue #100: `quick`, `standard`, `deep` and `critical`,
+selected with `review --profile`, typed and validated in
+`src/pipeline/profiles.ts`. The tests of the round are the profile block of
+`tests/review-pipeline.test.ts` (9 cases) and the three scenarios of
+`tests/e2e/cli.e2e.ts`: a value that is not one of the four, a `critical` run
+without an Issue, and a `quick` run that names every stage it omitted.
+
+Two properties carry the design. A profile decides **which stages run** and
+**how strict the gate is** — it never changes a stage, and no profile merges
+two reviewer roles into one prompt. And an omitted stage keeps its id and is
+`skipped` with the reason, so `verdictOf` refuses the run: a `quick` review
+cannot return `APPROVE`, and a run of an older version that carries no profile
+is read as `standard`.
+
+`deep` and `critical` add no stage on purpose: a fourth reviewer would repeat
+one of the three, and a second opinion from the same model is not a second
+reviewer. Their depth is the gate — `deep` refuses an unverified finding of
+any severity, while a confirmed MINOR stays settled and below the gate.
+
+The check set of that round: typecheck, lint, knip, test (67 files /**1363
+tests**), e2e (25 CLI scenarios, the 10 live provider scenarios skipped) and
+build — all pass.
+
+The review of the round found three things, and all three were real. Two
+documentation contradictions were mine: `AGENTS.md` and the profile table both
+said `deep` and `critical` could never approve, which the code never did. The
+third was a gap in the contract: a profile name was validated only at the
+command line, while `runReviewPipeline` is exported — a JavaScript caller
+passing a typo reached the coverage map as `undefined` and crashed on the
+first field it read. The pipeline now refuses an unknown name. A *record* that
+names one is read differently: no field is a record of the full review and is
+named `standard`, while a name this version cannot read stays unknown, because
+it may be a cheaper profile of a newer version and calling it `standard` would
+present a review of unknown coverage as the full review.
+
+The second round added the one test the critical profile was missing — a run
+that has its Issue, passes every stage and approves — because the branch that
+refuses a critical review without an Issue would keep passing if every
+critical run became incomplete. The final check set: typecheck, lint, knip,
+test (67 files /**1367 tests**), e2e (25 CLI scenarios, 10 skipped) and build —
+all pass.
+
+### The twenty-eighth round — the review that read the code it was reviewing
+
+The reviews of the profiles were run through the pipeline of this branch, against
+PR #108 and Issue #100, with the `chatgpt-use` backend. The first six rounds were
+run with the globally installed `10x-chat` 0.12.0, which predates the profiles
+entirely — its `dist/pipeline/` has no `profiles.js` at all — so those runs could
+not exercise the change they were judging. They were discarded and every round
+below was re-run with `node dist/bin/cli.js` of the branch itself. The lesson is
+the one the record keeps: a reviewer that answers is not a reviewer that ran.
+
+Four defect classes came out of the rounds that read the real code, and every one
+of them was in this change:
+
+| Round | What it found | The answer |
+|---|---|---|
+| B2 | an unknown profile in a record was read as `standard`, so an unrecognised — possibly cheaper — run could be approved | an unknown profile is refused outright; only a record with **no** field, from before the profiles existed, is `standard` |
+| B3 | `verdictOf` refused the unknown record while the **report** still printed the recorded `APPROVE` | the report renders the verdict of `verdictOf` for that one case |
+| B3 | `REVIEW_PROFILE_COVERAGE` was exported mutable, so a caller could set `deep.settleEveryFinding = false` and weaken every later run | the map is frozen all the way down, `roles` is `readonly`, and the names are frozen too |
+| B7 | the report substituted `standard`'s coverage for an unknown record and claimed "every finding was settled" | the Findings table and the risks say that this version cannot establish it |
+
+Two findings were documentation contradictions of mine, and one — that the
+critical profile had no test of its stricter gate — was a false positive: the test
+lives in `tests/review-requirements.test.ts`, where the `gh` stub for a governing
+Issue is, and it asserts exactly that conjunction.
+
+The final round approved `94cf7ed` with **zero findings**, every mandatory step
+passed and the baseline of the Issue advanced. The check set: typecheck, lint,
+knip, test (67 files / **1370 tests**), e2e (**29 CLI scenarios**, 10 live provider
+scenarios skipped) and build — all pass.

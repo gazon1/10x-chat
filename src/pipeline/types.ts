@@ -274,6 +274,15 @@ export interface ReviewContext {
 /** The verdict of a review — the two the report format knows. */
 export type ReviewVerdict = 'APPROVE' | 'REQUEST CHANGES';
 
+/**
+ * The cost/coverage profile of a review.
+ *
+ * It selects which stages run and how strict the gate of the verdict is — it
+ * never changes a stage. A run of an older version has none, and it is read as
+ * `standard`: the full review it was.
+ */
+export type ReviewProfile = 'quick' | 'standard' | 'deep' | 'critical';
+
 /** The priority of a follow-up improvement recommendation. */
 export type ImprovementPriority = 'RECOMMENDED' | 'OPTIONAL';
 
@@ -334,6 +343,13 @@ export interface ReviewRun {
   decisions: Decision[];
   /** The verdict of the run — the machine-readable answer of the review. */
   verdict: ReviewVerdict;
+  /**
+   * The profile the run selected.
+   *
+   * Additive: a run of an older version has none, and it is read as
+   * `standard` — the full review, which is what it was.
+   */
+  profile?: ReviewProfile;
   /** The reason of the verdict, in one sentence. */
   verdictReason: string;
   /** The report of the run, in the format of the repository. */

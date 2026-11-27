@@ -34,8 +34,10 @@ import {
   parseReviewerFindings,
   parseVerdicts,
 } from '../src/pipeline/findings.js';
+import { REVIEW_PROFILE_COVERAGE, REVIEW_PROFILES } from '../src/pipeline/profiles.js';
+import { renderReviewReport, verdictOf } from '../src/pipeline/report.js';
 import { callersOf, REVIEW_STEP_IDS, runReviewPipeline } from '../src/pipeline/review.js';
-import type { ReviewContext } from '../src/pipeline/types.js';
+import type { ReviewContext, ReviewProfile } from '../src/pipeline/types.js';
 
 const SOURCE = ['export function run(input: string) {', '  return exec(input);', '}'].join('\n');
 
@@ -4791,7 +4793,7 @@ describe('the advisory follow-up improvements', () => {
     expect(run.improvements?.status).toBe('unavailable');
     expect(run.improvements?.recommendations).toEqual([]);
     expect(run.improvements?.detail).toContain('unavailable');
-    expect(run.report).toContain('advisory assessment unavailable');
+    expect(run.report).toContain('The advisory assessment was unavailable');
     expect(run.report).toContain('verdict is unchanged');
   });
 
@@ -4854,5 +4856,356 @@ describe('the advisory follow-up improvements', () => {
     const report = await readFile(path.join(home, 'reviews', run.id, 'report.md'), 'utf-8');
     expect(report).toContain('## Follow-up improvements');
     expect(report).toContain('Extract the prompt builder');
+  });
+});
+
+describe('the review profiles', () => {
+  /** A backend that records every request it is asked, and answers with rules. */
+  function recording(rules: Parameters<typeof createFakeBackend>[0]) {
+    const backend = createFakeBackend(rules);
+    const prompts: string[] = [];
+    return {
+      prompts,
+      backend: {
+        ...backend,
+        ask: (request: Parameters<typeof backend.ask>[0]) => {
+          prompts.push(request.prompt);
+          return backend.ask(request);
+        },
+      },
+    };
+  }
+
+  /** The rules of a full review that finds nothing on a clean repository. */
+  const CLEAN = [
+    { prompt: '# Role: correctness', answer: answerWith([]) },
+    { prompt: '# Role: architecture', answer: answerWith([]) },
+    { prompt: '# Role: tests', answer: answerWith([]) },
+  ];
+
+  it('runs the full review by default, and names standard', async () => {
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.profile).toBe('standard');
+    expect(run.steps.map((step) => step.id)).toEqual([...REVIEW_STEP_IDS]);
+    expect(run.steps.every((step) => step.status === 'passed')).toBe(true);
+    expect(run.improvements?.status).toBe('completed');
+    expect(run.report).toContain('- Profile: standard');
+  });
+
+  it('runs one reviewer under the quick profile and names every stage it omits', async () => {
+    const { backend, prompts } = recording(CLEAN);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'quick',
+    });
+
+    // One model-backed reviewer pass, and no verification or assessment.
+    expect(prompts.filter((prompt) => prompt.startsWith('# Role:'))).toHaveLength(1);
+    expect(prompts.some((prompt) => prompt.startsWith('# Verification'))).toBe(false);
+    expect(prompts.some((prompt) => prompt.startsWith('# Follow-up improvements'))).toBe(false);
+
+    // Every step keeps its id: the omitted ones are reported, not dropped.
+    expect(run.steps.map((step) => step.id)).toEqual([...REVIEW_STEP_IDS]);
+    const byId = new Map(run.steps.map((step) => [step.id, step]));
+    for (const id of ['review-architecture', 'review-tests', 'verify-findings']) {
+      expect(byId.get(id)?.status).toBe('skipped');
+      expect(byId.get(id)?.detail).toContain('quick');
+    }
+    expect(byId.get('review-correctness')?.status).toBe('passed');
+    expect(run.improvements?.status).toBe('unavailable');
+    expect(run.improvements?.detail).toContain('quick');
+    expect(run.profile).toBe('quick');
+  });
+
+  it('never claims the findings were settled when the profile skipped the verification', async () => {
+    // "None — every finding was settled" is a claim about work that ran. The
+    // quick profile settled nothing, and the report has to say that instead of
+    // borrowing the wording of a full review.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'quick',
+    });
+
+    expect(run.report).toContain('Unknown — this profile does not verify findings');
+    // The Findings table is read on its own too: it must not claim a
+    // verification that never ran.
+    expect(run.report).toContain(
+      'No finding was reported, and the quick profile does not verify findings.',
+    );
+    expect(run.report).not.toContain('No finding survived the verification.');
+    expect(run.report).not.toContain('every finding was settled and none of them blocks');
+    // The omitted stages are named where the reader looks for the gaps.
+    expect(run.report).toContain('Unjudged: review-architecture, review-tests, verify-findings');
+    expect(run.report).toContain('The advisory assessment was unavailable');
+  });
+
+  it('cannot pass a quick review off as an approval', async () => {
+    // The correctness pass found nothing, and the change still is not
+    // approved: the missing stages are the reason, and the report says so.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'quick',
+    });
+
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.verdictReason).toContain('review-architecture');
+    expect(run.report).toContain('cannot approve a change');
+    expect(run.report).toContain('| review-architecture | `backend.ask(architecture)` | SKIPPED |');
+  });
+
+  it('leaves a quick finding unverified instead of verifying it', async () => {
+    const { backend, prompts } = recording([
+      { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'quick',
+    });
+
+    expect(prompts.some((prompt) => prompt.startsWith('# Verification'))).toBe(false);
+    expect(run.findings).toHaveLength(1);
+    expect(run.findings[0].verification).toBe('unverified');
+    expect(run.verdict).toBe('REQUEST CHANGES');
+  });
+
+  it('keeps the full review under the deep profile and settles every finding', async () => {
+    // A MINOR finding that the verification leaves unverified: below the gate
+    // of standard, and above the gate of deep.
+    const minor = { ...FINDING, severity: 'MINOR' as const, title: 'The name is not reused' };
+    const rules = [
+      { prompt: '# Role: correctness', answer: answerWith([minor]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: minor.file, line: minor.line, title: minor.title }),
+              verdict: 'unverified',
+              evidence: '',
+              note: 'the excerpt does not settle it',
+            },
+          ],
+        }),
+      },
+    ];
+
+    const standard = await runReviewPipeline({
+      backend: createFakeBackend(rules),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+    const deep = await runReviewPipeline({
+      backend: createFakeBackend(rules),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'deep',
+    });
+
+    expect(standard.verdict).toBe('APPROVE');
+    expect(deep.verdict).toBe('REQUEST CHANGES');
+    expect(deep.verdictReason).toContain('deep');
+    // The stages are the same: the depth is the gate, not another prompt.
+    expect(deep.steps.map((step) => step.id)).toEqual(standard.steps.map((step) => step.id));
+  });
+
+  it('does not turn a settled MINOR into a defect under the deep profile', async () => {
+    // The depth of `deep` is the refusal of an unsettled finding, not a lower
+    // threshold of severity: a confirmed MINOR is settled, and it stays below
+    // the gate of every profile.
+    const minor = { ...FINDING, severity: 'MINOR' as const, title: 'The name is not reused' };
+    const rules = [
+      { prompt: '# Role: correctness', answer: answerWith([minor]) },
+      { prompt: '# Role: architecture', answer: answerWith([]) },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+      {
+        prompt: '# Verification',
+        answer: JSON.stringify({
+          verdicts: [
+            {
+              id: findingId({ file: minor.file, line: minor.line, title: minor.title }),
+              verdict: 'confirmed',
+              evidence: 'the excerpt shows the name is written twice',
+              note: 'confirmed',
+            },
+          ],
+        }),
+      },
+    ];
+
+    const deep = await runReviewPipeline({
+      backend: createFakeBackend(rules),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'deep',
+    });
+
+    expect(deep.findings[0].verification).toBe('confirmed');
+    expect(deep.verdict).toBe('APPROVE');
+    expect(deep.verdictReason).toContain('below the gate');
+  });
+
+  it('refuses a critical review that has no Issue to judge the change against', async () => {
+    // The pipeline is a library too: a critical run without requirements is
+    // never an approval, whatever the steps say.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'critical',
+    });
+
+    expect(run.context?.requirements).toBeUndefined();
+    expect(run.verdict).toBe('REQUEST CHANGES');
+    expect(run.verdictReason).toContain('critical');
+    expect(run.verdictReason).toContain('no Issue');
+  });
+
+  it('refuses a profile that is not one of the four at the pipeline boundary', async () => {
+    // The pipeline is exported and `profile` is typed, but a JavaScript caller
+    // never sees the type. A typo must not be read as an unknown profile (a
+    // crash on the first field of the coverage) and must not quietly become
+    // the full review either.
+    let collected = 0;
+    await expect(
+      runReviewPipeline({
+        backend: createFakeBackend(CLEAN),
+        target: { cwd: repo },
+        collect: async () => {
+          collected += 1;
+          return contextOf();
+        },
+        profile: 'thorogh' as 'quick',
+      }),
+    ).rejects.toThrow(/Unknown review profile: "thorogh"/);
+    // The refusal comes before the work: collecting the context of a request
+    // that was never valid runs git and gh against the repository, and the
+    // caller waits for all of it before learning the name was wrong.
+    expect(collected).toBe(0);
+  });
+
+  it('names an unknown profile as unknown instead of dressing it up as standard', async () => {
+    // A record written by a newer version may name a profile this one cannot
+    // read — possibly a cheaper one. Reading it as `standard` would present a
+    // review of unknown coverage as the full review, so the report names the
+    // value and the gate it applied, and the verdict says the same.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const foreign = { ...run, profile: 'experimental' } as typeof run;
+    const report = renderReviewReport(foreign);
+    expect(report).toContain('- Profile: experimental — unknown to this version');
+    expect(report).not.toContain('- Profile: standard');
+    // The gate of this run cannot be established, so it is not approved: the
+    // recorded steps and findings were all fine under standard, and that says
+    // nothing about the gate the run actually used.
+    expect(run.verdict).toBe('APPROVE');
+    const verdict = verdictOf(foreign);
+    expect(verdict.verdict).toBe('REQUEST CHANGES');
+    expect(verdict.reason).toContain('"experimental"');
+    expect(verdict.reason).toContain('cannot be established');
+    // The rendered Verdict section must not print the APPROVE the record
+    // carries: the fail-closed verdict is the one a reader sees.
+    expect(run.verdict).toBe('APPROVE');
+    const section = report.split('## Verdict')[1]?.split('## Checks')[0] ?? '';
+    expect(section).toContain('REQUEST CHANGES');
+    expect(section).not.toContain('APPROVE');
+    // Nothing about this record's verification can be established, so the
+    // Findings table and the risks do not claim one happened.
+    expect(report).toContain('cannot establish whether the run verified any');
+    expect(report).not.toContain('No finding survived the verification.');
+    expect(report).not.toContain('every finding was settled and none of them blocks');
+  });
+
+  it('publishes the names of the profiles as a value a caller cannot rewrite', async () => {
+    // The names are what the validation reads and what the coverage map is
+    // keyed by: a name pushed in here would pass validation and then crash on
+    // a coverage that does not exist.
+    expect(Object.isFrozen(REVIEW_PROFILES)).toBe(true);
+    expect(() => {
+      (REVIEW_PROFILES as ReviewProfile[]).push('quick');
+    }).toThrow();
+    expect([...REVIEW_PROFILES]).toEqual(['quick', 'standard', 'deep', 'critical']);
+  });
+
+  it('publishes the coverage of a profile as a value a caller cannot weaken', async () => {
+    // The map is exported, and these are the gates the review promises. A
+    // caller that could rewrite one would weaken every later run in the
+    // process while the report still claims the profile it was told.
+    expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep)).toBe(true);
+    expect(Object.isFrozen(REVIEW_PROFILE_COVERAGE.deep.roles)).toBe(true);
+    // The type promises the same thing the runtime does: a consumer cannot
+    // even compile a write to the roles of a profile it was handed.
+    const roles: readonly string[] = REVIEW_PROFILE_COVERAGE.deep.roles;
+    expect(roles).toEqual(['correctness', 'architecture', 'tests']);
+    expect(() => {
+      (REVIEW_PROFILE_COVERAGE.deep as { settleEveryFinding: boolean }).settleEveryFinding = false;
+    }).toThrow();
+    expect(REVIEW_PROFILE_COVERAGE.deep.settleEveryFinding).toBe(true);
+  });
+
+  it('still reads a record without any profile as standard, from the file on disk', async () => {
+    // The one case that really is a record of the full review: the versions
+    // before the profiles existed wrote no field at all. The record is a file
+    // on disk, not an object in memory — a run of the older version is a
+    // review.json that was written before this field existed.
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    const file = path.join(home, 'reviews', run.id, 'review.json');
+    const written = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+    delete written.profile;
+    await writeFile(file, JSON.stringify(written, null, 2), 'utf-8');
+
+    // The record reader of the workflow does not validate the profile — it
+    // hands the parsed record on, and the verdict and the report are what
+    // turn it into an answer.
+    const older = JSON.parse(await readFile(file, 'utf-8')) as typeof run;
+    expect(older.profile).toBeUndefined();
+    expect(verdictOf(older).verdict).toBe('APPROVE');
+    expect(verdictOf(older).reason).not.toContain('unknown');
+    expect(renderReviewReport(older)).toContain('- Profile: standard');
+  });
+
+  it('persists the profile, and reads a run of an older version as standard', async () => {
+    const run = await runReviewPipeline({
+      backend: createFakeBackend(CLEAN),
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+      profile: 'quick',
+    });
+
+    const saved = JSON.parse(
+      await readFile(path.join(home, 'reviews', run.id, 'review.json'), 'utf-8'),
+    ) as { profile?: string };
+    expect(saved.profile).toBe('quick');
+
+    // A record written before the profiles existed has no field: the report
+    // says standard and renders instead of failing.
+    const { profile: _dropped, ...older } = run;
+    const report = renderReviewReport(older as typeof run);
+    expect(report).toContain('- Profile: standard');
   });
 });

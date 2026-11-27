@@ -377,7 +377,24 @@ const requestId = idAt >= 0 ? args[idAt + 1] : '';
 const sepAt = args.indexOf('--');
 const prompt = sepAt >= 0 ? args.slice(sepAt + 1).join(' ') : '';
 let text;
-if (prompt.indexOf('# Verification') >= 0) {
+if (prompt.indexOf('# Follow-up improvements') >= 0) {
+  // The advisory assessment is its own request with its own schema: an
+  // answer of the reviewer shape would fail it, and a report that renders the
+  // heading anyway would hide the failure.
+  text = JSON.stringify({
+    recommendations: [
+      {
+        title: 'Name the profile in the workflow record',
+        rationale: 'An operator reads the record to know how a change was judged.',
+        evidence: ['src/pipeline/review.ts'],
+        benefit: 'The coverage of a review is visible where it is stored.',
+        scope: 'One field of the workflow review record.',
+        priority: 'RECOMMENDED',
+        separateWork: true,
+      },
+    ],
+  });
+} else if (prompt.indexOf('# Verification') >= 0) {
   const ids = Array.from(new Set(prompt.match(/f-[0-9a-f]{8}/g) || []));
   text = JSON.stringify({
     verdicts: ids.map((id) => ({
@@ -530,6 +547,208 @@ it('tells the caller of a review what the verdict is', async () => {
       );
       expect(approve.code).toBe(0);
       expect(approve.output).toContain('APPROVE');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+it('refuses a review profile that is not one of the four', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const result = await runCli(['review', '--pr', '42', '--profile', 'thorough'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('Invalid --profile value');
+    expect(result.output).toContain('quick, standard, deep, critical');
+  });
+});
+
+it('refuses a critical review that has no issue to judge the change against', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const result = await runCli(['review', '--pr', '42', '--profile', 'critical'], env);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('needs --pr and --issue');
+  });
+});
+
+it('runs a quick review as an explicitly incomplete review', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // The only reviewer pass finds nothing, and the run still is not an
+      // approval: the stages the profile omits are named, and the exit code
+      // says the review is incomplete.
+      const quick = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'quick'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(quick.code).toBe(1);
+      expect(quick.output).toContain('REQUEST CHANGES');
+      expect(quick.output).toContain('Profile: quick');
+      expect(quick.output).toContain('cannot approve a change');
+      expect(quick.output).toContain('the review is incomplete');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+it('runs the full review through the CLI when no profile is named', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // Omitting --profile is the common invocation: it has to reach the
+      // pipeline as standard, with the advisory assessment intact. The
+      // library-level test cannot catch a CLI default that drifts.
+      const approve = await runCli(
+        ['review', '--base', 'main', '--head', 'feature'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(approve.code).toBe(0);
+      expect(approve.output).toContain('- Profile: standard');
+      expect(approve.output).toContain('APPROVE');
+      // The advisory assessment ran — a profile that omitted it says so.
+      // The assessment ran and its recommendation is in the report — the
+      // heading alone says nothing, because it renders for a failed
+      // assessment too.
+      expect(approve.output).toContain('## Follow-up improvements');
+      expect(approve.output).toContain('Name the profile in the workflow record');
+      expect(approve.output).not.toContain('The advisory assessment was unavailable');
+      expect(approve.output).not.toContain('does not run the advisory assessment');
+      expect(approve.output).not.toContain('SKIPPED');
+
+      // The explicit name does the same thing.
+      const named = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'standard'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(named.code).toBe(0);
+      expect(named.output).toContain('- Profile: standard');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+it('explains the cost and coverage of every profile in the help', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const help = await runCli(['review', '--help'], env);
+
+    expect(help.code).toBe(0);
+    // The acceptance criterion is the help itself: an operator chooses a
+    // profile from here, and it has to say what each one costs and omits.
+    expect(help.output).toContain('--profile');
+    for (const profile of ['quick', 'standard', 'deep', 'critical']) {
+      expect(help.output).toContain(profile);
+    }
+    // The help wraps to the width of the terminal, so the phrases are checked
+    // in the words that survive a line break rather than as whole sentences.
+    expect(help.output).toContain('cost/coverage profile');
+    expect(help.output).toContain('verification, no advisory assessment');
+    expect(help.output).toContain('never');
+    expect(help.output).toContain('every unverified finding asks for changes');
+    expect(help.output).toContain('--issue is required');
+    expect(help.output).toContain('default: standard');
+  });
+});
+
+it('runs a deep review through the CLI and applies its stricter gate', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // deep is standard plus the gate: the stages are the same, so a run
+      // with nothing to verify still approves — and the profile really
+      // reached the pipeline rather than falling back to standard.
+      const deep = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'deep'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(deep.code).toBe(0);
+      expect(deep.output).toContain('- Profile: deep');
+      expect(deep.output).toContain('APPROVE');
+      // Every stage ran: deep omits nothing, unlike quick.
+      expect(deep.output).not.toContain('SKIPPED');
+      expect(deep.output).toContain('## Follow-up improvements');
+      expect(deep.output).toContain('Name the profile in the workflow record');
+      expect(deep.output).not.toContain('does not run the advisory assessment');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+it('runs a critical review through the CLI with its Issue', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    // The repository of the checkout: the Issue is read from it.
+    await gitIn(repo, 'remote', 'add', 'origin', 'https://github.com/owner/name.git');
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      await writeFile(path.join(bin, 'gh'), FAKE_GH, 'utf-8');
+      await chmod(path.join(bin, 'gh'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // The refusal of `critical` without an Issue is tested next door. What
+      // this pins is the other half of the path: --pr, --issue and --profile
+      // all reach the pipeline together, and the run approves.
+      const critical = await runCli(
+        ['review', '--pr', '42', '--issue', '7', '--profile', 'critical'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(critical.code).toBe(0);
+      expect(critical.output).toContain('- Profile: critical');
+      expect(critical.output).toContain('APPROVE');
+      // The Issue really reached the pipeline — not only the option parser.
+      expect(critical.output).toContain('issue #7');
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

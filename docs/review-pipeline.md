@@ -13,7 +13,9 @@ without a browser and without credentials.
 ## The steps
 
 Every step has a stable id. The outcome of every step is reported in the
-*Checks* table of the report and persisted in `review.json`.
+*Checks* table of the report and persisted in `review.json`. The set of ids is
+fixed: a step that the selected profile omits is reported as `skipped` with
+the reason, never dropped from the table (see *The profiles*).
 
 | Step id | What it does |
 |---|---|
@@ -50,6 +52,75 @@ malformed list of recommendations is the answer, and its malformed entries are
 reported instead of letting an earlier payload answer in its place. The
 pipeline never creates GitHub issues, never modifies source
 code, never installs dependencies and never executes refactoring.
+
+## The profiles
+
+A review runs under one of four **cost/coverage profiles**, selected with
+`--profile`. A profile decides **which stages run** and **how strict the gate
+of the verdict is** — it never changes a stage. The prompts, the finding
+schema, the verification rule and the isolation of the reviewer passes are the
+same under every profile, and no profile merges two reviewer roles into one
+prompt.
+
+The model-backed stages dominate the latency of a review (§ *The benchmark*);
+the context collection is negligible. A profile therefore buys time by running
+fewer model stages and saying which ones it omitted — never by shortcutting a
+stage it still runs.
+
+| Profile | Reviewer passes | Verification | Advisory assessment | Verdict gate |
+|---|---|---|---|---|
+| `quick` | correctness only | **skipped** | **skipped** | every stage must pass — and the skipped ones never do |
+| `standard` (default) | correctness, architecture, tests | yes | yes | `BLOCKING`/`MAJOR` not rejected |
+| `deep` | correctness, architecture, tests | yes | yes | `BLOCKING`/`MAJOR` not rejected, **and** no finding left unverified |
+| `critical` | correctness, architecture, tests | yes | yes | the gate of `deep`, **and** the governing Issue is required |
+
+An omitted stage keeps its id and is `skipped` with the reason in the
+*Checks* table, so a reader never sees a shorter list and wonders what
+happened. Because `verdictOf` refuses a review that has any step not passed, a
+`quick` run **cannot** return `APPROVE`: the omitted stages are the stated
+reason. That is the property the profile exists for — a cheap run is a
+loudly incomplete review, not a quiet approval.
+
+`quick` is the only profile that runs fewer stages. `standard`, `deep` and
+`critical` run all of them; `deep` and `critical` differ from `standard` only
+in how strict the gate is, so any of the three can still return `APPROVE` when
+nothing is left above its gate. Its advisory assessment
+records `unavailable` with the reason, and the report's *Follow-up
+improvements* section says the assessment did not run.
+
+`deep` and `critical` add **no stage**. The pipeline has no further reviewer
+pass that would justify another model call: a fourth role would repeat one of
+the three, and a second opinion from the same model is not a second reviewer.
+The extra depth they buy is a stricter gate — under `standard` an unverified
+`MINOR` sits below the gate and the run may still approve, while under `deep`
+an unsettled finding of any severity asks for changes. A *confirmed* `MINOR`
+or `INFO` is settled, and it stays below the gate of every profile. `critical` adds the one
+requirement the pipeline can actually enforce: a change is judged against the
+Issue that governs it, and a run without that Issue is refused — at the
+command line and again in `verdictOf`, so a caller of the library cannot get
+an approval out of it either.
+
+The profile is written to `review.json` as `profile` and to the report as the
+`Profile:` line, with the coverage in words. A run recorded before the
+profiles existed has no field and is read as `standard` — the full review it
+was. A caller that names no profile gets `standard`.
+
+A name that is not one of the four is **refused**, and the name is validated
+twice for two different callers. The command line refuses it with the list of
+profiles; `runReviewPipeline` refuses it too, because the pipeline is exported
+and a JavaScript caller never sees the type.
+
+A **record** is a different case, because it is data rather than a request, and
+the three ways it can name a profile do not mean the same thing. No field at
+all is a record from before the profiles existed, and that run was the full
+review: it is read as `standard`, and named so. A name of this version is read
+as itself. A name this version cannot read is **unknown**, and an unknown
+record is never approved: its gate cannot be established, so `verdictOf`
+answers `REQUEST CHANGES` and the report says that the coverage of the run is
+unknown while still reporting the steps, the findings and the timings as they
+were recorded. Judging such a record under the gate of `standard` would be the
+wrong answer in both directions — too strict for a stricter profile of a newer
+version, and too lax for a cheaper one, which is the case that matters.
 
 ## The finding model
 
@@ -347,6 +418,7 @@ role pass did not finish.
 10x-chat review --pr 49 --issue 2888        # with the Issue that governs the change
 10x-chat review --base main --head feature  # a branch of the current repository
 10x-chat review --pr 49 --out review.md     # the report also as a file
+10x-chat review --pr 49 --profile quick     # the cheap profile (see below)
 ```
 
 The run is written to `~/.10x-chat/reviews/<run-id>/`: `review.json` (the
