@@ -829,6 +829,124 @@ async function verifyCandidates(options: {
     material.push(prepared.material);
   }
 
+  type ParsedVerdict = ReturnType<typeof parseVerdicts>['verdicts'][number];
+  const resolveFinding = (
+    finding: Finding,
+    verdict: ParsedVerdict | undefined,
+    contradictory: ReadonlySet<string>,
+  ): Finding => {
+    const state = mechanical.get(finding.id);
+    // The content of a file that may hold a secret is never read: a finding
+    // about it cannot be settled, and it is not dropped either.
+    if (finding.file && state && state.withheld) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: 'the content of the file is withheld: it may hold a secret',
+      };
+    }
+    // A finding that points at a file or a line that is not in the checkout
+    // cannot be a defect of this change.
+    if (finding.file && state && (!state.exists || !state.lineInRange)) {
+      return {
+        ...finding,
+        verification: 'rejected' as const,
+        verificationNote: state.exists
+          ? 'the line is outside the file'
+          : 'the file is not in the revision under review',
+      };
+    }
+    if (contradictory.has(finding.id)) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: 'the verifier answered with contradictory verdicts',
+      };
+    }
+    // The callers of a finding are part of its material: a verdict that rests
+    // on a search that failed rests on material that was never collected, so
+    // the finding is not settled.
+    if (state?.callersFailure) {
+      return {
+        ...finding,
+        verification: 'unverified' as const,
+        verificationNote: `the files that mention it could not be found: ${state.callersFailure}`,
+      };
+    }
+    if (!verdict) return { ...finding, verification: 'unverified' as const };
+    if (verdict.verdict === 'confirmed' && verdict.evidence.trim() !== '') {
+      // A finding with no location is a hypothesis, not a defect: it cannot
+      // be confirmed, whatever the verifier says.
+      if (!finding.file) {
+        return {
+          ...finding,
+          verification: 'unverified' as const,
+          verificationNote: verdict.note ?? 'the finding points at no file',
+        };
+      }
+      if (finding.line === undefined) {
+        return {
+          ...finding,
+          verification: 'unverified' as const,
+          verificationNote: verdict.note ?? 'the finding points at no line',
+        };
+      }
+      return {
+        ...finding,
+        verification: 'confirmed' as const,
+        verificationNote: verdict.note ?? verdict.evidence,
+        evidence: [...new Set([...finding.evidence, verdict.evidence])],
+      };
+    }
+    // A rejection without evidence is no rejection: a finding is not dropped
+    // because a model said so.
+    if (verdict.verdict === 'rejected' && verdict.evidence.trim() !== '') {
+      return {
+        ...finding,
+        verification: 'rejected' as const,
+        verificationNote: verdict.note ?? verdict.evidence,
+      };
+    }
+    return {
+      ...finding,
+      verification: 'unverified' as const,
+      ...(verdict.note ? { verificationNote: verdict.note } : {}),
+    };
+  };
+
+  // A model call is redundant when every candidate is already settled by
+  // validated mechanical input: withheld content, a missing file/line, or a
+  // caller search that failed. The outcome cannot change, and the skip reason
+  // is recorded so the run explains why no verifier request was made.
+  const needsModel = candidates.some((finding) => {
+    const state = mechanical.get(finding.id);
+    if (!finding.file) return true;
+    if (!state) return true;
+    if (state.withheld) return false;
+    if (!state.exists || !state.lineInRange) return false;
+    if (state.callersFailure) return false;
+    return true;
+  });
+  if (!needsModel) {
+    const findings = candidates.map((finding) =>
+      resolveFinding(finding, undefined, new Set<string>()),
+    );
+    const confirmed = findings.filter((finding) => finding.verification === 'confirmed').length;
+    const rejected = findings.filter((finding) => finding.verification === 'rejected').length;
+    const unverified = findings.filter((finding) => finding.verification === 'unverified').length;
+    return {
+      findings,
+      step: step(
+        now,
+        'verify-findings',
+        'passed',
+        `${candidates.length} candidates settled from validated mechanical input, ` +
+          `${confirmed} confirmed, ${rejected} rejected, ${unverified} unverified — no verifier model call needed`,
+        startedAt,
+      ),
+    };
+  }
+
   const request = {
     requestId: `${runId}-verify`,
     // The verifier judges the claims against the same requirements the
@@ -906,86 +1024,9 @@ async function verifyCandidates(options: {
       note: known.note ?? verdict.note,
     });
   }
-  const findings = candidates.map((finding) => {
-    const state = mechanical.get(finding.id);
-    const verdict = verdicts.get(finding.id);
-    // The content of a file that may hold a secret is never read: a finding
-    // about it cannot be settled, and it is not dropped either.
-    if (finding.file && state && state.withheld) {
-      return {
-        ...finding,
-        verification: 'unverified' as const,
-        verificationNote: 'the content of the file is withheld: it may hold a secret',
-      };
-    }
-    // A finding that points at a file or a line that is not in the checkout
-    // cannot be a defect of this change.
-    if (finding.file && state && (!state.exists || !state.lineInRange)) {
-      return {
-        ...finding,
-        verification: 'rejected' as const,
-        verificationNote: state.exists
-          ? 'the line is outside the file'
-          : 'the file is not in the revision under review',
-      };
-    }
-    if (contradictory.has(finding.id)) {
-      return {
-        ...finding,
-        verification: 'unverified' as const,
-        verificationNote: 'the verifier answered with contradictory verdicts',
-      };
-    }
-    // The callers of a finding are part of its material: a verdict that rests
-    // on a search that failed rests on material that was never collected, so
-    // the finding is not settled.
-    if (state?.callersFailure) {
-      return {
-        ...finding,
-        verification: 'unverified' as const,
-        verificationNote: `the files that mention it could not be found: ${state.callersFailure}`,
-      };
-    }
-    if (!verdict) return { ...finding, verification: 'unverified' as const };
-    if (verdict.verdict === 'confirmed' && verdict.evidence.trim() !== '') {
-      // A finding with no location is a hypothesis, not a defect: it cannot
-      // be confirmed, whatever the verifier says.
-      if (!finding.file) {
-        return {
-          ...finding,
-          verification: 'unverified' as const,
-          verificationNote: verdict.note ?? 'the finding points at no file',
-        };
-      }
-      if (finding.line === undefined) {
-        return {
-          ...finding,
-          verification: 'unverified' as const,
-          verificationNote: verdict.note ?? 'the finding points at no line',
-        };
-      }
-      return {
-        ...finding,
-        verification: 'confirmed' as const,
-        verificationNote: verdict.note ?? verdict.evidence,
-        evidence: [...new Set([...finding.evidence, verdict.evidence])],
-      };
-    }
-    // A rejection without evidence is no rejection: a finding is not dropped
-    // because a model said so.
-    if (verdict.verdict === 'rejected' && verdict.evidence.trim() !== '') {
-      return {
-        ...finding,
-        verification: 'rejected' as const,
-        verificationNote: verdict.note ?? verdict.evidence,
-      };
-    }
-    return {
-      ...finding,
-      verification: 'unverified' as const,
-      ...(verdict.note ? { verificationNote: verdict.note } : {}),
-    };
-  });
+  const findings = candidates.map((finding) =>
+    resolveFinding(finding, verdicts.get(finding.id), contradictory),
+  );
 
   const confirmed = findings.filter((finding) => finding.verification === 'confirmed').length;
   // A verification that answered for nobody is not a verification that passed.
@@ -1116,21 +1157,35 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
   const reported: Decision[] = [];
-  // shortcut: the pipeline awaits the backend without a timer of its own — the
-  // timeout belongs to the backend, which answers with a failure when it is
-  // reached. A backend that never answers breaks its contract, and the run
-  // waits for it.
-  for (const role of roles) {
+  type RoleResult = {
+    role: ReviewRole;
+    step: StepOutcome;
+    findings: Finding[];
+    decisions: Decision[];
+  };
+
+  // The roles are independent: none of them sees the findings of another. When
+  // the backend can take them at the same time we run them concurrently; when
+  // it cannot we keep the deterministic serialized order. The capacity is the
+  // backend's own claim — absent means 1, and the pipeline never exceeds it.
+  const runRole = async (role: ReviewRole): Promise<RoleResult> => {
     const roleStart = now();
+    const roleId = `review-${role}` as const;
     if (!coverage.roles.includes(role)) {
-      steps.push(
-        step(now, `review-${role}`, 'skipped', `the ${profile} profile does not run it`, roleStart),
-      );
-      continue;
+      return {
+        role,
+        step: step(now, roleId, 'skipped', `the ${profile} profile does not run it`, roleStart),
+        findings: [],
+        decisions: [],
+      };
     }
     if (!context || !brief) {
-      steps.push(step(now, `review-${role}`, 'skipped', 'no brief to review', roleStart));
-      continue;
+      return {
+        role,
+        step: step(now, roleId, 'skipped', 'no brief to review', roleStart),
+        findings: [],
+        decisions: [],
+      };
     }
     const request = {
       requestId: `${runId}-${role}`,
@@ -1143,67 +1198,74 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     try {
       outcome = await backend.ask(request);
     } catch (error) {
-      steps.push(
-        step(
+      return {
+        role,
+        step: step(
           now,
-          `review-${role}`,
+          roleId,
           'failed',
           error instanceof Error ? error.message : String(error),
           roleStart,
         ),
-      );
-      continue;
+        findings: [],
+        decisions: [],
+      };
     }
     if (!outcome.ok) {
-      steps.push(
-        step(
+      return {
+        role,
+        step: step(
           now,
-          `review-${role}`,
+          roleId,
           'failed',
           `${outcome.failure.kind}: ${outcome.failure.message}`,
           roleStart,
           backendExtra(outcome),
         ),
-      );
-      continue;
+        findings: [],
+        decisions: [],
+      };
     }
     const text = outcome.value.text;
     if (text.trim() === '') {
-      steps.push(
-        step(now, `review-${role}`, 'failed', 'the reviewer answered with nothing', roleStart, {
+      return {
+        role,
+        step: step(now, roleId, 'failed', 'the reviewer answered with nothing', roleStart, {
           ...backendExtra(outcome),
         }),
-      );
-      continue;
+        findings: [],
+        decisions: [],
+      };
     }
     // A cut off answer is not an answer: the findings it carries may be half
     // of the review.
     if (outcome.value.truncated) {
-      steps.push(
-        step(
+      return {
+        role,
+        step: step(
           now,
-          `review-${role}`,
+          roleId,
           'failed',
           'the answer of the reviewer was cut off',
           roleStart,
           backendExtra(outcome),
         ),
-      );
-      continue;
+        findings: [],
+        decisions: [],
+      };
     }
     const parsed = parseReviewerFindings(text, role);
-    candidates.push(...parsed.findings);
     // The decisions are not optional: the answer must carry the key of the
     // decisions, even when the list is empty. An answer without it did not do
     // the audit, and the step of the role fails instead of passing by silence.
     const parsedDecisions = parseReviewerDecisions(text, role);
-    reported.push(...parsedDecisions.decisions);
     const invalidEntries = [...parsed.invalid, ...parsedDecisions.invalid];
     const invalid = invalidEntries.length > 0 ? `, ${invalidEntries.length} invalid` : '';
-    steps.push(
-      step(
+    return {
+      role,
+      step: step(
         now,
-        `review-${role}`,
+        roleId,
         // An entry that did not pass the schema may be the defect that
         // matters: a reviewer that lost one is a reviewer that did not finish.
         invalidEntries.length > 0 ? 'failed' : 'passed',
@@ -1211,7 +1273,33 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         roleStart,
         backendExtra(outcome),
       ),
-    );
+      findings: parsed.findings,
+      decisions: parsedDecisions.decisions,
+    };
+  };
+
+  const selectedRoles = roles.filter((role) => coverage.roles.includes(role));
+  const canRunConcurrently = Boolean(context && brief);
+  const capacity = backend.capabilities.maxConcurrentRequests ?? 1;
+  // Independent reviewer roles may run in parallel only when the backend
+  // declares enough capacity for the roles selected by the profile; otherwise
+  // keep deterministic serialized execution.
+  const parallel =
+    canRunConcurrently && selectedRoles.length > 1 && capacity >= selectedRoles.length;
+  const roleResults: RoleResult[] = parallel
+    ? await Promise.all(roles.map((role) => runRole(role)))
+    : await (async () => {
+        const out: RoleResult[] = [];
+        for (const role of roles) out.push(await runRole(role));
+        return out;
+      })();
+
+  // The canonical role order is the record order: concurrent execution must
+  // not make steps, findings or decisions depend on which model answered first.
+  for (const result of roleResults) {
+    steps.push(result.step);
+    candidates.push(...result.findings);
+    reported.push(...result.decisions);
   }
 
   // ── verify-findings ───────────────────────────────────────────
@@ -1277,23 +1365,29 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // the verdict, never becomes a required step and never shares the findings
   // of the reviewers with each other. A profile that omits it says so — the
   // omission is measured and disclosed, never silent.
-  const improvements = coverage.assessment
-    ? await assessImprovements({
-        backend,
-        runId,
-        context,
-        brief,
-        findings,
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
-        now,
-      })
-    : {
+  const improvements = !coverage.assessment
+    ? {
         status: 'unavailable' as const,
         recommendations: [],
         detail: `the ${profile} profile does not run the advisory assessment`,
-      };
+      }
+    : !context || !brief
+      ? {
+          status: 'unavailable' as const,
+          recommendations: [],
+          detail: 'required review inputs are missing, so the advisory assessment was not run',
+        }
+      : await assessImprovements({
+          backend,
+          runId,
+          context,
+          brief,
+          findings,
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+          now,
+        });
 
   // ── the requirements of the change ─────────────────────────────
   // The Issue is read again after the reviewers ran: a requirement that

@@ -16,3 +16,4 @@ spike/camoufox/.data/
 
 # Local run artifacts (diagnostics logs, throw-away probes)
 build/
+.tmp/

@@ -5208,4 +5208,426 @@ describe('the review profiles', () => {
     const report = renderReviewReport(older as typeof run);
     expect(report).toContain('- Profile: standard');
   });
+
+  describe('conditional execution (#101)', () => {
+    it('runs independent reviewer roles concurrently when backend capacity allows it', async () => {
+      // Three reviewers are independent: none sees the findings of another.
+      // When the backend can take them at the same time, the pipeline should
+      // not serialize them behind one queue slot.
+      let active = 0;
+      let maxActive = 0;
+      const release: Array<() => void> = [];
+      const backend = createFakeBackend(CLEAN);
+      const gated: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 3 },
+        ask: async (request) => {
+          if (request.prompt.startsWith('# Role:')) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise<void>((resolve) => release.push(resolve));
+            active -= 1;
+          }
+          return backend.ask(request);
+        },
+      };
+
+      const running = runReviewPipeline({
+        backend: gated,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      await vi.waitFor(() => {
+        expect(release).toHaveLength(3);
+      });
+      for (const resolve of release.splice(0)) resolve();
+      const run = await running;
+
+      expect(maxActive).toBe(3);
+      expect(
+        run.steps.filter((step) => step.id.startsWith('review-')).map((step) => step.status),
+      ).toEqual(['passed', 'passed', 'passed']);
+    });
+
+    it('falls back to deterministic serialized execution when backend capacity is 1', async () => {
+      let active = 0;
+      let maxActive = 0;
+      const order: string[] = [];
+      const backend = createFakeBackend(CLEAN);
+      const serialized: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 1 },
+        ask: async (request) => {
+          const role = ['# Role: correctness', '# Role: architecture', '# Role: tests'].find(
+            (prefix) => request.prompt.startsWith(prefix),
+          );
+          if (role) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            order.push(`start:${role}`);
+            await Promise.resolve();
+            order.push(`end:${role}`);
+            active -= 1;
+          }
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: serialized,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(maxActive).toBe(1);
+      expect(order).toEqual([
+        'start:# Role: correctness',
+        'end:# Role: correctness',
+        'start:# Role: architecture',
+        'end:# Role: architecture',
+        'start:# Role: tests',
+        'end:# Role: tests',
+      ]);
+      expect(
+        run.steps.filter((step) => step.id.startsWith('review-')).map((step) => step.id),
+      ).toEqual(['review-correctness', 'review-architecture', 'review-tests']);
+    });
+
+    it('serializes when backend capacity is below the number of reviewer roles to run', async () => {
+      let active = 0;
+      let maxActive = 0;
+      const backend = createFakeBackend(CLEAN);
+      const limited: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 2 },
+        ask: async (request) => {
+          if (request.prompt.startsWith('# Role:')) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await Promise.resolve();
+            active -= 1;
+          }
+          return backend.ask(request);
+        },
+      };
+
+      await runReviewPipeline({
+        backend: limited,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(maxActive).toBe(1);
+    });
+
+    it('keeps reviewer roles distinct and isolated under concurrent execution', async () => {
+      const prompts = new Map<string, string>();
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([{ ...FINDING, title: 'C' }]) },
+        {
+          prompt: '# Role: architecture',
+          answer: answerWith([{ ...FINDING, title: 'A', line: 3 }]),
+        },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+      const concurrent: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 3 },
+        ask: async (request) => {
+          for (const role of ['# Role: correctness', '# Role: architecture', '# Role: tests']) {
+            if (request.prompt.startsWith(role)) prompts.set(role, request.prompt);
+          }
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: concurrent,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(prompts.size).toBe(3);
+      expect(prompts.get('# Role: correctness')).not.toContain('A finding of the architecture');
+      expect(prompts.get('# Role: architecture')).not.toContain('A finding of the correctness');
+      expect(prompts.get('# Role: tests')).not.toContain('A finding of the correctness');
+      // Role identity is preserved in the record even when roles ran concurrently.
+      expect(run.findings.find((finding) => finding.title === 'C')?.reportedBy).toEqual([
+        'correctness',
+      ]);
+      expect(run.findings.find((finding) => finding.title === 'A')?.reportedBy).toEqual([
+        'architecture',
+      ]);
+      expect(run.steps.map((step) => step.id)).toEqual([
+        'collect-context',
+        'build-bundle',
+        'review-correctness',
+        'review-architecture',
+        'review-tests',
+        'verify-findings',
+        'normalize-findings',
+        'render-report',
+      ]);
+    });
+
+    it('records an explicit skip reason when verification model work is redundant', async () => {
+      // A finding that points at a line outside the file is mechanically
+      // rejected from validated revision input. Asking a model cannot change
+      // that outcome, so the pipeline records the skip reason instead of
+      // spending a model call.
+      const asks: string[] = [];
+      const backend = createFakeBackend([
+        {
+          prompt: '# Role: correctness',
+          answer: answerWith([{ ...FINDING, file: 'src/app.ts', line: 999 }]),
+        },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+      const observed: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 40));
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      const verify = run.steps.find((step) => step.id === 'verify-findings');
+      expect(verify?.status).toBe('passed');
+      expect(verify?.detail).toContain('validated mechanical input');
+      expect(verify?.detail).toContain('no verifier model call needed');
+      expect(asks.some((prompt) => prompt.startsWith('# Verification'))).toBe(false);
+      expect(run.findings[0].verification).toBe('rejected');
+    });
+
+    it('does not skip verification merely because reviewer outputs agree', async () => {
+      // Two roles report the same defect: agreement is not evidence. The
+      // verification pass still has to judge the finding independently.
+      const asks: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+        { prompt: '# Role: architecture', answer: answerWith([FINDING]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+        {
+          prompt: '# Verification',
+          answer: JSON.stringify({
+            verdicts: [{ id: 'f-fa43a16c', verdict: 'confirmed', evidence: 'exec(input)' }],
+          }),
+        },
+      ]);
+      const observed: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 40));
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(asks.filter((prompt) => prompt.startsWith('# Verification'))).toHaveLength(1);
+      expect(run.findings).toHaveLength(1);
+      expect(run.findings[0].reportedBy).toEqual(['correctness', 'architecture']);
+      expect(run.findings[0].verification).toBe('confirmed');
+    });
+
+    it('does not skip verification when any candidate needs independent model judgment', async () => {
+      const asks: string[] = [];
+      const backend = createFakeBackend([
+        {
+          prompt: '# Role: correctness',
+          answer: answerWith([
+            { ...FINDING, file: 'src/app.ts', line: 999 }, // mechanical
+            { ...FINDING, file: 'src/app.ts', line: 2, title: 'Needs judgment' },
+          ]),
+        },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+        {
+          prompt: '# Verification',
+          answer: JSON.stringify({
+            verdicts: [{ id: 'f-dc9402e9', verdict: 'confirmed', evidence: 'exec(input)' }],
+          }),
+        },
+      ]);
+      const observed: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 40));
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(asks.some((prompt) => prompt.startsWith('# Verification'))).toBe(true);
+      expect(run.findings.find((finding) => finding.title === 'Needs judgment')?.verification).toBe(
+        'confirmed',
+      );
+      expect(run.findings.find((finding) => finding.line === 999)?.verification).toBe('rejected');
+    });
+
+    it('required Standard stages cannot be skipped by an optimization shortcut', async () => {
+      const backend = createFakeBackend(CLEAN);
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+        profile: 'standard',
+      });
+
+      const required = [
+        'collect-context',
+        'build-bundle',
+        'review-correctness',
+        'review-architecture',
+        'review-tests',
+        'verify-findings',
+        'normalize-findings',
+        'render-report',
+      ];
+      for (const id of required) {
+        const step = run.steps.find((candidate) => candidate.id === id);
+        expect(step, id).toBeDefined();
+        expect(step?.status, id).not.toBe('skipped');
+      }
+    });
+
+    it('merge advice remains advisory and cannot override a failed mandatory gate', async () => {
+      const backend = createFakeBackend([
+        {
+          prompt: '# Role: correctness',
+          answer: answerWith([{ ...FINDING, severity: 'BLOCKING' }]),
+        },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+        {
+          prompt: '# Verification',
+          answer: JSON.stringify({
+            verdicts: [{ id: 'f-fa43a16c', verdict: 'confirmed', evidence: 'exec(input)' }],
+          }),
+        },
+        {
+          prompt: '# Follow-up improvements',
+          answer: JSON.stringify({
+            recommendations: [
+              {
+                title: 'Ship it anyway',
+                rationale: 'Looks fine.',
+                evidence: ['src/app.ts'],
+                benefit: 'Speed.',
+                scope: 'Small.',
+                priority: 'RECOMMENDED',
+                separateWork: false,
+              },
+            ],
+          }),
+        },
+      ]);
+
+      const run = await runReviewPipeline({
+        backend,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+
+      expect(run.improvements?.status).toBe('completed');
+      expect(run.improvements?.recommendations).toHaveLength(1);
+      expect(run.verdict).toBe('REQUEST CHANGES');
+      expect(run.report).toContain('## Follow-up improvements');
+      // Advisory output is present, but it is not a step and does not gate.
+      expect(run.steps.find((step) => step.id === 'review-correctness')?.status).toBe('passed');
+      expect(run.steps.some((step) => step.id === 'advisory-assessment')).toBe(false);
+      expect(run.report).toContain('advisory assessment');
+    });
+
+    it('does not run advisory assessment when required inputs are missing and records the reason', async () => {
+      const asks: string[] = [];
+      const backend = createFakeBackend(CLEAN);
+      const observed: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 40));
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => {
+          throw new Error('boom');
+        },
+      });
+
+      expect(asks.some((prompt) => prompt.startsWith('# Follow-up improvements'))).toBe(false);
+      expect(run.improvements?.status).toBe('unavailable');
+      expect(run.improvements?.detail).toContain('required review inputs are missing');
+      expect(run.report).toContain('The advisory assessment was unavailable');
+      expect(run.report).toContain('required review inputs are missing');
+    });
+
+    it('preserves canonical role order when concurrent reviewers finish out of order', async () => {
+      const releases = new Map<string, () => void>();
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([{ ...FINDING, title: 'C' }]) },
+        {
+          prompt: '# Role: architecture',
+          answer: answerWith([{ ...FINDING, title: 'A', line: 3 }]),
+        },
+        { prompt: '# Role: tests', answer: answerWith([{ ...FINDING, title: 'T', line: 4 }]) },
+      ]);
+      const concurrent: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 3 },
+        ask: async (request) => {
+          const role = ['correctness', 'architecture', 'tests'].find((name) =>
+            request.prompt.startsWith(`# Role: ${name}`),
+          );
+          if (role) {
+            await new Promise<void>((resolve) => releases.set(role, resolve));
+          }
+          return backend.ask(request);
+        },
+      };
+
+      const running = runReviewPipeline({
+        backend: concurrent,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+      await vi.waitFor(() => expect(releases.size).toBe(3));
+      // Finish in reverse order; record order must stay canonical.
+      releases.get('tests')?.();
+      releases.get('architecture')?.();
+      releases.get('correctness')?.();
+      const run = await running;
+
+      expect(run.steps.filter((s) => s.id.startsWith('review-')).map((s) => s.id)).toEqual([
+        'review-correctness',
+        'review-architecture',
+        'review-tests',
+      ]);
+      expect(run.findings.map((finding) => finding.reportedBy[0])).toEqual([
+        'correctness',
+        'architecture',
+        'tests',
+      ]);
+    });
+  });
 });
