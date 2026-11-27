@@ -455,6 +455,7 @@ run — not a line of a log:
 | `durationMs` | The wall-clock time of the step. |
 | `startedAt`, `finishedAt` | When the step began and when it ended, one clock for both — the two agree with the duration. |
 | `queueWaitMs` | The part of the duration the step spent waiting for the backend to be free. Absent when nobody measured it. |
+| `activeSlots` | Backend slots active while the step ran its request(s), when reported by the backend. |
 | `failureKind`, `submission` | Why a failed step failed and whether the request reached the model: `not_submitted` can be sent again, `submitted` can only be resumed. |
 
 The **queue wait** belongs to the backend, not to the pipeline: only a backend
@@ -468,9 +469,9 @@ The run itself names what answered it: `backend` in `review.json` carries the
 backend, its provider and the model. A run recorded before this existed has
 none, and the report says so instead of failing.
 
-The report gains a **Timing** section — the stages with their duration, their
-queue wait, the execution left after it, and the result. It is additive: the
-*Checks* table keeps the shape of
+The report gains a **Timing** section — the stages with their duration, queue
+wait, execution left after it, active backend slots when reported, and the
+result. It is additive: the *Checks* table keeps the shape of
 `skills/10x-chat/workflows/report-format.md`.
 
 The advisory follow-up assessment is **not a step** and never gates the

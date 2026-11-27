@@ -226,14 +226,17 @@ function timingSection(run: ReviewRun): string[] {
         : ''),
   );
   lines.push('');
-  lines.push('| Stage | Duration | Queue wait | Execution | Result |');
-  lines.push('|---|---|---|---|---|');
+  lines.push('| Stage | Duration | Queue wait | Execution | Active slots | Result |');
+  lines.push('|---|---|---|---|---|---|');
   for (const step of timed) {
     const wait = step.queueWaitMs;
+    const slots = step.activeSlots;
     lines.push(
       `| ${step.id} | ${ms(step.durationMs ?? 0)} | ${wait !== undefined ? ms(wait) : '—'} | ${
         wait !== undefined ? ms((step.durationMs ?? 0) - wait) : '—'
-      } | ${RESULT_OF[step.status]}${step.failureKind ? ` (${literal(step.failureKind)})` : ''} |`,
+      } | ${slots !== undefined ? String(slots) : '—'} | ${RESULT_OF[step.status]}${
+        step.failureKind ? ` (${literal(step.failureKind)})` : ''
+      } |`,
     );
   }
   // The advisory assessment is not a step and never gates the verdict, but it
@@ -241,10 +244,11 @@ function timingSection(run: ReviewRun): string[] {
   // as a slow review.
   if (assessment?.durationMs !== undefined) {
     const wait = assessment.queueWaitMs;
+    const slots = assessment.activeSlots;
     lines.push(
       `| advisory assessment | ${ms(assessment.durationMs)} | ${wait !== undefined ? ms(wait) : '—'} | ${
         wait !== undefined ? ms(assessment.durationMs - wait) : '—'
-      } | ${assessment.status.toUpperCase()} (not a step) |`,
+      } | ${slots !== undefined ? String(slots) : '—'} | ${assessment.status.toUpperCase()} (not a step) |`,
     );
   }
   lines.push('');

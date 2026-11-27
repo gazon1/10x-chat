@@ -61,6 +61,8 @@ export const CHATGPT_USE_CAPABILITIES: BackendCapabilities = Object.freeze({
   conversationReuse: false,
   modelSelection: true,
   imageOutput: false,
+  // One ChatGPT session/window at a time per configured account/session.
+  maxConcurrentRequests: 1,
 });
 
 /** The resolved ChatGPT Project destination. */
@@ -173,32 +175,149 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
   const projectsPath = options.projectsPath ?? chatgptUseProjectsPath();
   const verifyMembership = options.verifyProjectMembership ?? verifyChatgptProjectMembership;
 
-  // The queue of the session: one ask at a time.
-  let queue: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
-    const result = queue.then(task, task);
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+  // The queue of the session: one ask at a time. The backend reports its own
+  // capacity; the pipeline reads it, but the backend must also enforce it in
+  // case concurrent callers bypass the pipeline.
+  const capacity = CHATGPT_USE_CAPABILITIES.maxConcurrentRequests ?? 1;
+  let active = 0;
+  const waiting: Array<{
+    signal?: AbortSignal;
+    start: () => void;
+    onAbort?: () => void;
+  }> = [];
+
+  const removeWaiting = (entry: (typeof waiting)[number]): void => {
+    const index = waiting.indexOf(entry);
+    if (index >= 0) waiting.splice(index, 1);
   };
 
+  const wake = (): void => {
+    while (active < capacity && waiting.length > 0) {
+      const next = waiting.shift();
+      if (!next) return;
+      if (next.onAbort && next.signal) next.signal.removeEventListener('abort', next.onAbort);
+      active += 1;
+      next.start();
+    }
+  };
+
+  const cancelledBeforeStart = (
+    requestId: string,
+  ): BackendOutcome<BackendResponse> => ({
+    ok: false,
+    failure: {
+      kind: 'cancelled',
+      message: `The request '${requestId}' was cancelled before it started.`,
+      submission: 'not_submitted',
+    },
+  });
+
   /**
-   * Run an ask or a resume through the queue, and report how long it waited.
-   *
-   * The wait is measured here and not by the caller: only the queue knows when
-   * a request reached the front of it. The caller's wall clock minus this wait
-   * is the time the provider really worked, and the pipeline reports both.
+   * Run an ask/resume through the serial queue. Queued requests may be
+   * cancelled before they start; an active request is handled by the backend
+   * itself and by explicit cancel(requestId).
    */
   const queued = (
+    request: BackendRequest,
     task: () => Promise<BackendOutcome<BackendResponse>>,
   ): Promise<BackendOutcome<BackendResponse>> => {
     const queuedAt = Date.now();
-    return serialize(async () => {
-      const startedAt = Date.now();
-      const outcome = await task();
-      return withQueueWait(outcome, startedAt - queuedAt);
+    return new Promise<BackendOutcome<BackendResponse>>((resolve) => {
+      let settled = false;
+      const finish = (outcome: BackendOutcome<BackendResponse>): void => {
+        if (settled) return;
+        settled = true;
+        resolve(outcome);
+      };
+
+      const start = (): void => {
+        if (request.signal?.aborted) {
+          active = Math.max(0, active - 1);
+          wake();
+          finish(cancelledBeforeStart(request.requestId));
+          return;
+        }
+        const startedAt = Date.now();
+        const onActiveAbort = request.signal
+          ? (): void => {
+              // Best-effort: chatgpt-use supports cancellation; the running CLI
+              // may also observe it. We never blindly retry unknown submissions.
+              void run(['cancel', effectiveId(request.requestId)]).catch(() => undefined);
+            }
+          : undefined;
+        if (onActiveAbort && request.signal) {
+          request.signal.addEventListener('abort', onActiveAbort, { once: true });
+        }
+        void task()
+          .catch(
+            (error): BackendOutcome<BackendResponse> => ({
+              ok: false,
+              failure: {
+                kind: 'invalid_output',
+                message: error instanceof Error ? error.message : String(error),
+                submission: 'unknown',
+              },
+            }),
+          )
+          .then((outcome) => {
+            if (request.signal?.aborted && !outcome.ok && outcome.failure.kind !== 'cancelled') {
+              // Preserve cancellation semantics when the backend did not surface it.
+              finish(
+                withQueueWait(
+                  {
+                    ok: false,
+                    failure: {
+                      kind: 'cancelled',
+                      message: `The request '${request.requestId}' was cancelled.`,
+                      submission:
+                        outcome.failure.submission === 'not_submitted' ? 'not_submitted' : 'submitted',
+                      ...(outcome.failure.partialText
+                        ? { partialText: outcome.failure.partialText }
+                        : {}),
+                    },
+                  },
+                  startedAt - queuedAt,
+                  active,
+                ),
+              );
+              return;
+            }
+            finish(withQueueWait(outcome, startedAt - queuedAt, active));
+          })
+          .finally(() => {
+            if (onActiveAbort && request.signal) {
+              request.signal.removeEventListener('abort', onActiveAbort);
+            }
+            active = Math.max(0, active - 1);
+            wake();
+          });
+      };
+
+      if (request.signal?.aborted) {
+        finish(cancelledBeforeStart(request.requestId));
+        return;
+      }
+
+      if (active < capacity) {
+        active += 1;
+        start();
+        return;
+      }
+
+      const entry: (typeof waiting)[number] = {
+        signal: request.signal,
+        start,
+        onAbort: undefined,
+      };
+      if (request.signal) {
+        const onAbort = (): void => {
+          removeWaiting(entry);
+          finish(cancelledBeforeStart(request.requestId));
+        };
+        entry.onAbort = onAbort;
+        request.signal.addEventListener('abort', onAbort, { once: true });
+      }
+      waiting.push(entry);
     });
   };
 
@@ -503,9 +622,9 @@ export function createChatgptUseBackend(options: ChatgptUseBackendOptions = {}):
     name: CHATGPT_USE_BACKEND_NAME,
     capabilities: CHATGPT_USE_CAPABILITIES,
 
-    ask: (request) => queued(() => ask(request)),
+    ask: (request) => queued(request, () => ask(request)),
 
-    resume: (request) => queued(() => resume(request)),
+    resume: (request) => queued(request, () => resume(request)),
 
     status: async (requestId: string): Promise<BackendStatus> => {
       const id = effectiveId(requestId);

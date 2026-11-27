@@ -972,4 +972,26 @@ describe('the queue wait of a request', () => {
     );
     expect(backwards.ok && backwards.value.queueWaitMs).toBe(0);
   });
+
+  it('stamps active slot diagnostics when reported', () => {
+    const answer = withQueueWait(
+      {
+        ok: true as const,
+        value: { requestId: 'r', text: 'a', truncated: false, submission: 'submitted' as const },
+      },
+      10,
+      2,
+    );
+    expect(answer.ok && answer.value.activeSlots).toBe(2);
+
+    const failure = withQueueWait(
+      {
+        ok: false as const,
+        failure: { kind: 'busy' as const, message: 'busy', submission: 'not_submitted' as const },
+      },
+      0,
+      1,
+    );
+    expect(!failure.ok && failure.failure.activeSlots).toBe(1);
+  });
 });

@@ -159,15 +159,22 @@ with the migration of the providers.
 One ChatGPT window serves one request.
 
 - **Inside one process** the asks are serialized: the second one waits for the
-  first one.
+  first one. The backend reports `maxConcurrentRequests: 1` and enforces it at
+  the backend boundary (not only in the review pipeline).
 - **Across processes** the CLI itself refuses the second one
   (`--busy fail`), and the refusal becomes a `busy` failure of the contract
   (`not_submitted` — the prompt was never sent).
 
+A queued request whose `AbortSignal` is already aborted, or becomes aborted
+before it reaches the front of the queue, is removed and fails as `cancelled`
+with `not_submitted`. An active request is cancelled through the backend's
+normal cancellation path (`chatgpt-use cancel`) when possible; the backend
+never blindly retries an unknown submission.
+
 The wait inside the queue is measured and stamped on the answer and on the
-failure (`queueWaitMs` of the contract) — a caller that times a review can tell
-a slow provider from a request that waited behind another one (see
-[review-pipeline.md](review-pipeline.md#the-timing-of-a-run)).
+failure (`queueWaitMs` and `activeSlots` of the contract) — a caller that times
+a review can tell a slow provider from a request that waited behind another one
+(see [review-pipeline.md](review-pipeline.md#the-timing-of-a-run)).
 
 ## What it supports
 

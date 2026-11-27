@@ -68,7 +68,9 @@ export const SUBMISSIONS_OF_FAILURE: Record<BackendFailureKind, readonly Backend
   busy: ['not_submitted', 'submitted'],
   unavailable: ['not_submitted'],
   timeout: ['submitted'],
-  cancelled: ['submitted'],
+  // A cancelled request may have been running (submitted) or removed from a
+  // queue before it started (not_submitted).
+  cancelled: ['submitted', 'not_submitted'],
   // An unusable answer may have reached the model or not — it reports the
   // state the backend claimed.
   invalid_output: ['submitted', 'not_submitted', 'unknown'],
@@ -101,6 +103,13 @@ export interface BackendFailure {
    * one request at a time measures the wait before it starts.
    */
   queueWaitMs?: number;
+  /**
+   * How many backend slots were active while this request was being served.
+   *
+   * Absent when the backend does not report slot diagnostics. `1` means the
+   * request ran alone in a serial backend; larger values mean concurrent work.
+   */
+  activeSlots?: number;
 }
 
 /** A request to a backend. */
@@ -145,6 +154,14 @@ export interface BackendRequest {
    * never silently create the conversation outside the project.
    */
   chatgptProject?: string;
+  /**
+   * Cancel the request before it starts or while it is waiting in a queue.
+   *
+   * A backend that queues must not start a request whose signal is already
+   * aborted. An active request is handled according to backend cancellation
+   * capabilities — the signal does not replace `cancel(requestId)`.
+   */
+  signal?: AbortSignal;
 }
 
 /** The answer of a backend. */
@@ -172,6 +189,12 @@ export interface BackendResponse {
    * it from its own wall clock to get the time the provider really took.
    */
   queueWaitMs?: number;
+  /**
+   * How many backend slots were active while this request was being served.
+   *
+   * Absent when the backend does not report slot diagnostics.
+   */
+  activeSlots?: number;
 }
 
 /** The state of a request that is known to the backend. */
@@ -274,12 +297,24 @@ export function backendFailureKind(error: unknown): BackendFailureKind | undefin
  * zero — it is a measurement, and an absent field would say that nobody
  * measured it.
  */
-export function withQueueWait<T extends { queueWaitMs?: number }>(
+export function withQueueWait<T extends { queueWaitMs?: number; activeSlots?: number }>(
   outcome: BackendOutcome<T>,
   queueWaitMs: number,
+  activeSlots?: number,
 ): BackendOutcome<T> {
   const wait = Math.max(0, queueWaitMs);
+  const slots = activeSlots !== undefined ? Math.max(1, activeSlots) : undefined;
   return outcome.ok
-    ? { ok: true, value: { ...outcome.value, queueWaitMs: wait } }
-    : { ok: false, failure: { ...outcome.failure, queueWaitMs: wait } };
+    ? {
+        ok: true,
+        value: { ...outcome.value, queueWaitMs: wait, ...(slots !== undefined ? { activeSlots: slots } : {}) },
+      }
+    : {
+        ok: false,
+        failure: {
+          ...outcome.failure,
+          queueWaitMs: wait,
+          ...(slots !== undefined ? { activeSlots: slots } : {}),
+        },
+      };
 }

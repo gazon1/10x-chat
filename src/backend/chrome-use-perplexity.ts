@@ -34,6 +34,7 @@ export const CHROME_USE_PERPLEXITY_CAPABILITIES: BackendCapabilities = Object.fr
   conversationReuse: false,
   modelSelection: false,
   imageOutput: false,
+  maxConcurrentRequests: 1,
 });
 
 const PERPLEXITY_URL = 'https://www.perplexity.ai';
@@ -176,30 +177,109 @@ export function createChromeUsePerplexityBackend(
     { submission: BackendSubmission; text?: string; truncated?: boolean; cancelled?: boolean }
   >();
 
-  let queue: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
-    const result = queue.then(task, task);
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+  const capacity = CHROME_USE_PERPLEXITY_CAPABILITIES.maxConcurrentRequests ?? 1;
+  let active = 0;
+  const waiting: Array<{
+    signal?: AbortSignal;
+    start: () => void;
+    onAbort?: () => void;
+  }> = [];
+
+  const removeWaiting = (entry: (typeof waiting)[number]): void => {
+    const index = waiting.indexOf(entry);
+    if (index >= 0) waiting.splice(index, 1);
   };
 
-  /**
-   * Run an ask through the queue, and report how long it waited.
-   *
-   * Only the queue knows when a request reached the front of it. The caller's
-   * wall clock minus this wait is the time the provider really worked.
-   */
+  const wake = (): void => {
+    while (active < capacity && waiting.length > 0) {
+      const next = waiting.shift();
+      if (!next) return;
+      if (next.onAbort && next.signal) next.signal.removeEventListener('abort', next.onAbort);
+      active += 1;
+      next.start();
+    }
+  };
+
+  const cancelledBeforeStart = (requestId: string): BackendOutcome<BackendResponse> => ({
+    ok: false,
+    failure: {
+      kind: 'cancelled',
+      message: `The request '${requestId}' was cancelled before it started.`,
+      submission: 'not_submitted',
+    },
+  });
+
   const queued = (
+    request: BackendRequest,
     task: () => Promise<BackendOutcome<BackendResponse>>,
   ): Promise<BackendOutcome<BackendResponse>> => {
     const queuedAt = Date.now();
-    return serialize(async () => {
-      const startedAt = Date.now();
-      const outcome = await task();
-      return withQueueWait(outcome, startedAt - queuedAt);
+    return new Promise<BackendOutcome<BackendResponse>>((resolve) => {
+      const start = (): void => {
+        if (request.signal?.aborted) {
+          active = Math.max(0, active - 1);
+          wake();
+          resolve(cancelledBeforeStart(request.requestId));
+          return;
+        }
+        const startedAt = Date.now();
+        void task()
+          .catch(
+            (error): BackendOutcome<BackendResponse> => ({
+              ok: false,
+              failure: {
+                kind: 'invalid_output',
+                message: error instanceof Error ? error.message : String(error),
+                submission: 'unknown',
+              },
+            }),
+          )
+          .then((outcome) => {
+            if (request.signal?.aborted && !outcome.ok && outcome.failure.kind !== 'cancelled') {
+              resolve(
+                withQueueWait(
+                  {
+                    ok: false,
+                    failure: {
+                      kind: 'cancelled',
+                      message: `The request '${request.requestId}' was cancelled.`,
+                      submission:
+                        outcome.failure.submission === 'not_submitted' ? 'not_submitted' : 'submitted',
+                    },
+                  },
+                  startedAt - queuedAt,
+                  active,
+                ),
+              );
+              return;
+            }
+            resolve(withQueueWait(outcome, startedAt - queuedAt, active));
+          })
+          .finally(() => {
+            active = Math.max(0, active - 1);
+            wake();
+          });
+      };
+
+      if (request.signal?.aborted) {
+        resolve(cancelledBeforeStart(request.requestId));
+        return;
+      }
+      if (active < capacity) {
+        active += 1;
+        start();
+        return;
+      }
+      const entry: (typeof waiting)[number] = { signal: request.signal, start };
+      if (request.signal) {
+        const onAbort = (): void => {
+          removeWaiting(entry);
+          resolve(cancelledBeforeStart(request.requestId));
+        };
+        entry.onAbort = onAbort;
+        request.signal.addEventListener('abort', onAbort, { once: true });
+      }
+      waiting.push(entry);
     });
   };
 
@@ -630,7 +710,7 @@ export function createChromeUsePerplexityBackend(
   return {
     name: CHROME_USE_PERPLEXITY_BACKEND_NAME,
     capabilities: CHROME_USE_PERPLEXITY_CAPABILITIES,
-    ask: (request) => queued(() => ask(request)),
+    ask: (request) => queued(request, () => ask(request)),
     status: async (requestId: string): Promise<BackendStatus> => {
       const k = known.get(requestId);
       // This POC keeps no persistent receipt across processes; without

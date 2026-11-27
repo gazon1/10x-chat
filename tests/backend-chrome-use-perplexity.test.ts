@@ -41,6 +41,7 @@ describe('chrome-use Perplexity backend (POC)', () => {
       conversationReuse: false,
       modelSelection: false,
       imageOutput: false,
+      maxConcurrentRequests: 1,
     });
   });
 
@@ -321,6 +322,57 @@ describe('chrome-use Perplexity backend (POC)', () => {
     const backend = createChromeUsePerplexityBackend({ runner: { run: async () => ok() } });
     const status = await backend.status('never-seen');
     expect(status.submission).toBe('unknown');
+  });
+
+  it('declares serial capacity and cancels queued requests before start', async () => {
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls: Call[] = [];
+    let askCount = 0;
+    const runner: ProcessRunner = {
+      run: async (_cmd, args) => {
+        calls.push({ args });
+        const sub = args[2];
+        if (sub === 'open') {
+          askCount += 1;
+          if (askCount === 1) await held;
+          return ok();
+        }
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          if (script.includes('return { count:n')) {
+            return ok({ result: { count: 1, text: 'ok', html: '<p>ok</p>' } });
+          }
+          return ok({ result: 0 });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1 });
+    expect(backend.capabilities.maxConcurrentRequests).toBe(1);
+
+    const controller = new AbortController();
+    const first = backend.ask({ requestId: 'r1', prompt: 'one', timeoutMs: 5_000 });
+    const second = backend.ask({
+      requestId: 'r2',
+      prompt: 'two',
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    release?.();
+
+    const [one, two] = await Promise.all([first, second]);
+    expect(one.ok).toBe(true);
+    expect(two.ok).toBe(false);
+    if (two.ok) return;
+    expect(two.failure.kind).toBe('cancelled');
+    expect(two.failure.submission).toBe('not_submitted');
+    expect(calls.some((c) => c.args.includes('r2'))).toBe(false);
   });
 
   it('rejects attachments and model selection explicitly', async () => {

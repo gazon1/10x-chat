@@ -109,6 +109,28 @@ export interface ReviewPipelineOptions {
    * that a reader never mistakes the run for the full review.
    */
   profile?: ReviewProfile;
+  /**
+   * Abort the run. Queued backend work must not start after abort; active work
+   * is cancelled when the backend supports cancellation.
+   */
+  signal?: AbortSignal;
+}
+
+function cancelledOutcome(requestId: string): BackendOutcome<BackendResponse> {
+  return {
+    ok: false,
+    failure: {
+      kind: 'cancelled',
+      message: `The request '${requestId}' was cancelled before it started.`,
+      submission: 'not_submitted',
+    },
+  };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const reason = (signal as AbortSignal & { reason?: unknown }).reason;
+  throw reason instanceof Error ? reason : new Error('Review run cancelled');
 }
 
 /** The schema of a finding — the same for every role. */
@@ -400,7 +422,7 @@ function step(
   status: StepOutcome['status'],
   detail: string | undefined,
   startedAt: number,
-  extra?: Partial<Pick<StepOutcome, 'queueWaitMs' | 'submission' | 'failureKind'>>,
+  extra?: Partial<Pick<StepOutcome, 'queueWaitMs' | 'activeSlots' | 'submission' | 'failureKind'>>,
 ): StepOutcome {
   const finishedAt = now();
   return {
@@ -411,6 +433,7 @@ function step(
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: new Date(finishedAt).toISOString(),
     ...(extra?.queueWaitMs !== undefined ? { queueWaitMs: extra.queueWaitMs } : {}),
+    ...(extra?.activeSlots !== undefined ? { activeSlots: extra.activeSlots } : {}),
     ...(extra?.submission !== undefined ? { submission: extra.submission } : {}),
     ...(extra?.failureKind !== undefined ? { failureKind: extra.failureKind } : {}),
   };
@@ -427,10 +450,12 @@ function step(
  */
 function backendExtra(
   outcome: BackendOutcome<BackendResponse>,
-): Partial<Pick<StepOutcome, 'queueWaitMs' | 'submission' | 'failureKind'>> {
+): Partial<Pick<StepOutcome, 'queueWaitMs' | 'activeSlots' | 'submission' | 'failureKind'>> {
   const queueWaitMs = outcome.ok ? outcome.value.queueWaitMs : outcome.failure.queueWaitMs;
+  const activeSlots = outcome.ok ? outcome.value.activeSlots : outcome.failure.activeSlots;
   return {
     ...(queueWaitMs !== undefined ? { queueWaitMs } : {}),
+    ...(activeSlots !== undefined ? { activeSlots } : {}),
     ...(outcome.ok
       ? {}
       : { failureKind: outcome.failure.kind, submission: outcome.failure.submission }),
@@ -799,6 +824,8 @@ async function verifyCandidates(options: {
   model?: string;
   timeoutMs?: number;
   chatgptProject?: string;
+  /** Abort the verification: queued work must not start after abort. */
+  signal?: AbortSignal;
   /** The clock of the run — the bounds and the duration of the stage. */
   now: Clock;
 }): Promise<{ findings: Finding[]; step: StepOutcome }> {
@@ -958,22 +985,27 @@ async function verifyCandidates(options: {
     ...(options.model ? { model: options.model } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   };
 
   let outcome: Awaited<ReturnType<AiBackend['ask']>>;
-  try {
-    outcome = await backend.ask(request);
-  } catch (error) {
-    return {
-      findings: candidates,
-      step: step(
-        now,
-        'verify-findings',
-        'failed',
-        error instanceof Error ? error.message : String(error),
-        startedAt,
-      ),
-    };
+  if (options.signal?.aborted) {
+    outcome = cancelledOutcome(request.requestId);
+  } else {
+    try {
+      outcome = await backend.ask(request);
+    } catch (error) {
+      return {
+        findings: candidates,
+        step: step(
+          now,
+          'verify-findings',
+          'failed',
+          error instanceof Error ? error.message : String(error),
+          startedAt,
+        ),
+      };
+    }
   }
   if (!outcome.ok) {
     return {
@@ -1193,23 +1225,28 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     };
     let outcome: BackendOutcome<BackendResponse>;
-    try {
-      outcome = await backend.ask(request);
-    } catch (error) {
-      return {
-        role,
-        step: step(
-          now,
-          roleId,
-          'failed',
-          error instanceof Error ? error.message : String(error),
-          roleStart,
-        ),
-        findings: [],
-        decisions: [],
-      };
+    if (options.signal?.aborted) {
+      outcome = cancelledOutcome(request.requestId);
+    } else {
+      try {
+        outcome = await backend.ask(request);
+      } catch (error) {
+        return {
+          role,
+          step: step(
+            now,
+            roleId,
+            'failed',
+            error instanceof Error ? error.message : String(error),
+            roleStart,
+          ),
+          findings: [],
+          decisions: [],
+        };
+      }
     }
     if (!outcome.ok) {
       return {
@@ -1287,10 +1324,49 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   const parallel =
     canRunConcurrently && selectedRoles.length > 1 && capacity >= selectedRoles.length;
   const roleResults: RoleResult[] = parallel
-    ? await Promise.all(roles.map((role) => runRole(role)))
+    ? await Promise.all(
+        roles.map(async (role) => {
+          if (options.signal?.aborted) {
+            const roleStart = now();
+            return {
+              role,
+              step: step(
+                now,
+                `review-${role}`,
+                'failed',
+                'the review run was cancelled before this stage started',
+                roleStart,
+                { submission: 'not_submitted', failureKind: 'cancelled' },
+              ),
+              findings: [],
+              decisions: [],
+            } satisfies RoleResult;
+          }
+          return runRole(role);
+        }),
+      )
     : await (async () => {
         const out: RoleResult[] = [];
-        for (const role of roles) out.push(await runRole(role));
+        for (const role of roles) {
+          if (options.signal?.aborted) {
+            const roleStart = now();
+            out.push({
+              role,
+              step: step(
+                now,
+                `review-${role}`,
+                'failed',
+                'the review run was cancelled before this stage started',
+                roleStart,
+                { submission: 'not_submitted', failureKind: 'cancelled' },
+              ),
+              findings: [],
+              decisions: [],
+            });
+            continue;
+          }
+          out.push(await runRole(role));
+        }
         return out;
       })();
 
@@ -1339,6 +1415,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
       ...(options.model ? { model: options.model } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
       now,
     });
     steps.push(verification.step);
@@ -1365,29 +1442,37 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // the verdict, never becomes a required step and never shares the findings
   // of the reviewers with each other. A profile that omits it says so — the
   // omission is measured and disclosed, never silent.
-  const improvements = !coverage.assessment
-    ? {
-        status: 'unavailable' as const,
-        recommendations: [],
-        detail: `the ${profile} profile does not run the advisory assessment`,
-      }
-    : !context || !brief
+  const improvements =
+    options.signal?.aborted
       ? {
           status: 'unavailable' as const,
           recommendations: [],
-          detail: 'required review inputs are missing, so the advisory assessment was not run',
+          detail: 'the review run was cancelled before the advisory assessment started',
         }
-      : await assessImprovements({
-          backend,
-          runId,
-          context,
-          brief,
-          findings,
-          ...(options.model ? { model: options.model } : {}),
-          ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-          ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
-          now,
-        });
+      : !coverage.assessment
+        ? {
+            status: 'unavailable' as const,
+            recommendations: [],
+            detail: `the ${profile} profile does not run the advisory assessment`,
+          }
+        : !context || !brief
+          ? {
+              status: 'unavailable' as const,
+              recommendations: [],
+              detail: 'required review inputs are missing, so the advisory assessment was not run',
+            }
+          : await assessImprovements({
+              backend,
+              runId,
+              context,
+              brief,
+              findings,
+              ...(options.model ? { model: options.model } : {}),
+              ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+              ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+              now,
+            });
 
   // ── the requirements of the change ─────────────────────────────
   // The Issue is read again after the reviewers ran: a requirement that
@@ -1528,6 +1613,7 @@ async function assessImprovements(options: {
   model?: string;
   timeoutMs?: number;
   chatgptProject?: string;
+  signal?: AbortSignal;
   /** The clock of the run — the duration of the assessment. */
   now: Clock;
 }): Promise<ReviewImprovements> {
@@ -1556,28 +1642,40 @@ async function assessImprovements(options: {
   /** The assessment with its timing — every way it can end. */
   const timed = (value: ReviewImprovements): ReviewImprovements => {
     const durationMs = options.now() - startedAt;
-    return { ...value, durationMs, ...(queueWaitMs !== undefined ? { queueWaitMs } : {}) };
+    return {
+      ...value,
+      durationMs,
+      ...(queueWaitMs !== undefined ? { queueWaitMs } : {}),
+      ...(activeSlots !== undefined ? { activeSlots } : {}),
+    };
   };
   let queueWaitMs: number | undefined;
+  let activeSlots: number | undefined;
 
   let outcome: Awaited<ReturnType<AiBackend['ask']>>;
-  try {
-    outcome = await options.backend.ask({
-      requestId: `${options.runId}-improvements`,
-      prompt,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
-    });
-  } catch (error) {
-    return timed({
-      status: 'failed',
-      recommendations: [],
-      detail: error instanceof Error ? error.message : String(error),
-    });
+  if (options.signal?.aborted) {
+    outcome = cancelledOutcome(`${options.runId}-improvements`);
+  } else {
+    try {
+      outcome = await options.backend.ask({
+        requestId: `${options.runId}-improvements`,
+        prompt,
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.chatgptProject ? { chatgptProject: options.chatgptProject } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+    } catch (error) {
+      return timed({
+        status: 'failed',
+        recommendations: [],
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   queueWaitMs = outcome.ok ? outcome.value.queueWaitMs : outcome.failure.queueWaitMs;
+  activeSlots = outcome.ok ? outcome.value.activeSlots : outcome.failure.activeSlots;
   if (!outcome.ok) {
     return timed({
       status:
