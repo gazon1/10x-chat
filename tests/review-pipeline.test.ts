@@ -5163,17 +5163,27 @@ describe('the review profiles', () => {
     expect(REVIEW_PROFILE_COVERAGE.deep.settleEveryFinding).toBe(true);
   });
 
-  it('still reads a record without any profile as standard', async () => {
+  it('still reads a record without any profile as standard, from the file on disk', async () => {
     // The one case that really is a record of the full review: the versions
-    // before the profiles existed wrote no field at all.
+    // before the profiles existed wrote no field at all. The record is a file
+    // on disk, not an object in memory — a run of the older version is a
+    // review.json that was written before this field existed.
     const run = await runReviewPipeline({
       backend: createFakeBackend(CLEAN),
       target: { cwd: repo },
       collect: async () => contextOf(),
     });
 
-    const { profile: _dropped, ...legacy } = run;
-    const older = legacy as typeof run;
+    const file = path.join(home, 'reviews', run.id, 'review.json');
+    const written = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+    delete written.profile;
+    await writeFile(file, JSON.stringify(written, null, 2), 'utf-8');
+
+    // The record reader of the workflow does not validate the profile — it
+    // hands the parsed record on, and the verdict and the report are what
+    // turn it into an answer.
+    const older = JSON.parse(await readFile(file, 'utf-8')) as typeof run;
+    expect(older.profile).toBeUndefined();
     expect(verdictOf(older).verdict).toBe('APPROVE');
     expect(verdictOf(older).reason).not.toContain('unknown');
     expect(renderReviewReport(older)).toContain('- Profile: standard');
