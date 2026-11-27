@@ -632,4 +632,65 @@ describe('chrome-use Perplexity backend (POC)', () => {
     expect(maxActive).toBe(1);
     expect(openCount).toBe(2);
   });
+
+  it('treats abort during Submit click as cancelled with submitted/unknown-safe submission, never not_submitted', async () => {
+    let releaseClick: (() => void) | undefined;
+    const clickHeld = new Promise<void>((resolve) => {
+      releaseClick = resolve;
+    });
+    const calls: string[] = [];
+    const runner: ProcessRunner = {
+      run: async (_cmd, args, opts) => {
+        const sub = args[2] ?? '';
+        calls.push(sub);
+        if (sub === 'open') return ok({ url: 'https://www.perplexity.ai' });
+        if (sub === 'wait' || sub === 'fill' || sub === 'done') return ok();
+        if (sub === 'eval') {
+          const script = args[3] ?? '';
+          if (script.includes("querySelectorAll('.prose').length")) return ok({ result: 0 });
+          return ok({ result: true });
+        }
+        if (sub === 'click') {
+          if (opts?.signal?.aborted) {
+            return { code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true };
+          }
+          return await new Promise<ProcessResult>((resolve) => {
+            const onAbort = () => {
+              resolve({ code: null, stdout: '', stderr: 'aborted', timedOut: false, cancelled: true });
+            };
+            opts?.signal?.addEventListener('abort', onAbort, { once: true });
+            void clickHeld.then(() => {
+              opts?.signal?.removeEventListener('abort', onAbort);
+              resolve(ok());
+            });
+          });
+        }
+        return ok();
+      },
+    };
+    const backend = createChromeUsePerplexityBackend({ runner, pollMs: 1, stablePolls: 1 });
+    const controller = new AbortController();
+    const pending = backend.ask({
+      requestId: 'r-submit-abort',
+      prompt: 'hi',
+      timeoutMs: 5_000,
+      signal: controller.signal,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    releaseClick?.();
+    const out = await pending;
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.kind).toBe('cancelled');
+    // Submit may have happened before the CLI was killed: never claim not_submitted.
+    expect(out.failure.submission).toBe('submitted');
+    expect(calls).toContain('click');
+    expect(calls).toContain('done');
+
+    const status = await backend.status('r-submit-abort');
+    expect(status.cancelled).toBe(true);
+    expect(status.submission).toBe('submitted');
+  });
 });

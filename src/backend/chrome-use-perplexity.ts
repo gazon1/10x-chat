@@ -197,10 +197,6 @@ export function createChromeUsePerplexityBackend(
     (options.runner && options.runner !== nodeProcessRunner
       ? createRequestQueue(capacity)
       : getSharedRequestQueue(`chrome-use-perplexity:${command}`, capacity));
-  // Per-session active request ids (in-process). This is best-effort and only
-  // tracks requests submitted through this process boundary.
-  const activeRequestIds = new Set<string>();
-
   const queued = (
     request: BackendRequest,
     task: () => Promise<BackendOutcome<BackendResponse>>,
@@ -285,6 +281,17 @@ export function createChromeUsePerplexityBackend(
       };
     }
     if (result.cancelled || signal?.aborted) {
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'cancelled',
+            'submitted',
+            `The chrome-use command was cancelled during submit (${sub[0] ?? 'chrome-use'}) - prompt may have been submitted.`,
+          ),
+          started: true,
+        };
+      }
       return {
         ok: false,
         outcome: failure(
@@ -449,7 +456,6 @@ export function createChromeUsePerplexityBackend(
       }
     };
 
-    activeRequestIds.add(request.requestId);
     try {
       let t = ensureNotAborted(false) ?? ensureTime(false);
       if (t) return t;
@@ -710,7 +716,6 @@ export function createChromeUsePerplexityBackend(
       });
       return out;
     } finally {
-      activeRequestIds.delete(request.requestId);
       await cleanup();
     }
   };
