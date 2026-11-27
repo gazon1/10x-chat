@@ -498,6 +498,7 @@ metrics service and no database:
 node scripts/review-latency.mjs                 # the store of this machine
 node scripts/review-latency.mjs --dir <path>    # another store
 node scripts/review-latency.mjs --json          # the raw measurements
+node scripts/review-latency.mjs --baseline <path>  # before/after against a baseline
 ```
 
 It buckets the runs by the number of changed files (`small` 1–5, `medium`
@@ -505,6 +506,17 @@ It buckets the runs by the number of changed files (`small` 1–5, `medium`
 reports p50 and p95 per bucket and per stage. A p95 needs at least 20 samples:
 below that the cell gives the sample size, because the nearest-rank p95 of a
 small sample is its maximum.
+
+The report is segmented the way a before/after has to be: by the size of the
+change (`## By size`), by the stage with its failure and its concurrency
+(`## By stage`), by the verdict and its invariant (`## Verdicts`), and by the
+backend and by the profile the run used (`## Backends`, `## Profiles`). Only the
+runs that finished every stage are timed; the others are counted as a failure of
+the measurement and kept in the section of the stages that did not pass. The
+queue wait of a stage and the time the provider really worked
+(`durationMs - queueWaitMs`) stay columns of the stage, so the stage time and
+the backend time are never confused. The advisory assessment is part of the
+total of a run, so the rows add up to the total.
 
 ### A baseline
 
@@ -606,6 +618,29 @@ The baseline also carries what those runs did **not** account for: 252 of the
 520 left more than 10 s between their steps and their wall clock, because the
 advisory assessment was a backend request nobody timed. A baseline taken before
 this change is therefore comparable on the stages and not on the total.
+
+### Before and after
+
+A baseline is only a decision support if a later round can be compared with it,
+so the benchmark reduces a store to the runs of a change and to the baseline of
+a round, and prints the comparison:
+
+```bash
+node scripts/review-latency.mjs --baseline <dir>
+```
+
+The runs of the store are the compared set and the runs of `<dir>` the baseline.
+The report prints the totals of both — the p50 and the p95 of the whole run, the
+queue and the execution, and the failure rate of the runs that did not finish
+every stage — the latency of the stages of the change, the verdicts and the
+failure rate of both. A stage that did not run in one set is a dash in it, so a
+change that is negative is a change that measured less.
+
+The before/after is what decides whether the metrics of this script are enough
+for the tuning of a round: when the comparison shows a stable signal and a stable
+failure rate, no new metric is needed; when it shows that the existing ones cannot
+separate the cause, that is the evidence that opens the conditional scope of the
+issue — a privacy-safe structured history, not a new subsystem built ahead of it.
 
 ## The bounds
 

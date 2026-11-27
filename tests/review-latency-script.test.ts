@@ -16,7 +16,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Write one run into the store, the way the pipeline writes it. */
+/** Write one run into a store, the way the pipeline writes it. */
 function writeRun(
   id: string,
   steps: Array<Record<string, unknown>>,
@@ -25,15 +25,18 @@ function writeRun(
     verdict?: string;
     backend?: Record<string, unknown>;
     improvements?: Record<string, unknown>;
+    profile?: string;
   } = {},
+  target: string = dir,
 ): void {
-  const runDir = path.join(dir, id);
+  const runDir = path.join(target, id);
   mkdirSync(runDir, { recursive: true });
   writeFileSync(
     path.join(runDir, 'review.json'),
     JSON.stringify({
       id,
       verdict: options.verdict ?? 'APPROVE',
+      ...(options.profile ? { profile: options.profile } : {}),
       ...(options.backend ? { backend: options.backend } : {}),
       ...(options.improvements ? { improvements: options.improvements } : {}),
       context: { changedFiles: options.changedFiles ?? ['src/a.ts'] },
@@ -183,6 +186,99 @@ describe('the latency benchmark of the review runs', () => {
       expect(output).toContain('0 run(s)');
     } finally {
       rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it('reads the concurrency of the backend slots of a stage', () => {
+    writeRun('concurrent', [
+      { id: 'review-correctness', status: 'passed', durationMs: 100, activeSlots: 2 },
+    ]);
+
+    const parsed = JSON.parse(run(['--json']));
+    const stage = parsed.runs[0].stages[0];
+
+    // The slots are the concurrency the backend held while the stage ran — a
+    // serialized backend says one, a concurrent one more. They are part of the
+    // measurement, so a before/after can see a change of the capacity.
+    expect(stage.activeSlots).toBe(2);
+  });
+
+  it('segments the runs by the profile and keeps the backends apart', () => {
+    writeRun(
+      'quick-run',
+      [
+        { id: 'collect-context', status: 'passed', durationMs: 10 },
+        { id: 'review-correctness', status: 'skipped', durationMs: 5 },
+      ],
+      { profile: 'quick' },
+    );
+    writeRun(
+      'deep-run',
+      [
+        { id: 'collect-context', status: 'passed', durationMs: 10 },
+        { id: 'review-correctness', status: 'passed', durationMs: 100 },
+      ],
+      { backend: { name: 'chatgpt-use', provider: 'chatgpt', model: 'Pro' } },
+    );
+
+    const output = run();
+
+    // The benchmark segments the runs by the profile they ran under, and the
+    // failure of a skipped stage is the failure of the set it belongs to.
+    expect(output).toContain('## Profiles');
+    expect(output).toContain('- quick: 1 run(s), failure 1/1 (100%)');
+    expect(output).toContain('## Backends');
+    expect(output).toContain('- chatgpt-use (chatgpt), Pro: 1 run(s)');
+  });
+
+  it('keeps the verdict honest with the completeness of the run', () => {
+    // An approval on a run that did not finish every stage is a verdict that
+    // cannot hold: the pipeline refuses it, and the benchmark must not let a
+    // latency number hide a quality regression. A step that did not run has no
+    // duration, and it still decides that the run did not finish every stage.
+    writeRun(
+      'lying',
+      [
+        { id: 'collect-context', status: 'passed', durationMs: 10 },
+        { id: 'review-correctness', status: 'skipped' },
+      ],
+      { verdict: 'APPROVE' },
+    );
+
+    const output = run();
+
+    expect(output).toContain('## Verdicts');
+    expect(output).toContain('- APPROVE: 1 run(s)');
+    expect(output).toContain('- Approvals on runs that did not finish every stage: 1');
+  });
+
+  it('compares the runs of a change against the baseline that ran before it', () => {
+    const beforeDir = mkdtempSync(path.join(tmpdir(), '10x-chat-latency-before-'));
+    try {
+      writeRun(
+        'before-run',
+        [{ id: 'review-correctness', status: 'passed', durationMs: 200_000 }],
+        { backend: { name: 'chatgpt-use', provider: 'chatgpt', model: 'Thinking' } },
+        beforeDir,
+      );
+
+      const output = execFileSync(
+        process.execPath,
+        [SCRIPT, '--dir', dir, '--baseline', beforeDir],
+        { encoding: 'utf-8' },
+      );
+
+      // The before/after is the report the tuning needs: the totals of the two
+      // sets, the latency of the stages of the change, the verdicts and the
+      // failure rate of both.
+      expect(output).toContain('# Review latency — before/after');
+      expect(output).toContain('## Total');
+      expect(output).toContain('## Stages');
+      expect(output).toContain('## Verdicts');
+      expect(output).toContain('## Failures');
+      expect(output).toContain('did not finish every stage');
+    } finally {
+      rmSync(beforeDir, { recursive: true, force: true });
     }
   });
 });
