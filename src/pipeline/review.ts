@@ -422,7 +422,12 @@ function step(
   status: StepOutcome['status'],
   detail: string | undefined,
   startedAt: number,
-  extra?: Partial<Pick<StepOutcome, 'queueWaitMs' | 'activeSlots' | 'submission' | 'failureKind'>>,
+  extra?: Partial<
+    Pick<
+      StepOutcome,
+      'queueWaitMs' | 'activeSlots' | 'submission' | 'failureKind' | 'omittedByProfile'
+    >
+  >,
 ): StepOutcome {
   const finishedAt = now();
   return {
@@ -436,6 +441,7 @@ function step(
     ...(extra?.activeSlots !== undefined ? { activeSlots: extra.activeSlots } : {}),
     ...(extra?.submission !== undefined ? { submission: extra.submission } : {}),
     ...(extra?.failureKind !== undefined ? { failureKind: extra.failureKind } : {}),
+    ...(extra?.omittedByProfile !== undefined ? { omittedByProfile: extra.omittedByProfile } : {}),
   };
 }
 
@@ -1206,7 +1212,9 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
     if (!coverage.roles.includes(role)) {
       return {
         role,
-        step: step(now, roleId, 'skipped', `the ${profile} profile does not run it`, roleStart),
+        step: step(now, roleId, 'skipped', `the ${profile} profile does not run it`, roleStart, {
+          omittedByProfile: true,
+        }),
         findings: [],
         decisions: [],
       };
@@ -1392,6 +1400,7 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
         'skipped',
         `the ${profile} profile does not verify the findings — every finding stays unverified`,
         verifyEmptyStart,
+        { omittedByProfile: true },
       ),
     );
   } else if (unique.length === 0) {

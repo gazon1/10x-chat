@@ -782,6 +782,14 @@ function parseFindingEntries(entries: unknown[], role: ReviewRole): ParsedFindin
  */
 const DECISION_KIND_WORDS: Record<string, DecisionKind> = {
   behaviorchange: 'behavior_change',
+  // A reviewer that answers in prose writes the kind as a phrase, and the
+  // qualifier is not a second kind: "a confirmed behavioral change" is the
+  // behavior change the schema names. Rejecting it failed the step of the
+  // role and lost a review that had done its work.
+  behavioralchange: 'behavior_change',
+  confirmedbehavioralchange: 'behavior_change',
+  behaviourchange: 'behavior_change',
+  confirmedbehaviourchange: 'behavior_change',
   intended: 'intended',
   intendeddecision: 'intended',
   implicit: 'implicit',

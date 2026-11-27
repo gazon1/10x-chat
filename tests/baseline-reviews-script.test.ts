@@ -105,7 +105,11 @@ describe('the baseline runner', () => {
     // record of the run is the one place that settles it.
     const log = run(prepareScript({ verdict: 'REQUEST CHANGES', exitCode: 1 }));
 
-    expect(log).toContain('DONE pr=82 bucket=small exit=1 verdict=REQUEST CHANGES');
+    // The profile of the round is part of the line: the two profiles are
+    // separate cohorts, and a log that dropped it would merge them.
+    expect(log).toContain(
+      'DONE profile=standard pr=82 bucket=small exit=1 verdict=REQUEST CHANGES',
+    );
     expect(log).toContain('COMPLETE');
   });
 

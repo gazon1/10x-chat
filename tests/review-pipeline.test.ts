@@ -455,6 +455,31 @@ describe('the review pipeline', () => {
     expect(step?.detail).toContain('kind missing or unknown');
   });
 
+  it('takes a qualified kind as the kind it qualifies', async () => {
+    // Observed against the real backend: a reviewer answers "a confirmed
+    // behavioral change", which the map did not know. Rejecting that phrase
+    // failed the step of the role and threw away a review that had done its
+    // work — 18 of the 22 runs of one pull request died on it.
+    const backend = createFakeBackend([
+      { prompt: '# Role: correctness', answer: answerWith([]) },
+      {
+        prompt: '# Role: architecture',
+        answer: answerWithDecisions([{ ...DECISION, kind: 'Confirmed behavioral change' }]),
+      },
+      { prompt: '# Role: tests', answer: answerWith([]) },
+    ]);
+
+    const run = await runReviewPipeline({
+      backend,
+      target: { cwd: repo },
+      collect: async () => contextOf(),
+    });
+
+    expect(run.steps.find((step) => step.id === 'review-architecture')?.status).toBe('passed');
+    expect(run.decisions).toHaveLength(1);
+    expect(run.decisions[0].kind).toBe('behavior_change');
+  });
+
   it('takes the answer that comes last when an example of the format comes first', () => {
     // The example of the schema carries one entry, and the answer that follows
     // carries none: the example is not the answer, and the audit of the

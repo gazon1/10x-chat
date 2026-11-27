@@ -27,6 +27,11 @@ SMALL=${SMALL-82 67 60}
 MEDIUM=${MEDIUM-71 70 61}
 LARGE=${LARGE-83 74 39}
 
+# The profile of the round. The profiles are measured as separate cohorts and
+# never with each other: a cheaper profile omits model work, so its shorter
+# total is not a faster review. The benchmark segments the runs by this name.
+PROFILE=${PROFILE-standard}
+
 mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
@@ -61,7 +66,7 @@ run_one() {
 
   local before after elapsed out code runid verdict
   before=$(date +%s)
-  out=$(cd "$WT" && timeout "$TIMEOUT" node "$CLI" review --pr "$pr" 2>&1)
+  out=$(cd "$WT" && timeout "$TIMEOUT" node "$CLI" review --pr "$pr" --profile "$PROFILE" 2>&1)
   code=$?
   after=$(date +%s)
   elapsed=$((after - before))
@@ -79,7 +84,7 @@ run_one() {
       "$HOME/.10x-chat/reviews/$runid/review.json" 2>/dev/null) || verdict=UNKNOWN
   fi
 
-  echo "DONE pr=$pr bucket=$bucket exit=$code verdict=$verdict run=$runid wall=${elapsed}s" >> "$LOG"
+  echo "DONE profile=$PROFILE pr=$pr bucket=$bucket exit=$code verdict=$verdict run=$runid wall=${elapsed}s" >> "$LOG"
   # A failed review is a data point too: keep the reason.
   if [ "$code" -ne 0 ]; then
     printf '%s\n' "$out" | tail -6 | sed 's/^/  /' >> "$LOG"
