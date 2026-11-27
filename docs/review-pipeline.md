@@ -669,6 +669,14 @@ frozen cohort is a directory the next round cannot rewrite:
 node scripts/cohort-runs.mjs build/benchmark/after-standard standard <started-at> [<ended-at>]
 ```
 
+A cohort is written once: the script refuses a destination that already holds
+anything, because extraction copies and never deletes, and a second run with a
+narrower window would leave the runs of the first behind — a directory holding
+more than its window says, which the benchmark would then read as samples of
+this round. Remove the directory on purpose to extract again. The window itself
+is validated before the store is read: a timestamp that cannot be parsed is a
+refusal, not a bound that silently stops filtering.
+
 The before/after is what decides whether the metrics of this script are enough
 for the tuning of a round: when the comparison shows a stable signal and a stable
 failure rate, no new metric is needed; when it shows that the existing ones cannot

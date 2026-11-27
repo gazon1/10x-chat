@@ -19,6 +19,25 @@ if (!dir || !profile || !from) {
   process.exit(1);
 }
 
+// The window is parsed before the store is read: `Date.parse` answers NaN for a
+// timestamp it cannot read, every comparison against NaN is false, and a bound
+// that silently stops filtering is worse than one that refuses to run. A
+// mistyped round would otherwise be measured as a cohort of the whole store.
+const fromMs = Date.parse(from);
+const toMs = to === undefined ? undefined : Date.parse(to);
+if (Number.isNaN(fromMs)) {
+  console.error(`cohort-runs: <started-at> is not a timestamp: ${from}`);
+  process.exit(1);
+}
+if (toMs !== undefined && Number.isNaN(toMs)) {
+  console.error(`cohort-runs: <ended-at> is not a timestamp: ${to}`);
+  process.exit(1);
+}
+if (toMs !== undefined && toMs < fromMs) {
+  console.error(`cohort-runs: <ended-at> ${to} is earlier than <started-at> ${from}`);
+  process.exit(1);
+}
+
 const store = process.env.TEN_X_CHAT_HOME
   ? path.join(process.env.TEN_X_CHAT_HOME, 'reviews')
   : path.join(os.homedir(), '.10x-chat', 'reviews');
@@ -32,6 +51,26 @@ try {
     process.exit(1);
   }
   throw error;
+}
+
+// A frozen cohort is written once. Extraction copies into the directory and
+// never deletes from it, so a second extraction with a narrower window would
+// leave the runs of the first one behind — a directory that holds more than its
+// window says, and a benchmark that reads them as samples of this round. The
+// directory is therefore refused when it already holds something, and the
+// caller removes it on purpose.
+try {
+  const existing = await readdir(dir);
+  if (existing.length > 0) {
+    console.error(
+      `cohort-runs: ${dir} already holds ${existing.length} entr(ies) — a cohort is written once. ` +
+        'Remove it to extract again.',
+    );
+    process.exit(1);
+  }
+} catch (error) {
+  // A directory that is not there yet is the normal first extraction.
+  if (error.code !== 'ENOENT') throw error;
 }
 
 await mkdir(dir, { recursive: true });
@@ -50,11 +89,12 @@ for (const entry of entries) {
   if ((run.profile ?? 'standard') !== profile) continue;
   const started = run.startedAt;
   if (typeof started !== 'string') continue;
-  // ISO 8601 in UTC compares correctly as a string, and Date.parse on a
-  // timestamp a record wrote is the same ordering without the trap of a
-  // locally parsed value.
-  if (Date.parse(started) < Date.parse(from)) continue;
-  if (to && Date.parse(started) >= Date.parse(to)) continue;
+  const startedMs = Date.parse(started);
+  // A record whose own timestamp cannot be read is not placed in a window: it
+  // would compare false against both bounds and join whatever cohort ran.
+  if (Number.isNaN(startedMs)) continue;
+  if (startedMs < fromMs) continue;
+  if (toMs !== undefined && startedMs >= toMs) continue;
   await mkdir(path.join(dir, entry), { recursive: true });
   await cp(source, path.join(dir, entry, 'review.json'));
   copied += 1;

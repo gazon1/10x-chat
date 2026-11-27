@@ -84,4 +84,38 @@ describe('the cohort extraction', () => {
     // A closed round does not grow when the next one adds its runs to the store.
     expect(readdirSync(out)).toEqual(['first']);
   });
+
+  it('refuses to write a cohort into a directory that already holds one', () => {
+    // Extraction copies and never deletes, so a second run with a narrower
+    // window would leave the runs of the first behind — a directory holding
+    // more than its window says, read by the benchmark as samples of this
+    // round. The stale run must not survive a re-extraction silently.
+    writeRun('A', '2026-11-27T19:00:00.000Z');
+    writeRun('B', '2026-11-27T21:00:00.000Z');
+
+    const out = path.join(dir, 'after');
+    run([out, 'standard', '2026-11-27T00:00:00Z']);
+    expect(readdirSync(out).sort()).toEqual(['A', 'B']);
+
+    // The narrower window would copy A only; the directory already holds B.
+    expect(() => run([out, 'standard', '2026-11-27T00:00:00Z', '2026-11-27T20:00:00Z'])).toThrow();
+    // Nothing was written by the refused run, and nothing was lost.
+    expect(readdirSync(out).sort()).toEqual(['A', 'B']);
+  });
+
+  it('refuses a window it cannot read instead of filtering nothing', () => {
+    // `Date.parse` answers NaN for a timestamp it cannot read and every
+    // comparison against NaN is false, so a mistyped bound would silently stop
+    // filtering and measure the whole store as this round.
+    writeRun('A', '2026-11-27T19:00:00.000Z');
+
+    const out = path.join(dir, 'after');
+
+    expect(() => run([out, 'standard', 'not-a-date'])).toThrow();
+    expect(() => run([out, 'standard', '2026-11-27T00:00:00Z', 'nope'])).toThrow();
+    expect(() => run([out, 'standard', '2026-11-27T00:00:00Z', '2026-11-26T00:00:00Z'])).toThrow();
+
+    // A refused window writes nothing at all.
+    expect(() => readdirSync(out)).toThrow();
+  });
 });
