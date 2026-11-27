@@ -635,6 +635,42 @@ it('runs the full review through the CLI when no profile is named', async () => 
   });
 });
 
+it('runs a deep review through the CLI and applies its stricter gate', async () => {
+  await withTempHome(async (home) => {
+    const repo = await createReviewRepo();
+    const bin = path.join(home, 'bin');
+    try {
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, 'chatgpt-use'), FAKE_CHATGPT_USE, 'utf-8');
+      await chmod(path.join(bin, 'chatgpt-use'), 0o755);
+      const env = {
+        TEN_X_CHAT_HOME: home,
+        TEN_X_CHAT_CREDENTIAL_STORAGE: 'file',
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+      };
+
+      // deep is standard plus the gate: the stages are the same, so a run
+      // with nothing to verify still approves — and the profile really
+      // reached the pipeline rather than falling back to standard.
+      const deep = await runCli(
+        ['review', '--base', 'main', '--head', 'feature', '--profile', 'deep'],
+        { ...env, FAKE_REVIEW_FINDINGS: 'none' },
+        undefined,
+        { cwd: repo },
+      );
+      expect(deep.code).toBe(0);
+      expect(deep.output).toContain('- Profile: deep');
+      expect(deep.output).toContain('APPROVE');
+      // Every stage ran: deep omits nothing, unlike quick.
+      expect(deep.output).not.toContain('SKIPPED');
+      expect(deep.output).toContain('## Follow-up improvements');
+      expect(deep.output).not.toContain('does not run the advisory assessment');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 it('runs a critical review through the CLI with its Issue', async () => {
   await withTempHome(async (home) => {
     const repo = await createReviewRepo();
