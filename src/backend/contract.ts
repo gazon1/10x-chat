@@ -211,6 +211,16 @@ export interface BackendCapabilities {
   readonly modelSelection: boolean;
   /** The answer can contain images. */
   readonly imageOutput: boolean;
+  /**
+   * How many requests the backend can run at the same time.
+   *
+   * Absent or `1` means the backend is serial: the caller must not issue
+   * concurrent requests to it. A value greater than `1` is the capacity the
+   * caller may use; the pipeline uses it to decide whether independent
+   * reviewer roles may run in parallel. The backend itself may still queue
+   * internally, but the pipeline treats this as the safe concurrency limit.
+   */
+  readonly maxConcurrentRequests?: number;
 }
 
 /**

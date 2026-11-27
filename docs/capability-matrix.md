@@ -7,6 +7,12 @@ must not promise more than the provider behind it can deliver.
 Read the source, not this document, when the two disagree — the code is the
 truth. The date of the inventory is the commit of this file.
 
+`BackendCapabilities.maxConcurrentRequests` is the safe request capacity the
+pipeline may use. It is absent/`1` for current backends unless a backend
+explicitly declares higher capacity; the review pipeline runs independent
+reviewer roles concurrently only when this capacity allows it and otherwise
+keeps deterministic serialized execution.
+
 The decision per provider — migrate to a backend or retain the browser — and the
 inventory of the browser consumers are in
 [docs/playwright-inventory.md](playwright-inventory.md).

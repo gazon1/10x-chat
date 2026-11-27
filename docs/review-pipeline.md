@@ -29,7 +29,12 @@ the reason, never dropped from the table (see *The profiles*).
 | `render-report` | The report of the run. |
 
 The three reviewer passes are isolated: each one is its own request to the
-backend and none of them ever sees the findings of another.
+backend and none of them ever sees the findings of another. When the backend
+reports `capabilities.maxConcurrentRequests` large enough for the roles the
+profile runs, the pipeline runs those independent roles concurrently and keeps
+their steps, findings and decisions in the canonical role order. When the
+backend capacity is absent, `1`, or below the number of roles to run, the
+pipeline keeps the deterministic serialized order.
 
 A review with a governing Issue has two more steps, and only then:
 `check-requirements` reads the Issue again after the reviewers ran, and
@@ -44,13 +49,19 @@ in `review.json` as `improvements` and in the report as
 `## Follow-up improvements`. The assessment is advisory — a failure or an
 unavailable answer does not change the verdict, does not turn a completed
 review into an incomplete one, and does not affect the freshness check or the
-baseline of a governing Issue. An empty recommendation list is a completed
-assessment. The answer of the assessment is chosen by the same rule as the
-answer of a reviewer: the last payload of the top level that is not an example
-of the format is the answer, and the answer is chosen before it is read — a
-malformed list of recommendations is the answer, and its malformed entries are
-reported instead of letting an earlier payload answer in its place. The
-pipeline never creates GitHub issues, never modifies source
+baseline of a governing Issue. It cannot override a failed mandatory gate: a
+review with a blocking/major confirmed finding, an incomplete required step, or
+a stricter profile gate still returns `REQUEST CHANGES` even when the advisory
+assessment produced recommendations. An empty recommendation list is a
+completed assessment. When the selected profile excludes the assessment, or
+required inputs are missing, the run records the omission with the reason in
+`improvements.status='unavailable'` and `improvements.detail`; it does not run
+the assessment model request. The answer of the assessment is chosen by the
+same rule as the answer of a reviewer: the last payload of the top level that
+is not an example of the format is the answer, and the answer is chosen before
+it is read — a malformed list of recommendations is the answer, and its
+malformed entries are reported instead of letting an earlier payload answer in
+its place. The pipeline never creates GitHub issues, never modifies source
 code, never installs dependencies and never executes refactoring.
 
 ## The profiles
@@ -65,7 +76,11 @@ prompt.
 The model-backed stages dominate the latency of a review (§ *The benchmark*);
 the context collection is negligible. A profile therefore buys time by running
 fewer model stages and saying which ones it omitted — never by shortcutting a
-stage it still runs.
+stage it still runs. The pipeline also skips redundant model work only when the
+outcome is already determined by validated input (for example, every candidate
+finding is mechanically settled by revision/line/caller checks); the skip is
+recorded in the `verify-findings` step detail with an explicit reason. It does
+not skip verification because reviewer outputs agree.
 
 | Profile | Reviewer passes | Verification | Advisory assessment | Verdict gate |
 |---|---|---|---|---|

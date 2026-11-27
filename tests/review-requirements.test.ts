@@ -450,6 +450,7 @@ describe('the requirements of a review', () => {
 
   it('gives every reviewer and the verifier the same requirements', async () => {
     await fakeGh({});
+    const headSha = await gitIn(repo, 'rev-parse', 'HEAD');
     const prompts: string[] = [];
     const backend = createFakeBackend([
       {
@@ -480,7 +481,11 @@ describe('the requirements of a review', () => {
         },
       },
       target: { cwd: repo, pr: 42, issue: 7 },
-      collect: async () => contextOf(requirementsOf()),
+      collect: async () => ({
+        ...contextOf(requirementsOf()),
+        baseSha: headSha,
+        headSha,
+      }),
     });
 
     // The three roles and the verification get the requirements — four
