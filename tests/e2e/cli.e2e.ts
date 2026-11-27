@@ -635,6 +635,29 @@ it('runs the full review through the CLI when no profile is named', async () => 
   });
 });
 
+it('explains the cost and coverage of every profile in the help', async () => {
+  await withTempHome(async (home) => {
+    const env = { TEN_X_CHAT_HOME: home, TEN_X_CHAT_CREDENTIAL_STORAGE: 'file' };
+    const help = await runCli(['review', '--help'], env);
+
+    expect(help.code).toBe(0);
+    // The acceptance criterion is the help itself: an operator chooses a
+    // profile from here, and it has to say what each one costs and omits.
+    expect(help.output).toContain('--profile');
+    for (const profile of ['quick', 'standard', 'deep', 'critical']) {
+      expect(help.output).toContain(profile);
+    }
+    // The help wraps to the width of the terminal, so the phrases are checked
+    // in the words that survive a line break rather than as whole sentences.
+    expect(help.output).toContain('cost/coverage profile');
+    expect(help.output).toContain('verification, no advisory assessment');
+    expect(help.output).toContain('never');
+    expect(help.output).toContain('every unverified finding asks for changes');
+    expect(help.output).toContain('--issue is required');
+    expect(help.output).toContain('default: standard');
+  });
+});
+
 it('runs a deep review through the CLI and applies its stricter gate', async () => {
   await withTempHome(async (home) => {
     const repo = await createReviewRepo();
