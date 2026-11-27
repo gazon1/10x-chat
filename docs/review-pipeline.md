@@ -503,9 +503,12 @@ node scripts/review-latency.mjs --baseline <path>  # before/after against a base
 
 It buckets the runs by the number of changed files (`small` 1–5, `medium`
 6–20, `large` more than 20), times only the runs that finished every stage, and
-reports p50 and p95 per bucket and per stage. A p95 needs at least 20 samples:
-below that the cell gives the sample size, because the nearest-rank p95 of a
-small sample is its maximum.
+reports p50, p95 and the observed range per bucket and per stage. A p95 needs at
+least 20 samples: below that the cell gives the sample size, because the
+nearest-rank p95 of a small sample is its maximum. The range is printed next to
+the median because a sample this small is a shape, not a bound: three runs give
+a median and a spread, and the median alone cannot say how much of a difference
+it can carry.
 
 The report is segmented the way a before/after has to be: by the size of the
 change (`## By size`), by the stage with its failure and its concurrency
@@ -542,6 +545,11 @@ them so two baselines are never confused. A verdict of `REQUEST CHANGES` is a
 result and not a failure of the measurement.
 
 #### 2026-11-26, with the timing of this document
+
+> The round that validated this baseline against the optimized pipeline is
+> [review-latency-validation-112.md](review-latency-validation-112.md): it
+> replayed the same nine fixtures and found no Standard speedup on the real
+> backend — the model calls are the whole cost and they did not shrink.
 
 Nine reviews — three per bucket — on `chatgpt-use` / `chatgpt` with the default
 model and timeout. Every one of the nine finished every stage, so all nine are
@@ -635,6 +643,39 @@ queue and the execution, and the failure rate of the runs that did not finish
 every stage — the latency of the stages of the change, the verdicts and the
 failure rate of both. A stage that did not run in one set is a dash in it, so a
 change that is negative is a change that measured less.
+
+**A profile is compared with itself and never with another.** The sections of
+the comparison are per profile (`## Total — standard`, `## Stages — quick`, …),
+because a cheaper profile omits model work: its total is shorter by
+construction, and a Standard-to-Quick change printed as one table would report
+the review it did not do as a speedup. A profile that exists on one side only is
+named as **not a comparison** instead of being set against an empty set. A
+cohort is measured by running a round with `PROFILE=<name>`, which
+`scripts/baseline-reviews.sh` passes to every run and records in the log line of
+each run.
+
+**A fixture replayed before and after is a matched pair, and a fixture on one
+side only is not one.** The `## Fixtures — <profile>` section pairs the runs by
+the pull request they reviewed and says how many of them were replayed. Two
+medians of two sets taken on different pull requests are two shapes, not a
+comparison: the change under review moves the time of a run as much as a change
+to the pipeline does, so a round that reuses the fixtures of the baseline is the
+only one that can attribute a difference to the pipeline.
+
+Each round is copied out of the store before the next one adds its runs, so a
+frozen cohort is a directory the next round cannot rewrite:
+
+```bash
+node scripts/cohort-runs.mjs build/benchmark/after-standard standard <started-at> [<ended-at>]
+```
+
+A cohort is written once: the script refuses a destination that already holds
+anything, because extraction copies and never deletes, and a second run with a
+narrower window would leave the runs of the first behind — a directory holding
+more than its window says, which the benchmark would then read as samples of
+this round. Remove the directory on purpose to extract again. The window itself
+is validated before the store is read: a timestamp that cannot be parsed is a
+refusal, not a bound that silently stops filtering.
 
 The before/after is what decides whether the metrics of this script are enough
 for the tuning of a round: when the comparison shows a stable signal and a stable

@@ -100,13 +100,20 @@ function measurementOf(run) {
     backend: run.backend?.name,
     provider: run.backend?.provider,
     model: run.backend?.model,
-    // A stage that failed or was skipped is not the same a stage that ran: the
-    // count of an incomplete run is not compared with a complete one. The
-    // assessment never gates the verdict, so it does not decide completeness.
-    // Completeness is read on the steps of the record, not on the ones that
-    // carry a duration: a step that did not run has no duration, and an approval
-    // on such a run is an approval on a run that did not judge.
-    complete: run.steps.every((step) => step.status === 'passed'),
+    // A stage that failed or is skipped for a reason other than the profile is
+    // not the same a stage that ran: the count of an incomplete run is not
+    // compared with a complete one. The assessment never gates the verdict, so
+    // it does not decide completeness. Completeness is read on the steps of the
+    // record, not on the ones that carry a duration: a step that did not run has
+    // no duration, and an approval on such a run is an approval on a run that
+    // did not judge.
+    //
+    // A step the *profile* omits is not a hole in the run: `quick` runs one
+    // reviewer and no verification by design, and counting that against it made
+    // every quick run incomplete — so the one profile whose cost a cohort most
+    // needs was the one whose latency was never timed. The flag comes from the
+    // record; an older record has none and is read as before.
+    complete: run.steps.every((step) => step.status === 'passed' || step.omittedByProfile === true),
     assessmentMs,
     stages: timed.map((step) => ({
       id: step.id,
@@ -120,6 +127,11 @@ function measurementOf(run) {
     // A run of an older version has no profile, and it is the full review it
     // was — the same default the pipeline reads the record with.
     profile: run.profile ?? DEFAULT_PROFILE,
+    // The fixture a run reviewed: two runs of one pull request are one
+    // comparison, and two runs of different pull requests are two samples that
+    // happened to be taken together.
+    pr: run.context?.pr,
+    startedAt: run.startedAt,
   };
 }
 
@@ -306,10 +318,16 @@ function stageTable(runs) {
   return lines;
 }
 
-/** The lines of the table of the latency of the changes, by the size. */
+/**
+ * The lines of the table of the latency of the changes, by the size.
+ *
+ * The range sits next to the median because a sample this small has a spread
+ * that matters: three runs give a median and a range, and the range is what
+ * says how much of a difference the median alone cannot.
+ */
 function sizeTable(runs) {
-  const lines = ['| Size | Runs | Total p50 | Total p95 | Queue p50 | Execution p50 |'];
-  lines.push('|---|---|---|---|---|---|');
+  const lines = ['| Size | Runs | Total p50 | Total p95 | Range | Queue p50 | Execution p50 |'];
+  lines.push('|---|---|---|---|---|---|---|');
   const complete = completeRuns(runs);
   for (const bucket of BUCKETS) {
     const of = complete.filter((run) => run.bucket === bucket.name);
@@ -320,9 +338,10 @@ function sizeTable(runs) {
         .filter((run) => run.measured)
         .map((run) => (run.queueWait > 0 ? run.execution : run.total)),
     );
+    const range = total === undefined ? '—' : `${fmt(total.min)} – ${fmt(total.max)}`;
     lines.push(
-      `| ${bucket.name} | ${of.length} | ${fmt(total?.p50)} | ${fmtP95(total)} | ${fmt(queue?.p50)} | ` +
-        `${fmt(execution?.p50)} |`,
+      `| ${bucket.name} | ${of.length} | ${fmt(total?.p50)} | ${fmtP95(total)} | ${range} | ` +
+        `${fmt(queue?.p50)} | ${fmt(execution?.p50)} |`,
     );
   }
   return lines;
@@ -411,19 +430,24 @@ function report(runs) {
   return lines.join('\n');
 }
 
-/** The lines of the before/after of two sets of runs. */
-function beforeAfter(before, after) {
+/**
+ * The lines of the before/after of one profile.
+ *
+ * The profiles are compared with themselves and never with each other: a
+ * cheaper profile omits model work, so its total is shorter by construction and
+ * a change from Standard to Quick reads as a speedup that bought less review.
+ */
+function comparisonLines(profile, before, after, unmatched) {
   const beforeTotals = totals(before);
   const afterTotals = totals(after);
   const lines = [];
-  lines.push('# Review latency — before/after');
+  lines.push(`## Total — ${profile}`);
   lines.push('');
-  lines.push('## Total');
-  lines.push('');
+  if (unmatched) lines.push(`**Not a comparison:** ${unmatched}`, '');
   lines.push(`- Before: ${totalLine(before)}`);
   lines.push(`- After: ${totalLine(after)}`);
   lines.push('');
-  lines.push('## Stages');
+  lines.push(`## Stages — ${profile}`);
   lines.push('');
   lines.push('| Stage | Before p50 | After p50 | Change p50 |');
   lines.push('|---|---:|---:|---:|');
@@ -442,12 +466,12 @@ function beforeAfter(before, after) {
     );
   }
   lines.push('');
-  lines.push('## Verdicts');
+  lines.push(`## Verdicts — ${profile}`);
   lines.push('');
   lines.push(`- Before: ${verdictText(before)}`);
   lines.push(`- After: ${verdictText(after)}`);
   lines.push('');
-  lines.push('## Failures');
+  lines.push(`## Failures — ${profile}`);
   lines.push('');
   lines.push(
     `- Before: ${beforeTotals.failure.failed} of ${before.length} run(s) did not finish every stage; ` +
@@ -457,6 +481,93 @@ function beforeAfter(before, after) {
     `- After: ${afterTotals.failure.failed} of ${after.length} run(s) did not finish every stage; ` +
       `${timedOutStages(after)} stage(s) timed out`,
   );
+  lines.push('');
+  return lines;
+}
+
+/** The profiles a before/after compares, in the order of the coverage map. */
+function comparedProfiles(before, after) {
+  return [...new Set([...before, ...after].map((run) => run.profile))].sort();
+}
+
+/** The pull request a run reviewed, as a label of a table. */
+function prLabel(run) {
+  return typeof run.pr === 'number' ? `#${run.pr}` : '—';
+}
+
+/**
+ * The lines of the fixtures: the same pull request, before and after.
+ *
+ * A median of two sets taken on different pull requests is a shape, not a
+ * comparison: the change under review moves the time of a run as much as the
+ * change to the pipeline does. The pairing says which fixtures were replayed.
+ */
+function fixtureLines(before, after, profile) {
+  const beforeOf = before.filter((run) => run.profile === profile);
+  const afterOf = after.filter((run) => run.profile === profile);
+  const prs = [...new Set([...beforeOf, ...afterOf].map((run) => run.pr))]
+    .filter((pr) => typeof pr === 'number')
+    .sort((a, b) => a - b);
+  if (prs.length === 0) return [];
+  const lines = [`## Fixtures — ${profile}`, ''];
+  lines.push('| PR | Size | Before | After | Change | Replayed |');
+  lines.push('|---|---|---:|---:|---:|---|');
+  let replayed = 0;
+  for (const pr of prs) {
+    const beforeRuns = beforeOf.filter((run) => run.pr === pr && run.complete);
+    const afterRuns = afterOf.filter((run) => run.pr === pr && run.complete);
+    const beforeP50 = summarize(beforeRuns.map((run) => run.total))?.p50;
+    const afterP50 = summarize(afterRuns.map((run) => run.total))?.p50;
+    // The pairing is the replay: a fixture on one side only is the size bucket
+    // it belongs to and not a before/after of a change.
+    const both = beforeP50 !== undefined && afterP50 !== undefined;
+    if (both) replayed += 1;
+    const bucket = bucketOf(
+      [...beforeRuns, ...afterRuns].reduce((max, run) => Math.max(max, run.changedFiles), 0),
+    );
+    lines.push(
+      `| ${prLabel({ pr })} | ${bucket} | ${fmt(beforeP50)} | ${fmt(afterP50)} | ${
+        both ? fmt(afterP50 - beforeP50) : '—'
+      } | ${both ? 'yes' : 'no'} |`,
+    );
+  }
+  lines.push('');
+  lines.push(
+    `${replayed} of ${prs.length} fixture(s) replayed. ` +
+      'Only a replayed fixture is a matched pair — the rest is a sample per size.',
+  );
+  lines.push('');
+  return lines;
+}
+
+/** The lines of the before/after of two sets of runs, one section per profile. */
+function beforeAfter(before, after) {
+  const lines = ['# Review latency — before/after', ''];
+  lines.push(
+    'Each profile is compared with itself. A profile is not a faster or slower ' +
+      'version of another: it runs a different amount of review, and a total of ' +
+      'one profile next to the total of another is not a speedup.',
+  );
+  lines.push('');
+  for (const profile of comparedProfiles(before, after)) {
+    const beforeOf = before.filter((run) => run.profile === profile);
+    const afterOf = after.filter((run) => run.profile === profile);
+    // A comparison needs the profile on both sides: a profile measured only
+    // after the change has no baseline, and a section that printed its total
+    // against an empty set would read as a comparison that went to zero.
+    const unmatched =
+      beforeOf.length === 0
+        ? `the baseline has no ${profile} run — this profile is not compared.`
+        : afterOf.length === 0
+          ? `the compared set has no ${profile} run — the baseline cannot be compared.`
+          : undefined;
+    if (unmatched) {
+      lines.push(`## Total — ${profile}`, '', `**Not a comparison:** ${unmatched}`, '');
+      continue;
+    }
+    lines.push(...comparisonLines(profile, beforeOf, afterOf));
+    lines.push(...fixtureLines(before, after, profile));
+  }
   return lines.join('\n');
 }
 

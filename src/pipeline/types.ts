@@ -142,6 +142,18 @@ export interface StepOutcome {
   submission?: BackendSubmission;
   /** Why a failed stage failed — the kind of the backend failure. */
   failureKind?: BackendFailureKind;
+  /**
+   * The stage was omitted on purpose by the profile of the run.
+   *
+   * A `skipped` step is normally a step that could not run, and a run with one
+   * is incomplete. The profile of a run may omit a stage by design — `quick`
+   * runs one reviewer and no verification — and that is not a failure of the
+   * run: it is the coverage its caller asked for. The flag keeps the two
+   * apart, so a cheaper profile can be measured without being read as a broken
+   * run. It never relaxes the gate: `quick` still cannot approve, because its
+   * own coverage has no verification.
+   */
+  omittedByProfile?: boolean;
 }
 
 /** What answered a review run — the backend and the model of it. */
