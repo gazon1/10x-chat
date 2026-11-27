@@ -1047,6 +1047,13 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   const startedAt = new Date(now()).toISOString();
   const steps: StepOutcome[] = [];
   const collect = options.collect ?? collectReviewContext;
+  // The profile is validated before anything else happens. A name this
+  // version does not know is a mistake of the caller, and collecting the
+  // context first would run git and `gh` against the repository — the
+  // collected context of a request that was never valid is wasted work, and
+  // the caller waits for it before learning the name was wrong.
+  const profile = profileOf(options.profile);
+  const coverage = coverageOf(profile);
 
   // ── collect-context ───────────────────────────────────────────
   const collectStart = now();
@@ -1106,8 +1113,6 @@ export async function runReviewPipeline(options: ReviewPipelineOptions): Promise
   // ── the reviewer roles ────────────────────────────────────────
   // Every role of the pipeline keeps its id, whatever the profile: a stage the
   // profile omits is reported as skipped, never dropped from the record.
-  const profile = profileOf(options.profile);
-  const coverage = coverageOf(profile);
   const roles: ReviewRole[] = ['correctness', 'architecture', 'tests'];
   const candidates: Finding[] = [];
   const reported: Decision[] = [];

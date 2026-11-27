@@ -5082,14 +5082,22 @@ describe('the review profiles', () => {
     // never sees the type. A typo must not be read as an unknown profile (a
     // crash on the first field of the coverage) and must not quietly become
     // the full review either.
+    let collected = 0;
     await expect(
       runReviewPipeline({
         backend: createFakeBackend(CLEAN),
         target: { cwd: repo },
-        collect: async () => contextOf(),
+        collect: async () => {
+          collected += 1;
+          return contextOf();
+        },
         profile: 'thorogh' as 'quick',
       }),
     ).rejects.toThrow(/Unknown review profile: "thorogh"/);
+    // The refusal comes before the work: collecting the context of a request
+    // that was never valid runs git and gh against the repository, and the
+    // caller waits for all of it before learning the name was wrong.
+    expect(collected).toBe(0);
   });
 
   it('names an unknown profile as unknown instead of dressing it up as standard', async () => {
