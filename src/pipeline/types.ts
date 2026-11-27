@@ -127,6 +127,13 @@ export interface StepOutcome {
    */
   queueWaitMs?: number;
   /**
+   * How many backend slots were active when the stage outcome was reported.
+   *
+   * Completion-time snapshot, not peak concurrency. Absent when the backend
+   * does not report slot diagnostics.
+   */
+  activeSlots?: number;
+  /**
    * Whether the failed request reached the model.
    *
    * It is what makes a failure actionable: `not_submitted` can be sent again,
@@ -323,6 +330,8 @@ export interface ReviewImprovements {
   durationMs?: number;
   /** The part of that time the assessment waited for the backend to be free. */
   queueWaitMs?: number;
+  /** Backend slots active while the assessment ran, when reported. */
+  activeSlots?: number;
 }
 
 /** The result of a review run. */

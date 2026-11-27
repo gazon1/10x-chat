@@ -9,8 +9,8 @@ import type {
   BackendStatus,
   BackendSubmission,
 } from './contract.js';
-import { withQueueWait } from './contract.js';
 import { nodeProcessRunner, type ProcessResult, type ProcessRunner } from './process-runner.js';
+import { createRequestQueue, getSharedRequestQueue, type RequestQueue } from './queue.js';
 
 export type { ProcessResult, ProcessRunner };
 export { nodeProcessRunner };
@@ -30,10 +30,13 @@ export const CHROME_USE_PERPLEXITY_BACKEND_NAME = 'chrome-use-perplexity';
 export const CHROME_USE_PERPLEXITY_CAPABILITIES: BackendCapabilities = Object.freeze({
   attachments: false,
   streaming: false,
+  // Before-submission cancellation is explicit. Active cancellation is best
+  // effort and not guaranteed to interrupt an in-flight chrome-use command.
   cancellation: false,
   conversationReuse: false,
   modelSelection: false,
   imageOutput: false,
+  maxConcurrentRequests: 1,
 });
 
 const PERPLEXITY_URL = 'https://www.perplexity.ai';
@@ -63,6 +66,15 @@ export interface ChromeUsePerplexityBackendOptions {
   pollMs?: number;
   /** Consecutive unchanged polls required before considering the answer complete. */
   stablePolls?: number;
+  /**
+   * Serialization boundary for this backend.
+   *
+   * By default, backends created in the same process with the same `command`
+   * share a queue. That models one chrome-use/Chrome session boundary per CLI
+   * command. Pass an explicit queue to isolate tests or intentionally model a
+   * separate session.
+   */
+  queue?: RequestQueue;
 }
 
 const nowMs = (): number => Date.now();
@@ -176,40 +188,29 @@ export function createChromeUsePerplexityBackend(
     { submission: BackendSubmission; text?: string; truncated?: boolean; cancelled?: boolean }
   >();
 
-  let queue: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
-    const result = queue.then(task, task);
-    queue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-
-  /**
-   * Run an ask through the queue, and report how long it waited.
-   *
-   * Only the queue knows when a request reached the front of it. The caller's
-   * wall clock minus this wait is the time the provider really worked.
-   */
+  const capacity = CHROME_USE_PERPLEXITY_CAPABILITIES.maxConcurrentRequests ?? 1;
+  // Session boundary: same configured chrome-use command/profile => same queue
+  // by default. Custom runners (tests/injected process boundaries) get an
+  // isolated queue unless an explicit queue is passed.
+  const queue =
+    options.queue ??
+    (options.runner && options.runner !== nodeProcessRunner
+      ? createRequestQueue(capacity)
+      : getSharedRequestQueue(`chrome-use-perplexity:${command}`, capacity));
   const queued = (
+    request: BackendRequest,
     task: () => Promise<BackendOutcome<BackendResponse>>,
-  ): Promise<BackendOutcome<BackendResponse>> => {
-    const queuedAt = Date.now();
-    return serialize(async () => {
-      const startedAt = Date.now();
-      const outcome = await task();
-      return withQueueWait(outcome, startedAt - queuedAt);
-    });
-  };
+  ): Promise<BackendOutcome<BackendResponse>> =>
+    queue.enqueue(request, task);
 
   const run = async (
     args: string[],
     timeoutMs?: number,
     input?: string,
+    signal?: AbortSignal,
   ): Promise<{ result?: ProcessResult; started: boolean; startError?: string }> => {
     try {
-      const result = await runner.run(command, args, { timeoutMs, input });
+      const result = await runner.run(command, args, { timeoutMs, input, ...(signal ? { signal } : {}) });
       return { result, started: true };
     } catch (error) {
       return {
@@ -226,6 +227,7 @@ export function createChromeUsePerplexityBackend(
     submitted: boolean,
     input?: string,
     submitAttempt = false,
+    signal?: AbortSignal,
   ): Promise<
     | { ok: true; json?: ChromeJson; result: ProcessResult }
     | { ok: false; outcome: FailureOutcome; started: boolean }
@@ -239,6 +241,7 @@ export function createChromeUsePerplexityBackend(
       ['--session', session, ...sub],
       runTimeout,
       input,
+      signal,
     );
     if (!started || !result) {
       const detail = startError ?? 'failed to start chrome-use';
@@ -275,6 +278,28 @@ export function createChromeUsePerplexityBackend(
         ok: false,
         outcome: classifyCommandError(detail, submitted, false),
         started: false,
+      };
+    }
+    if (result.cancelled || signal?.aborted) {
+      if (submitAttempt && !submitted) {
+        return {
+          ok: false,
+          outcome: failure(
+            'cancelled',
+            'submitted',
+            `The chrome-use command was cancelled during submit (${sub[0] ?? 'chrome-use'}) - prompt may have been submitted.`,
+          ),
+          started: true,
+        };
+      }
+      return {
+        ok: false,
+        outcome: failure(
+          'cancelled',
+          submitted ? 'submitted' : 'not_submitted',
+          `The chrome-use command was cancelled (${sub[0] ?? 'chrome-use'}).`,
+        ),
+        started: true,
       };
     }
     if (result.timedOut) {
@@ -401,6 +426,16 @@ export function createChromeUsePerplexityBackend(
       }
       return undefined;
     };
+    const ensureNotAborted = (submitted: boolean): FailureOutcome | undefined => {
+      if (!request.signal?.aborted) return undefined;
+      const submission = submitted ? 'submitted' : 'not_submitted';
+      known.set(request.requestId, {
+        submission,
+        text: partialText || undefined,
+        cancelled: true,
+      });
+      return failure('cancelled', submission, `The request '${request.requestId}' was cancelled.`);
+    };
 
     let submitted = false;
     let partialText = '';
@@ -422,15 +457,26 @@ export function createChromeUsePerplexityBackend(
     };
 
     try {
-      let t = ensureTime(false);
+      let t = ensureNotAborted(false) ?? ensureTime(false);
       if (t) return t;
 
-      const opened = await cmd(session, ['open', PERPLEXITY_URL, '--json'], remaining(), false);
+      const opened = await cmd(
+        session,
+        ['open', PERPLEXITY_URL, '--json'],
+        remaining(),
+        false,
+        undefined,
+        false,
+        request.signal,
+      );
       if (!opened.ok) {
         // A chrome-use that never ran created no session: there is nothing to
         // tear down. A command that ran may have created one.
         sessionStarted = opened.started;
-        known.set(request.requestId, { submission: opened.outcome.failure.submission });
+        known.set(request.requestId, {
+          submission: opened.outcome.failure.submission,
+          cancelled: opened.outcome.failure.kind === 'cancelled' ? true : undefined,
+        });
         return opened.outcome;
       }
       sessionStarted = true;
@@ -444,9 +490,12 @@ export function createChromeUsePerplexityBackend(
         ],
         Math.min(remaining() ?? 8_000, 8_000),
         false,
+        undefined,
+        false,
+        request.signal,
       ).catch(() => undefined);
 
-      t = ensureTime(false);
+      t = ensureNotAborted(false) ?? ensureTime(false);
       if (t) return t;
 
       const waited = await cmd(
@@ -454,9 +503,16 @@ export function createChromeUsePerplexityBackend(
         ['wait', COMPOSER, '--json'],
         Math.min(remaining() ?? 20_000, 20_000),
         false,
+        undefined,
+        false,
+        request.signal,
       );
       if (!waited.ok) {
         const f = waited.outcome.failure;
+        if (f.kind === 'cancelled') {
+          known.set(request.requestId, { submission: f.submission, cancelled: true });
+          return waited.outcome;
+        }
         // Before submit nothing reached Perplexity; keep submission valid
         // (timeout kind requires submitted, so map pre-submit timeout to unavailable).
         const kind =
@@ -475,16 +531,22 @@ export function createChromeUsePerplexityBackend(
         ['eval', `document.querySelectorAll('.prose').length`, '--json'],
         Math.min(remaining() ?? 8_000, 8_000),
         false,
+        undefined,
+        false,
+        request.signal,
       );
       if (!base.ok) {
-        known.set(request.requestId, { submission: base.outcome.failure.submission });
+        known.set(request.requestId, {
+          submission: base.outcome.failure.submission,
+          cancelled: base.outcome.failure.kind === 'cancelled' ? true : undefined,
+        });
         return base.outcome;
       }
       const baseCountRaw = dataRecord(base.json?.data)?.result;
       const baseline = typeof baseCountRaw === 'number' ? baseCountRaw : Number(baseCountRaw ?? 0);
       const baseIndex = Number.isFinite(baseline) ? baseline : 0;
 
-      t = ensureTime(false);
+      t = ensureNotAborted(false) ?? ensureTime(false);
       if (t) return t;
 
       // Prefer fill --stdin so the prompt travels via stdin (not argv); fall
@@ -495,8 +557,14 @@ export function createChromeUsePerplexityBackend(
         Math.min(remaining() ?? 30_000, 30_000),
         false,
         request.prompt,
+        false,
+        request.signal,
       );
       if (!fillRes.ok) {
+        if (fillRes.outcome.failure.kind === 'cancelled') {
+          known.set(request.requestId, { submission: fillRes.outcome.failure.submission, cancelled: true });
+          return fillRes.outcome;
+        }
         const script = `(() => { const el = document.querySelector(${JSON.stringify(COMPOSER)}); if (!el) return false; el.focus(); const t = ${JSON.stringify(request.prompt)}; el.innerText = t; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return (el.innerText||'').trim().length > 0; })()`;
         const evalFill = await cmd(
           session,
@@ -504,9 +572,14 @@ export function createChromeUsePerplexityBackend(
           Math.min(remaining() ?? 30_000, 30_000),
           false,
           script,
+          false,
+          request.signal,
         );
         if (!evalFill.ok) {
-          known.set(request.requestId, { submission: evalFill.outcome.failure.submission });
+          known.set(request.requestId, {
+            submission: evalFill.outcome.failure.submission,
+            cancelled: evalFill.outcome.failure.kind === 'cancelled' ? true : undefined,
+          });
           return evalFill.outcome;
         }
         const fillValue = dataRecord(evalFill.json?.data)?.result;
@@ -524,9 +597,12 @@ export function createChromeUsePerplexityBackend(
         ['press', 'Escape', '--json'],
         Math.min(remaining() ?? 3_000, 3_000),
         false,
+        undefined,
+        false,
+        request.signal,
       ).catch(() => undefined);
 
-      t = ensureTime(false);
+      t = ensureNotAborted(false) ?? ensureTime(false);
       if (t) return t;
 
       const clicked = await cmd(
@@ -536,10 +612,14 @@ export function createChromeUsePerplexityBackend(
         false,
         undefined,
         true,
+        request.signal,
       );
       if (!clicked.ok) {
         // A failed click cannot be proven unexecuted; never retry with Enter.
-        known.set(request.requestId, { submission: clicked.outcome.failure.submission });
+        known.set(request.requestId, {
+          submission: clicked.outcome.failure.submission,
+          cancelled: clicked.outcome.failure.kind === 'cancelled' ? true : undefined,
+        });
         return clicked.outcome;
       }
       submitted = true;
@@ -549,13 +629,14 @@ export function createChromeUsePerplexityBackend(
       let stableCount = 0;
       let lastHtml = '';
       for (;;) {
-        t = ensureTime(true);
+        t = ensureNotAborted(true) ?? ensureTime(true);
         if (t) {
           if (partialText) t.failure.partialText = partialText;
           known.set(request.requestId, {
             submission: t.failure.submission,
             text: partialText || undefined,
-            truncated: true,
+            truncated: t.failure.kind === 'timeout' ? true : undefined,
+            cancelled: t.failure.kind === 'cancelled' ? true : undefined,
           });
           return t;
         }
@@ -568,12 +649,16 @@ export function createChromeUsePerplexityBackend(
           ],
           Math.min(remaining() ?? 10_000, 10_000),
           true,
+          undefined,
+          false,
+          request.signal,
         );
         if (!snap.ok) {
           if (partialText) snap.outcome.failure.partialText = partialText;
           known.set(request.requestId, {
             submission: snap.outcome.failure.submission,
             text: partialText || undefined,
+            cancelled: snap.outcome.failure.kind === 'cancelled' ? true : undefined,
           });
           return snap.outcome;
         }
@@ -616,10 +701,18 @@ export function createChromeUsePerplexityBackend(
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      const out = classifyCommandError(detail, submitted, false);
+      const out = request.signal?.aborted
+        ? failure(
+            'cancelled',
+            submitted ? 'submitted' : 'not_submitted',
+            `The request '${request.requestId}' was cancelled.`,
+            partialText || undefined,
+          )
+        : classifyCommandError(detail, submitted, false);
       known.set(request.requestId, {
         submission: out.failure.submission,
         text: partialText || undefined,
+        cancelled: out.failure.kind === 'cancelled' ? true : undefined,
       });
       return out;
     } finally {
@@ -630,7 +723,7 @@ export function createChromeUsePerplexityBackend(
   return {
     name: CHROME_USE_PERPLEXITY_BACKEND_NAME,
     capabilities: CHROME_USE_PERPLEXITY_CAPABILITIES,
-    ask: (request) => queued(() => ask(request)),
+    ask: (request) => queued(request, () => ask(request)),
     status: async (requestId: string): Promise<BackendStatus> => {
       const k = known.get(requestId);
       // This POC keeps no persistent receipt across processes; without
@@ -651,9 +744,12 @@ export function createChromeUsePerplexityBackend(
         'unknown',
         `The chrome-use Perplexity backend does not support resuming requests (request '${request.requestId}').`,
       ),
-    cancel: async (_requestId: string): Promise<BackendOutcome<{ cancelled: boolean }>> => ({
-      ok: true,
-      value: { cancelled: false },
-    }),
+    cancel: async (_requestId: string): Promise<BackendOutcome<{ cancelled: boolean }>> => {
+      // This POC has no persistent receipt and cannot safely interrupt an active
+      // chrome-use command across process boundaries. It reports the explicit
+      // before-submission cancellation contract: queue/signal-driven cancellation
+      // is supported; active in-flight interruption is not guaranteed.
+      return { ok: true, value: { cancelled: false } };
+    },
   };
 }

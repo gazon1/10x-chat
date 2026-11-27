@@ -4424,7 +4424,7 @@ describe('the timings of a review', () => {
     }
     // The report shows the two apart, for a reader who does not parse JSON.
     expect(run.report).toContain('## Timing');
-    expect(run.report).toContain('| review-correctness | 4060 ms | 4000 ms | 60 ms | PASSED |');
+    expect(run.report).toContain('| review-correctness | 4060 ms | 4000 ms | 60 ms | — | PASSED |');
     expect(run.report).toContain('waited for the backend to be free');
   });
 
@@ -4444,7 +4444,7 @@ describe('the timings of a review', () => {
     expect(step?.queueWaitMs).toBeUndefined();
     expect(step?.durationMs).toBe(30);
     // The column exists and says that nobody measured it.
-    expect(run.report).toContain('| review-tests | 30 ms | — | — | PASSED |');
+    expect(run.report).toContain('| review-tests | 30 ms | — | — | — | PASSED |');
   });
 
   it('records the kind and the submission state of a failed stage', async () => {
@@ -5628,6 +5628,145 @@ describe('the review profiles', () => {
         'architecture',
         'tests',
       ]);
+    });
+  });
+
+  describe('backend-aware scheduling (#102)', () => {
+    it('does not start queued review work after the owning run is cancelled', async () => {
+      const asks: string[] = [];
+      let releaseFirst: (() => void) | undefined;
+      const firstHeld = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const backend = createFakeBackend(CLEAN);
+      const serial: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 1 },
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 20));
+          if (request.prompt.startsWith('# Role: correctness')) {
+            await firstHeld;
+          }
+          if (request.signal?.aborted) {
+            return {
+              ok: false,
+              failure: {
+                kind: 'cancelled',
+                message: 'cancelled',
+                submission: 'not_submitted',
+              },
+            };
+          }
+          return backend.ask(request);
+        },
+      };
+      const controller = new AbortController();
+      const running = runReviewPipeline({
+        backend: serial,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+        signal: controller.signal,
+      });
+
+      await vi.waitFor(() => {
+        expect(asks.some((prompt) => prompt.startsWith('# Role: correctness'))).toBe(true);
+      });
+      controller.abort();
+      releaseFirst?.();
+      const run = await running;
+
+      expect(asks.filter((prompt) => prompt.startsWith('# Role: architecture'))).toHaveLength(0);
+      expect(asks.filter((prompt) => prompt.startsWith('# Role: tests'))).toHaveLength(0);
+      const arch = run.steps.find((step) => step.id === 'review-architecture');
+      const tests = run.steps.find((step) => step.id === 'review-tests');
+      expect(arch?.status).toBe('failed');
+      expect(arch?.failureKind).toBe('cancelled');
+      expect(arch?.submission).toBe('not_submitted');
+      expect(tests?.status).toBe('failed');
+      expect(tests?.failureKind).toBe('cancelled');
+      expect(tests?.submission).toBe('not_submitted');
+    });
+
+    it('passes run cancellation signal to backend requests', async () => {
+      const signals: Array<AbortSignal | undefined> = [];
+      const backend = createFakeBackend(CLEAN);
+      const observed: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          signals.push(request.signal);
+          return backend.ask(request);
+        },
+      };
+      const controller = new AbortController();
+      await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+        signal: controller.signal,
+      });
+
+      expect(signals.length).toBeGreaterThan(0);
+      expect(signals.every((signal) => signal === controller.signal)).toBe(true);
+    });
+
+    it('does not start verification or advisory assessment after cancellation', async () => {
+      const asks: string[] = [];
+      const backend = createFakeBackend([
+        { prompt: '# Role: correctness', answer: answerWith([FINDING]) },
+        { prompt: '# Role: architecture', answer: answerWith([]) },
+        { prompt: '# Role: tests', answer: answerWith([]) },
+      ]);
+      const controller = new AbortController();
+      const observed: typeof backend = {
+        ...backend,
+        capabilities: { ...backend.capabilities, maxConcurrentRequests: 1 },
+        ask: async (request) => {
+          asks.push(request.prompt.slice(0, 30));
+          if (request.prompt.startsWith('# Role: tests')) controller.abort();
+          if (request.signal?.aborted && !request.prompt.startsWith('# Role: tests')) {
+            return {
+              ok: false,
+              failure: { kind: 'cancelled', message: 'cancelled', submission: 'not_submitted' },
+            };
+          }
+          return backend.ask(request);
+        },
+      };
+
+      const run = await runReviewPipeline({
+        backend: observed,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+        signal: controller.signal,
+      });
+
+      expect(asks.some((prompt) => prompt.startsWith('# Verification'))).toBe(false);
+      expect(asks.some((prompt) => prompt.startsWith('# Follow-up improvements'))).toBe(false);
+      expect(run.improvements?.status).toBe('unavailable');
+      expect(run.improvements?.detail).toContain('cancelled');
+    });
+
+    it('surfaces backend active slot diagnostics in step timing', async () => {
+      const backend = createFakeBackend(CLEAN);
+      const instrumented: typeof backend = {
+        ...backend,
+        ask: async (request) => {
+          const outcome = await backend.ask(request);
+          return outcome.ok
+            ? { ok: true, value: { ...outcome.value, queueWaitMs: 5, activeSlots: 2 } }
+            : outcome;
+        },
+      };
+      const run = await runReviewPipeline({
+        backend: instrumented,
+        target: { cwd: repo },
+        collect: async () => contextOf(),
+      });
+      const step = run.steps.find((candidate) => candidate.id === 'review-correctness');
+      expect(step?.queueWaitMs).toBe(5);
+      expect(step?.activeSlots).toBe(2);
+      expect(run.report).toContain('| review-correctness | ');
+      expect(run.report).toContain('| 2 |');
     });
   });
 });
